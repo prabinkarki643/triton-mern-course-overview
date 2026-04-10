@@ -59,24 +59,107 @@ Each box is a **component** - a self-contained piece that manages its own conten
 
 ---
 
-## 6.2 Setting Up a React Project with shadcn/create
+## 6.2 Setting Up a React Project
 
-Instead of manually setting up Vite, TypeScript, Tailwind CSS, and a component library separately, we use the **shadcn preset** which does everything in a single command.
+There are two ways to set up a React project with our full stack. Let's learn both.
 
-### Step 1: Build Your Preset Visually
+### Method 1: Vite First, Then Add shadcn/ui (Recommended for Learning)
+
+This approach teaches you the steps individually — you create a React project with Vite first, then add shadcn/ui on top. This is the approach we will use in class so you understand each layer.
+
+**Step 1: Create a Vite + React + TypeScript project**
+
+```bash
+npm create vite@latest todo-app -- --template react-ts
+cd todo-app
+npm install
+```
+
+This gives you a clean React + TypeScript project with Vite. You can run `npm run dev` to see it working.
+
+**Step 2: Add Tailwind CSS**
+
+```bash
+npm install tailwindcss @tailwindcss/vite
+```
+
+Update `vite.config.ts`:
+
+```ts
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+
+export default defineConfig({
+  plugins: [
+    react(),
+    tailwindcss(),
+  ],
+})
+```
+
+Replace the content of `src/index.css` with:
+
+```css
+@import "tailwindcss";
+```
+
+**Step 3: Add shadcn/ui**
+
+Now add shadcn/ui to the project:
+
+```bash
+npx shadcn@latest init
+```
+
+It will ask you some questions:
+
+```
+Would you like to use TypeScript? Yes
+Which style would you like to use? New York
+Which color would you like to use as base color? Slate
+Where is your global CSS file? src/index.css
+Would you like to use CSS variables for colors? Yes
+```
+
+This configures shadcn/ui and creates:
+- `components.json` — shadcn/ui configuration
+- `src/lib/utils.ts` — utility functions (like `cn()` for merging class names)
+- Updates to `src/index.css` with CSS variables for theming
+
+Now you can add components as needed:
+
+```bash
+npx shadcn@latest add button
+npx shadcn@latest add input
+npx shadcn@latest add card
+```
+
+Install dependencies and start the dev server:
+
+```bash
+npm install
+npm run dev
+```
+
+---
+
+### Method 2: shadcn/create Preset (All-in-One)
+
+If you want everything set up in a single command, use the **shadcn preset** approach.
+
+**Step 1: Build Your Preset Visually**
 
 1. Go to [https://ui.shadcn.com/create](https://ui.shadcn.com/create) in your browser
 2. Choose your preferences:
-   - **Style** - pick a visual style (e.g. Default or New York)
-   - **Colours** - choose a colour theme
-   - **Fonts** - pick your preferred font
-   - **Icons** - choose an icon library
+   - **Style** — pick a visual style (e.g. Default or New York)
+   - **Colours** — choose a colour theme
+   - **Fonts** — pick your preferred font
+   - **Icons** — choose an icon library
 3. Click **"Create Project"**
 4. The site gives you a command with a unique preset code
 
-### Step 2: Run the Command
-
-Open your terminal, navigate to where you want your project, and run the command you were given. It will look something like this:
+**Step 2: Run the Command**
 
 ```bash
 npx shadcn@latest init --preset <YOUR_PRESET_CODE> --template vite
@@ -85,13 +168,13 @@ npx shadcn@latest init --preset <YOUR_PRESET_CODE> --template vite
 Replace `<YOUR_PRESET_CODE>` with the actual code from the shadcn/create website.
 
 > **What does this single command set up?**
-> - **Vite** - the fast build tool and dev server
-> - **React** - the UI library
-> - **TypeScript** - type-safe JavaScript
-> - **Tailwind CSS** - utility-first CSS framework
-> - **shadcn/ui** - a library of beautifully designed, accessible components
+> - **Vite** — the fast build tool and dev server
+> - **React** — the UI library
+> - **TypeScript** — type-safe JavaScript
+> - **Tailwind CSS** — utility-first CSS framework
+> - **shadcn/ui** — pre-configured with your chosen theme
 
-Then install dependencies and start the dev server:
+Then:
 
 ```bash
 cd todo-app
@@ -99,17 +182,20 @@ npm install
 npm run dev
 ```
 
-You should see:
+---
 
-```
-  VITE v5.x.x  ready in xxx ms
+### Which Method Should I Use?
 
-  ➜  Local:   http://localhost:5173/
-  ➜  Network: use --host to expose
-  ➜  press h + enter to show help
-```
+| | Method 1 (Vite + shadcn) | Method 2 (shadcn/create) |
+|--|--------------------------|--------------------------|
+| **Best for** | Learning, understanding each layer | Quick project setup |
+| **Control** | Full control over every step | Preset chooses defaults |
+| **Understanding** | You learn Vite, Tailwind, shadcn separately | Everything arrives pre-configured |
+| **In this course** | We use this in class | Great for future projects |
 
-Open `http://localhost:5173` in your browser. You will see a styled welcome page with the theme you chose.
+Both methods give you the same result — a React + TypeScript + Tailwind + shadcn/ui project. The difference is whether you set up each piece yourself or let the preset do it.
+
+Open `http://localhost:5173` in your browser. You will see the welcome page.
 
 ---
 
