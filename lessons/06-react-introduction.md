@@ -63,6 +63,8 @@ Each box is a **component** - a self-contained piece that manages its own conten
 
 There are two ways to set up a React project with our full stack. Let's learn both.
 
+> **Reference**: Official shadcn/ui Vite installation guide — [ui.shadcn.com/docs/installation/vite](https://ui.shadcn.com/docs/installation/vite)
+
 ### Method 1: Vite First, Then Add shadcn/ui (Recommended for Learning)
 
 This approach teaches you the steps individually — you create a React project with Vite first, then add shadcn/ui on top. This is the approach we will use in class so you understand each layer.
