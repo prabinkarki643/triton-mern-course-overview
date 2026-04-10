@@ -38,16 +38,17 @@ State is **data that changes over time** in your component. When state changes, 
 
 ```tsx
 import { useState } from 'react'
+import { Button } from "@/components/ui/button"
 
 function Counter() {
   const [count, setCount] = useState<number>(0);
 
   return (
-    <div>
-      <p>Count: {count}</p>
-      <button onClick={() => setCount(count + 1)}>
+    <div className="space-y-4 p-6">
+      <p className="text-2xl font-bold">Count: {count}</p>
+      <Button onClick={() => setCount(count + 1)}>
         Increment
-      </button>
+      </Button>
     </div>
   )
 }
@@ -112,12 +113,14 @@ React handles events similarly to HTML, but with camelCase naming. TypeScript ad
 ### Click Events
 
 ```tsx
+import { Button } from "@/components/ui/button"
+
 function App() {
   const handleClick = (): void => {
     console.log("Button clicked!");
   };
 
-  return <button onClick={handleClick}>Click Me</button>
+  return <Button onClick={handleClick}>Click Me</Button>
 }
 ```
 
@@ -125,13 +128,13 @@ function App() {
 
 ```tsx
 // CORRECT - passes the function
-<button onClick={handleClick}>
+<Button onClick={handleClick}>
 
 // WRONG - calls the function immediately on render
-<button onClick={handleClick()}>
+<Button onClick={handleClick()}>
 
 // CORRECT - inline with arrow function (useful for passing arguments)
-<button onClick={() => handleDelete(task.id)}>
+<Button onClick={() => handleDelete(task.id)}>
 ```
 
 ### Typed Event Handlers
@@ -165,19 +168,19 @@ const handleFocus = (event: React.FocusEvent<HTMLInputElement>): void => {
 
 ```tsx
 // Click
-<button onClick={handleClick}>
+<Button onClick={handleClick}>
 
 // Form submit
 <form onSubmit={handleSubmit}>
 
 // Input change
-<input onChange={handleChange} />
+<Input onChange={handleChange} />
 
 // Key press
-<input onKeyDown={handleKeyDown} />
+<Input onKeyDown={handleKeyDown} />
 
 // Focus/blur
-<input onFocus={handleFocus} onBlur={handleBlur} />
+<Input onFocus={handleFocus} onBlur={handleBlur} />
 ```
 
 ---
@@ -188,6 +191,8 @@ A **controlled input** is an input whose value is controlled by React state. Thi
 
 ```tsx
 import { useState } from 'react'
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 
 function AddTodoForm() {
   const [inputValue, setInputValue] = useState<string>("");
@@ -203,14 +208,13 @@ function AddTodoForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit}>
-      <input
-        type="text"
+    <form onSubmit={handleSubmit} className="flex gap-2">
+      <Input
         value={inputValue}
         onChange={handleChange}
         placeholder="Add a task..."
       />
-      <button type="submit">Add</button>
+      <Button type="submit">Add</Button>
     </form>
   )
 }
@@ -337,7 +341,7 @@ function App() {
   const completedCount: number = tasks.filter((t: Todo) => t.completed).length;
 
   return (
-    <div className="app">
+    <div className="max-w-lg mx-auto p-6 space-y-6">
       <Header
         title="My Todo App"
         taskCount={tasks.length}
@@ -359,6 +363,8 @@ export default App
 ```tsx
 // src/components/AddTodoForm.tsx
 import { useState } from 'react'
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 
 interface AddTodoFormProps {
   onAdd: (title: string) => void;
@@ -375,14 +381,13 @@ function AddTodoForm({ onAdd }: AddTodoFormProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="add-form">
-      <input
-        type="text"
+    <form onSubmit={handleSubmit} className="flex gap-2">
+      <Input
         value={inputValue}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setInputValue(e.target.value)}
+        onChange={(e) => setInputValue(e.target.value)}
         placeholder="What needs to be done?"
       />
-      <button type="submit">Add</button>
+      <Button type="submit">Add</Button>
     </form>
   )
 }
@@ -393,6 +398,8 @@ export default AddTodoForm
 ```tsx
 // src/components/TodoItem.tsx
 import { Todo } from '../types/todo'
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 
 interface TodoItemProps {
   task: Todo;
@@ -402,18 +409,17 @@ interface TodoItemProps {
 
 function TodoItem({ task, onToggle, onDelete }: TodoItemProps) {
   return (
-    <li className="todo-item">
-      <input
-        type="checkbox"
+    <li className="flex items-center gap-3 p-3 rounded-lg border">
+      <Checkbox
         checked={task.completed}
-        onChange={() => onToggle(task.id)}
+        onCheckedChange={() => onToggle(task.id)}
       />
-      <span className={task.completed ? "completed" : ""}>
+      <span className={task.completed ? "flex-1 line-through text-gray-400" : "flex-1"}>
         {task.title}
       </span>
-      <button onClick={() => onDelete(task.id)} className="delete-btn">
+      <Button variant="destructive" size="sm" onClick={() => onDelete(task.id)}>
         Delete
-      </button>
+      </Button>
     </li>
   )
 }
@@ -434,11 +440,11 @@ interface TodoListProps {
 
 function TodoList({ tasks, onToggle, onDelete }: TodoListProps) {
   if (tasks.length === 0) {
-    return <p className="empty">No tasks yet. Add one above!</p>
+    return <p className="text-gray-500 text-center py-4">No tasks yet. Add one above!</p>
   }
 
   return (
-    <ul className="todo-list">
+    <ul className="space-y-2">
       {tasks.map((task: Todo) => (
         <TodoItem
           key={task.id}

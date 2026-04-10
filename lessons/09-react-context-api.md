@@ -198,9 +198,9 @@ function Header() {
   const { tasks, completedCount } = useTodo();
 
   return (
-    <header className="header">
-      <h1>My Todo App</h1>
-      <p>{tasks.length} tasks | {completedCount} completed</p>
+    <header className="text-center mb-6">
+      <h1 className="text-3xl font-bold">My Todo App</h1>
+      <p className="text-gray-500">{tasks.length} tasks | {completedCount} completed</p>
     </header>
   )
 }
@@ -212,6 +212,8 @@ export default Header
 // src/components/AddTodoForm.tsx
 import { useState } from 'react'
 import { useTodo } from '../context/TodoContext'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 function AddTodoForm() {
   const [inputValue, setInputValue] = useState<string>("");
@@ -225,14 +227,14 @@ function AddTodoForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="add-form">
-      <input
+    <form onSubmit={handleSubmit} className="flex gap-2">
+      <Input
         type="text"
         value={inputValue}
         onChange={(e: React.ChangeEvent<HTMLInputElement>) => setInputValue(e.target.value)}
         placeholder="What needs to be done?"
       />
-      <button type="submit">Add</button>
+      <Button type="submit">Add</Button>
     </form>
   )
 }
@@ -244,6 +246,8 @@ export default AddTodoForm
 // src/components/TodoItem.tsx
 import { Todo } from '../types/todo'
 import { useTodo } from '../context/TodoContext'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 
 interface TodoItemProps {
   task: Todo;
@@ -253,18 +257,22 @@ function TodoItem({ task }: TodoItemProps) {
   const { toggleTask, deleteTask } = useTodo();
 
   return (
-    <li className="todo-item">
-      <input
-        type="checkbox"
+    <li className="flex items-center gap-3 p-3 rounded-lg border">
+      <Checkbox
         checked={task.completed}
-        onChange={() => toggleTask(task.id)}
+        onCheckedChange={() => toggleTask(task.id)}
       />
-      <span className={task.completed ? "completed" : ""}>
+      <span className={task.completed ? "flex-1 line-through text-gray-400" : "flex-1"}>
         {task.title}
       </span>
-      <button onClick={() => deleteTask(task.id)} className="delete-btn">
+      <Button
+        variant="ghost"
+        size="sm"
+        className="text-red-500 hover:text-red-700"
+        onClick={() => deleteTask(task.id)}
+      >
         Delete
-      </button>
+      </Button>
     </li>
   )
 }
@@ -282,11 +290,11 @@ function TodoList() {
   const { filteredTasks } = useTodo();
 
   if (filteredTasks.length === 0) {
-    return <p className="empty">No tasks yet. Add one above!</p>
+    return <p className="text-center text-gray-400 py-8">No tasks yet. Add one above!</p>
   }
 
   return (
-    <ul className="todo-list">
+    <ul className="space-y-2">
       {filteredTasks.map((task: Todo) => (
         <TodoItem key={task.id} task={task} />
       ))}
@@ -307,10 +315,12 @@ import TodoList from './components/TodoList'
 
 function App() {
   return (
-    <div className="app">
-      <Header />
-      <AddTodoForm />
-      <TodoList />
+    <div className="min-h-screen bg-gray-50 py-8 px-4">
+      <div className="max-w-lg mx-auto space-y-6">
+        <Header />
+        <AddTodoForm />
+        <TodoList />
+      </div>
     </div>
   )
 }
@@ -386,6 +396,7 @@ Let us enhance our app with filter buttons that use the Context:
 ```tsx
 // src/components/FilterButtons.tsx
 import { useTodo } from '../context/TodoContext'
+import { Button } from '@/components/ui/button'
 
 function FilterButtons() {
   const { filter, setFilter } = useTodo();
@@ -393,15 +404,16 @@ function FilterButtons() {
   const filters: string[] = ["all", "active", "completed"];
 
   return (
-    <div className="filter-buttons">
+    <div className="flex gap-1">
       {filters.map((f: string) => (
-        <button
+        <Button
           key={f}
-          className={filter === f ? "active" : ""}
+          variant={filter === f ? "default" : "outline"}
+          size="sm"
           onClick={() => setFilter(f)}
         >
           {f.charAt(0).toUpperCase() + f.slice(1)}
-        </button>
+        </Button>
       ))}
     </div>
   )

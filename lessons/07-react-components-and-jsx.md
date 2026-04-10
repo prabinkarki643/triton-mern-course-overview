@@ -48,9 +48,9 @@ interface HeaderProps {
 
 function Header({ title, subtitle }: HeaderProps) {
   return (
-    <header>
-      <h1>{title}</h1>
-      {subtitle && <p>{subtitle}</p>}
+    <header className="mb-6">
+      <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
+      {subtitle && <p className="text-sm text-gray-500 mt-1">{subtitle}</p>}
     </header>
   )
 }
@@ -68,7 +68,7 @@ import Header from './components/Header'
 
 function App() {
   return (
-    <div className="app">
+    <div className="min-h-screen bg-gray-50 p-6">
       <Header title="My Todo App" subtitle="Stay organised and productive" />
     </div>
   )
@@ -131,9 +131,9 @@ interface HeaderProps {
 
 function Header({ title, subtitle }: HeaderProps) {
   return (
-    <header>
-      <h1>{title}</h1>
-      {subtitle && <p>{subtitle}</p>}
+    <header className="mb-6">
+      <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
+      {subtitle && <p className="text-sm text-gray-500 mt-1">{subtitle}</p>}
     </header>
   )
 }
@@ -153,9 +153,9 @@ interface HeaderProps {
 
 function Header({ title = "Todo App", subtitle = "" }: HeaderProps) {
   return (
-    <header>
-      <h1>{title}</h1>
-      {subtitle && <p>{subtitle}</p>}
+    <header className="mb-6">
+      <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
+      {subtitle && <p className="text-sm text-gray-500 mt-1">{subtitle}</p>}
     </header>
   )
 }
@@ -199,9 +199,9 @@ function TodoList() {
   const tasks: string[] = ["Learn HTML", "Learn CSS", "Learn JavaScript", "Learn React"];
 
   return (
-    <ul>
+    <ul className="space-y-2">
       {tasks.map((task: string, index: number) => (
-        <li key={index}>{task}</li>
+        <li key={index} className="p-3 bg-white rounded-lg border">{task}</li>
       ))}
     </ul>
   )
@@ -217,12 +217,12 @@ import { Todo } from '../types/todo'
 
 // BAD - using index as key (works but not ideal)
 {tasks.map((task: string, index: number) => (
-  <li key={index}>{task}</li>
+  <li key={index} className="p-3 bg-white rounded-lg border">{task}</li>
 ))}
 
 // GOOD - using a unique ID from a typed object
 {tasks.map((task: Todo) => (
-  <li key={task.id}>{task.title}</li>
+  <li key={task.id} className="p-3 bg-white rounded-lg border">{task.title}</li>
 ))}
 ```
 
@@ -233,6 +233,7 @@ import { Todo } from '../types/todo'
 ```tsx
 // src/components/TodoItem.tsx
 import { Todo } from '../types/todo'
+import { Checkbox } from "@/components/ui/checkbox"
 
 interface TodoItemProps {
   task: Todo;
@@ -240,9 +241,11 @@ interface TodoItemProps {
 
 function TodoItem({ task }: TodoItemProps) {
   return (
-    <li className="todo-item">
-      <input type="checkbox" checked={task.completed} readOnly />
-      <span>{task.title}</span>
+    <li className="flex items-center gap-3 p-3 bg-white rounded-lg border">
+      <Checkbox checked={task.completed} />
+      <span className={`flex-1 ${task.completed ? "line-through text-gray-400" : ""}`}>
+        {task.title}
+      </span>
     </li>
   )
 }
@@ -261,7 +264,7 @@ interface TodoListProps {
 
 function TodoList({ tasks }: TodoListProps) {
   return (
-    <ul className="todo-list">
+    <ul className="space-y-2">
       {tasks.map((task: Todo) => (
         <TodoItem key={task.id} task={task} />
       ))}
@@ -287,7 +290,7 @@ function App() {
   ];
 
   return (
-    <div className="app">
+    <div className="min-h-screen bg-gray-50 p-6">
       <Header title="My Todo App" />
       <TodoList tasks={tasks} />
     </div>
@@ -318,9 +321,11 @@ interface TodoItemProps {
 
 function TodoItem({ task }: TodoItemProps) {
   return (
-    <li>
-      <span>{task.title}</span>
-      {task.completed && <span className="badge">Done</span>}
+    <li className="flex items-center gap-3 p-3 bg-white rounded-lg border">
+      <span className="flex-1">{task.title}</span>
+      {task.completed && (
+        <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">Done</span>
+      )}
     </li>
   )
 }
@@ -339,14 +344,14 @@ interface TodoItemProps {
 
 function TodoItem({ task }: TodoItemProps) {
   return (
-    <li>
-      <span className={task.completed ? "completed" : ""}>
+    <li className="flex items-center gap-3 p-3 bg-white rounded-lg border">
+      <span className={`flex-1 ${task.completed ? "line-through text-gray-400" : ""}`}>
         {task.title}
       </span>
       {task.completed ? (
-        <span className="badge-done">Completed</span>
+        <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">Completed</span>
       ) : (
-        <span className="badge-pending">Pending</span>
+        <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded">Pending</span>
       )}
     </li>
   )
@@ -367,11 +372,11 @@ interface TodoListProps {
 
 function TodoList({ tasks }: TodoListProps) {
   if (tasks.length === 0) {
-    return <p className="empty-message">No tasks yet. Add one above!</p>
+    return <p className="text-center text-gray-500 py-8">No tasks yet. Add one above!</p>
   }
 
   return (
-    <ul>
+    <ul className="space-y-2">
       {tasks.map((task: Todo) => (
         <TodoItem key={task.id} task={task} />
       ))}
@@ -411,7 +416,7 @@ const titles: string[] = tasks.map((task) => task.title);
 
 // Transform todos into JSX elements
 const listItems: JSX.Element[] = tasks.map((task) => (
-  <li key={task.id}>{task.title}</li>
+  <li key={task.id} className="p-3 bg-white rounded-lg border">{task.title}</li>
 ));
 ```
 
@@ -443,9 +448,9 @@ interface HeaderProps {
 
 function Header({ title, taskCount = 0, completedCount = 0 }: HeaderProps) {
   return (
-    <header className="header">
-      <h1>{title}</h1>
-      <p>
+    <header className="mb-6">
+      <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
+      <p className="text-sm text-gray-500 mt-1">
         {taskCount} tasks | {completedCount} completed
       </p>
     </header>
@@ -458,6 +463,7 @@ export default Header
 **`src/components/TodoItem.tsx`**
 ```tsx
 import { Todo } from '../types/todo'
+import { Checkbox } from "@/components/ui/checkbox"
 
 interface TodoItemProps {
   task: Todo;
@@ -465,13 +471,13 @@ interface TodoItemProps {
 
 function TodoItem({ task }: TodoItemProps) {
   return (
-    <li className="todo-item">
-      <input type="checkbox" checked={task.completed} readOnly />
-      <span className={task.completed ? "completed" : ""}>
+    <li className="flex items-center gap-3 p-3 bg-white rounded-lg border">
+      <Checkbox checked={task.completed} />
+      <span className={`flex-1 ${task.completed ? "line-through text-gray-400" : ""}`}>
         {task.title}
       </span>
       {task.priority === "high" && (
-        <span className="priority-badge">High</span>
+        <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">High</span>
       )}
     </li>
   )
@@ -491,11 +497,11 @@ interface TodoListProps {
 
 function TodoList({ tasks }: TodoListProps) {
   if (tasks.length === 0) {
-    return <p className="empty">No tasks yet!</p>
+    return <p className="text-center text-gray-500 py-8">No tasks yet!</p>
   }
 
   return (
-    <ul className="todo-list">
+    <ul className="space-y-2">
       {tasks.map((task: Todo) => (
         <TodoItem key={task.id} task={task} />
       ))}
@@ -523,7 +529,7 @@ function App() {
   const completedCount: number = tasks.filter((t: Todo) => t.completed).length;
 
   return (
-    <div className="app">
+    <div className="min-h-screen bg-gray-50 p-6 max-w-lg mx-auto">
       <Header
         title="My Todo App"
         taskCount={tasks.length}

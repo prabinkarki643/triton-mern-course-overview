@@ -429,6 +429,89 @@ Data changes → Component function runs → TSX returned → React updates the 
 
 ---
 
+## 6.7 Quick-Start: Tailwind & shadcn/ui Essentials
+
+Since we have Tailwind CSS and shadcn/ui set up, let's learn just enough to start using them in the next lessons. We'll cover these in full depth in Lessons 10 and 11 — this is just the essentials to get going.
+
+### Tailwind CSS — The 10 Classes You Need Right Now
+
+Tailwind uses utility classes directly in your `className`. No separate CSS files needed.
+
+```tsx
+<div className="max-w-lg mx-auto p-4">          {/* max width, centred, padding */}
+  <h1 className="text-2xl font-bold mb-4">       {/* large text, bold, bottom margin */}
+    My App
+  </h1>
+  <div className="flex items-center gap-3">       {/* row layout, vertically centred, gap */}
+    <span className="flex-1">Take up space</span> {/* fill remaining width */}
+    <span className="text-sm text-gray-500">      {/* small, grey text */}
+      Secondary
+    </span>
+  </div>
+  <div className="bg-white rounded-lg border p-3">{/* white bg, rounded, border, padding */}
+    Card-like container
+  </div>
+</div>
+```
+
+**Quick reference:**
+
+| Class | What it does |
+|-------|-------------|
+| `p-4` | Padding all sides (16px) |
+| `mb-4` | Margin bottom (16px) |
+| `mx-auto` | Centre horizontally |
+| `max-w-lg` | Max width container |
+| `flex` | Flexbox row |
+| `items-center` | Vertically centre flex children |
+| `gap-3` | Gap between flex children (12px) |
+| `flex-1` | Take remaining space |
+| `text-2xl font-bold` | Large bold text |
+| `text-sm text-gray-500` | Small grey text |
+| `bg-white rounded-lg border` | White card with border |
+| `space-y-2` | Vertical spacing between children |
+
+### shadcn/ui — The 3 Components You Need Right Now
+
+First, add them to your project:
+
+```bash
+npx shadcn@latest add button input checkbox
+```
+
+Then use them like any React component:
+
+```tsx
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Checkbox } from "@/components/ui/checkbox"
+
+function Example() {
+  return (
+    <div className="space-y-4">
+      {/* Button - replaces <button> */}
+      <Button>Click Me</Button>
+      <Button variant="outline">Outline</Button>
+      <Button variant="destructive">Delete</Button>
+      <Button size="sm">Small</Button>
+
+      {/* Input - replaces <input> */}
+      <Input placeholder="Type something..." />
+
+      {/* Checkbox - replaces <input type="checkbox"> */}
+      <div className="flex items-center gap-2">
+        <Checkbox id="task" />
+        <label htmlFor="task">Complete this task</label>
+      </div>
+    </div>
+  )
+}
+```
+
+**That's it for now.** From Lesson 7 onwards, we'll use Tailwind classes and these shadcn components in all our code examples. You'll learn more components and advanced Tailwind patterns in Lessons 10 and 11.
+
+---
+
 ## Practice Exercises
 
 ### Exercise 1: Hello World
