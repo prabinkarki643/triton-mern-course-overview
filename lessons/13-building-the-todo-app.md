@@ -382,6 +382,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import EditTaskDialog from './EditTaskDialog'
+import { ConfirmDialog } from './ConfirmDialog'
 import { cn } from "@/lib/utils"
 import type { Todo } from '../types/todo'
 
@@ -423,14 +424,22 @@ function TodoItem({ task }: TodoItemProps): JSX.Element {
 
       <EditTaskDialog task={task} />
 
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => deleteTask(task.id)}
-        className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8 w-8 p-0"
-      >
-        ×
-      </Button>
+      <ConfirmDialog
+        trigger={
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8 w-8 p-0"
+          >
+            ×
+          </Button>
+        }
+        title="Delete Task"
+        description={`Are you sure you want to delete "${task.title}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        variant="destructive"
+        onConfirm={() => deleteTask(task.id)}
+      />
     </div>
   )
 }
@@ -487,11 +496,11 @@ function EditTaskDialog({ task }: EditTaskDialogProps): JSX.Element {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
+      <DialogTrigger render={
         <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
           ✎
         </Button>
-      </DialogTrigger>
+      } />
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Edit Task</DialogTitle>

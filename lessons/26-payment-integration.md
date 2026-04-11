@@ -635,8 +635,8 @@ export function PaymentSuccess() {
               <p className="text-green-600">
                 Your payment has been verified and your booking is confirmed.
               </p>
-              <Button asChild className="w-full">
-                <Link to="/dashboard">Go to Dashboard</Link>
+              <Button className="w-full" render={<Link to="/dashboard" />}>
+                Go to Dashboard
               </Button>
             </div>
           ) : (
@@ -645,8 +645,8 @@ export function PaymentSuccess() {
                 We could not verify your payment. If money was deducted from your
                 account, please contact support.
               </p>
-              <Button asChild variant="outline" className="w-full">
-                <Link to="/bookings">View Bookings</Link>
+              <Button variant="outline" className="w-full" render={<Link to="/bookings" />}>
+                View Bookings
               </Button>
             </div>
           )}
@@ -680,11 +680,11 @@ export function PaymentFailure() {
             Your payment was not completed. No money has been charged.
           </p>
           <div className="flex flex-col gap-2">
-            <Button asChild className="w-full">
-              <Link to={`/bookings/${bookingId}/pay`}>Try Again</Link>
+            <Button className="w-full" render={<Link to={`/bookings/${bookingId}/pay`} />}>
+              Try Again
             </Button>
-            <Button asChild variant="outline" className="w-full">
-              <Link to="/bookings">View Bookings</Link>
+            <Button variant="outline" className="w-full" render={<Link to="/bookings" />}>
+              View Bookings
             </Button>
           </div>
         </CardContent>

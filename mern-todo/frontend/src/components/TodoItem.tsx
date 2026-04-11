@@ -4,6 +4,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EditTodoDialog } from "@/components/EditTodoDialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Pencil, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TodoFormData } from "@/schemas/todoSchema";
@@ -59,15 +60,23 @@ export function TodoItem({ todo, onToggle, onUpdate, onDelete }: TodoItemProps) 
           >
             <Pencil />
           </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={() => onDelete(todo._id)}
-            aria-label="Delete task"
-            className="text-destructive hover:text-destructive"
-          >
-            <Trash2 />
-          </Button>
+          <ConfirmDialog
+            trigger={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Delete task"
+                className="text-destructive hover:text-destructive"
+              >
+                <Trash2 />
+              </Button>
+            }
+            title="Delete Task"
+            description={`Are you sure you want to delete "${todo.title}"? This action cannot be undone.`}
+            confirmLabel="Delete"
+            variant="destructive"
+            onConfirm={() => onDelete(todo._id)}
+          />
         </div>
       </div>
 

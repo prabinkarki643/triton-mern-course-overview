@@ -305,19 +305,17 @@ function MyRooms(): JSX.Element {
     <div>
       <div className="flex items-centre justify-between mb-6">
         <h1 className="text-2xl font-bold">My Rooms</h1>
-        <Button asChild>
-          <Link to="/owner/rooms/new">
-            <Plus className="h-4 w-4 mr-2" />
-            Add Room
-          </Link>
+        <Button render={<Link to="/owner/rooms/new" />}>
+          <Plus className="h-4 w-4 mr-2" />
+          Add Room
         </Button>
       </div>
 
       {rooms.length === 0 ? (
         <div className="text-centre py-12 text-muted-foreground">
           <p className="text-lg mb-2">You have not added any rooms yet.</p>
-          <Button asChild variant="outline">
-            <Link to="/owner/rooms/new">Add your first room</Link>
+          <Button variant="outline" render={<Link to="/owner/rooms/new" />}>
+            Add your first room
           </Button>
         </div>
       ) : (
@@ -352,11 +350,9 @@ function MyRooms(): JSX.Element {
               </CardContent>
 
               <CardFooter className="flex gap-2">
-                <Button variant="outline" size="sm" asChild>
-                  <Link to={`/owner/rooms/${room._id}/edit`}>
-                    <Pencil className="h-3 w-3 mr-1" />
-                    Edit
-                  </Link>
+                <Button variant="outline" size="sm" render={<Link to={`/owner/rooms/${room._id}/edit`} />}>
+                  <Pencil className="h-3 w-3 mr-1" />
+                  Edit
                 </Button>
                 <DeleteRoomDialog roomId={room._id} roomTitle={room.title} />
               </CardFooter>
@@ -378,34 +374,24 @@ export default MyRooms;
 
 ---
 
-## 23.7 Delete Room Dialog
+## 23.7 Delete Room with Confirmation
 
-We use shadcn's `AlertDialog` to confirm before deleting:
+We reuse the `ConfirmDialog` component we built in Lesson 11 (the same one used for deleting tasks in the Todo app). No need to write AlertDialog boilerplate again:
 
 ```tsx
-// webapp/src/components/owner/DeleteRoomDialog.tsx
+// webapp/src/components/owner/DeleteRoomButton.tsx
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import api from "@/services/api";
 
-interface DeleteRoomDialogProps {
+interface DeleteRoomButtonProps {
   roomId: string;
   roomTitle: string;
 }
 
-function DeleteRoomDialog({ roomId, roomTitle }: DeleteRoomDialogProps): JSX.Element {
+function DeleteRoomButton({ roomId, roomTitle }: DeleteRoomButtonProps): JSX.Element {
   const queryClient = useQueryClient();
 
   const deleteMutation = useMutation({
@@ -413,44 +399,31 @@ function DeleteRoomDialog({ roomId, roomTitle }: DeleteRoomDialogProps): JSX.Ele
       await api.delete(`/rooms/${roomId}`);
     },
     onSuccess: () => {
-      // Refresh the rooms list after deletion
       queryClient.invalidateQueries({ queryKey: ["ownerRooms"] });
     },
   });
 
   return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
+    <ConfirmDialog
+      trigger={
         <Button variant="destructive" size="sm">
           <Trash2 className="h-3 w-3 mr-1" />
           Delete
         </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete Room</AlertDialogTitle>
-          <AlertDialogDescription>
-            Are you sure you want to delete &ldquo;{roomTitle}&rdquo;? This action cannot be undone.
-            All images and booking history for this room will be permanently removed.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            onClick={() => deleteMutation.mutate()}
-            disabled={deleteMutation.isPending}
-            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-          >
-            {deleteMutation.isPending ? "Deleting..." : "Delete Room"}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+      }
+      title="Delete Room"
+      description={`Are you sure you want to delete "${roomTitle}"? This action cannot be undone. All images and booking history for this room will be permanently removed.`}
+      confirmLabel="Delete Room"
+      variant="destructive"
+      onConfirm={() => deleteMutation.mutate()}
+    />
   );
 }
 
-export default DeleteRoomDialog;
+export default DeleteRoomButton;
 ```
+
+**This is the power of reusable components** -- the same `ConfirmDialog` from Lesson 11 works here with different props. Compare this with writing the full AlertDialog markup every time.
 
 ### The `useMutation` + `invalidateQueries` Pattern
 

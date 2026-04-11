@@ -643,99 +643,53 @@ Toast types available:
 
 When a user clicks "Delete Room" or "Cancel Booking", they should see a confirmation dialog first. Accidental deletions are frustrating.
 
-### Install AlertDialog
-
-```bash
-npx shadcn@latest add alert-dialog
-```
-
-### Reusable Confirmation Dialog
+We already built a reusable `ConfirmDialog` component in Lesson 11 and used it for task deletion in Lesson 13 and room deletion in Lesson 23. The same component works everywhere:
 
 ```tsx
-// webapp/src/components/ConfirmDialog.tsx
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-import { Button } from '@/components/ui/button';
-
-interface ConfirmDialogProps {
-  title: string;
-  description: string;
-  confirmLabel?: string;
-  onConfirm: () => void;
-  children: React.ReactNode;
-}
-
-export function ConfirmDialog({
-  title,
-  description,
-  confirmLabel = 'Confirm',
-  onConfirm,
-  children,
-}: ConfirmDialogProps) {
-  return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>{children}</AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>{description}</AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>
-            {confirmLabel}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
+// Already created in src/components/ConfirmDialog.tsx (Lesson 11)
+// Props: trigger, title, description, confirmLabel, cancelLabel, variant, onConfirm
 ```
 
-### Usage Example
+### Usage Examples Across the App
+
+**Delete a room (owner portal):**
 
 ```tsx
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 
-function RoomCard({ room, onDeleted }: { room: Room; onDeleted: () => void }) {
-  const handleDelete = async () => {
-    try {
-      await fetch(`/api/rooms/${room._id}`, { method: 'DELETE' });
-      toast.success('Room deleted.');
-      onDeleted();
-    } catch (error) {
-      toast.error('Failed to delete room.');
-    }
-  };
-
-  return (
-    <div>
-      <h3>{room.title}</h3>
-      <ConfirmDialog
-        title="Delete Room"
-        description="Are you sure you want to delete this room? This action cannot be undone. All associated bookings will also be affected."
-        confirmLabel="Delete"
-        onConfirm={handleDelete}
-      >
-        <Button variant="destructive" size="sm">
-          Delete Room
-        </Button>
-      </ConfirmDialog>
-    </div>
-  );
-}
+<ConfirmDialog
+  trigger={
+    <Button variant="destructive" size="sm">Delete Room</Button>
+  }
+  title="Delete Room"
+  description={`Are you sure you want to delete "${room.title}"? All bookings for this room will also be affected.`}
+  confirmLabel="Delete"
+  variant="destructive"
+  onConfirm={async () => {
+    await deleteRoom(room._id);
+    toast.success('Room deleted.');
+  }}
+/>
 ```
+
+**Cancel a booking (user portal):**
+
+```tsx
+<ConfirmDialog
+  trigger={
+    <Button variant="outline" size="sm">Cancel Booking</Button>
+  }
+  title="Cancel Booking"
+  description="Are you sure you want to cancel this booking? If you paid via eSewa, a refund will be processed."
+  confirmLabel="Cancel Booking"
+  variant="destructive"
+  onConfirm={() => cancelBooking(booking._id)}
+/>
+```
+
+**This is the benefit of building reusable components early** -- one `ConfirmDialog` built in Lesson 11 is now used across the entire application with zero duplication.
 
 ---
 
@@ -940,7 +894,7 @@ export function Navbar() {
         {/* Mobile Hamburger -- visible only on mobile */}
         <div className="md:hidden">
           <Sheet open={open} onOpenChange={setOpen}>
-            <SheetTrigger asChild>
+            <SheetTrigger render={
               <Button variant="ghost" size="sm">
                 {/* Hamburger icon (three lines) */}
                 <svg
@@ -957,7 +911,7 @@ export function Navbar() {
                   />
                 </svg>
               </Button>
-            </SheetTrigger>
+            } />
             <SheetContent side="right">
               <SheetHeader>
                 <SheetTitle>Menu</SheetTitle>

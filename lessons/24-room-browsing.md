@@ -693,8 +693,8 @@ function RoomDetail(): JSX.Element {
     return (
       <div className="max-w-4xl mx-auto px-4 py-16 text-centre">
         <p className="text-lg text-destructive mb-4">Room not found.</p>
-        <Button variant="outline" asChild>
-          <Link to="/rooms">Back to Rooms</Link>
+        <Button variant="outline" render={<Link to="/rooms" />}>
+          Back to Rooms
         </Button>
       </div>
     );
@@ -705,11 +705,9 @@ function RoomDetail(): JSX.Element {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       {/* Back link */}
-      <Button variant="ghost" size="sm" asChild className="mb-4">
-        <Link to="/rooms">
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Rooms
-        </Link>
+      <Button variant="ghost" size="sm" className="mb-4" render={<Link to="/rooms" />}>
+        <ArrowLeft className="h-4 w-4 mr-2" />
+        Back to Rooms
       </Button>
 
       {/* Image Gallery */}
@@ -804,8 +802,8 @@ function RoomDetail(): JSX.Element {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Button className="w-full" size="lg" asChild>
-                <Link to={`/rooms/${room._id}/book`}>Book Now</Link>
+              <Button className="w-full" size="lg" render={<Link to={`/rooms/${room._id}/book`} />}>
+                Book Now
               </Button>
               <p className="text-xs text-centre text-muted-foreground">
                 You will not be charged yet

@@ -294,9 +294,7 @@ interface EditTaskDialogProps {
 function EditTaskDialog({ task }: EditTaskDialogProps) {
   return (
     <Dialog>
-      <DialogTrigger asChild>
-        <Button variant="ghost" size="sm">Edit</Button>
-      </DialogTrigger>
+      <DialogTrigger render={<Button variant="ghost" size="sm">Edit</Button>} />
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Edit Task</DialogTitle>
@@ -321,7 +319,146 @@ function EditTaskDialog({ task }: EditTaskDialogProps) {
 
 ---
 
-## 11.10 The cn() Utility
+## 11.10 Using AlertDialog for Confirmations
+
+AlertDialog is perfect for destructive actions like deleting a task. Unlike Dialog, it requires the user to make a choice before it closes.
+
+First, add the component:
+
+```bash
+npx shadcn@latest add alert-dialog
+```
+
+### Basic AlertDialog
+
+```tsx
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+
+function DeleteButton() {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger render={<Button variant="destructive" size="sm">Delete</Button>} />
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete Task</AlertDialogTitle>
+          <AlertDialogDescription>
+            Are you sure? This action cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={() => console.log("Deleted!")}>
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+```
+
+### Building a Reusable ConfirmDialog
+
+Instead of repeating all that AlertDialog boilerplate every time, create a reusable wrapper:
+
+```tsx
+// src/components/ConfirmDialog.tsx
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+
+interface ConfirmDialogProps {
+  trigger: React.ReactElement;
+  title?: string;
+  description?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  variant?: "default" | "destructive";
+  onConfirm: () => void;
+}
+
+export function ConfirmDialog({
+  trigger,
+  title = "Are you sure?",
+  description = "This action cannot be undone.",
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
+  variant = "default",
+  onConfirm,
+}: ConfirmDialogProps) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger render={trigger} />
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{cancelLabel}</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={onConfirm}
+            className={
+              variant === "destructive"
+                ? "bg-destructive text-white hover:bg-destructive/90"
+                : ""
+            }
+          >
+            {confirmLabel}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+```
+
+Now you can use it anywhere with minimal code:
+
+```tsx
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Button } from "@/components/ui/button";
+import { Trash2 } from "lucide-react";
+
+// Delete with confirmation
+<ConfirmDialog
+  trigger={
+    <Button variant="ghost" size="sm" className="text-destructive">
+      <Trash2 />
+    </Button>
+  }
+  title="Delete Task"
+  description={`Are you sure you want to delete "${task.title}"?`}
+  confirmLabel="Delete"
+  variant="destructive"
+  onConfirm={() => deleteTask(task.id)}
+/>
+```
+
+**Why make it reusable?** You'll need confirmation dialogs for many actions — deleting tasks, removing rooms, cancelling bookings. With `ConfirmDialog`, each one is just a few props instead of 15+ lines of AlertDialog markup.
+
+---
+
+## 11.11 The cn() Utility
 
 shadcn/ui includes a `cn()` helper for merging Tailwind classes conditionally:
 
