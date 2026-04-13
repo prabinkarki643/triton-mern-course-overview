@@ -1,6 +1,6 @@
-import { Button } from "./components/ui/button"
-import { Checkbox } from "./components/ui/checkbox"
-import { Input } from "./components/ui/input"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
 
 import {
   Card,
@@ -10,7 +10,7 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "./components/ui/card"
+} from "@/components/ui/card"
 
 export function Example() {
   return (
