@@ -65,7 +65,7 @@ There are two ways to set up a React project with our full stack. Let's learn bo
 
 > **Reference**: Official shadcn/ui Vite installation guide — [ui.shadcn.com/docs/installation/vite](https://ui.shadcn.com/docs/installation/vite)
 
-### Method 1: Vite First, Then Add shadcn/ui (Recommended for Learning)
+### Method 1: Vite First, Then Add shadcn/ui (Recommended for Existing Project Only else use Method 2)
 
 This approach teaches you the steps individually — you create a React project with Vite first, then add shadcn/ui on top. This is the approach we will use in class so you understand each layer.
 
@@ -146,7 +146,7 @@ npm run dev
 
 ---
 
-### Method 2: shadcn/create Preset (All-in-One)
+### Method 2: shadcn/create Preset (All-in-One) (Recommended for New fresh project)
 
 If you want everything set up in a single command, use the **shadcn preset** approach.
 
