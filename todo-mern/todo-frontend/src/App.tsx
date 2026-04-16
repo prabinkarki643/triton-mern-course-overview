@@ -1,31 +1,25 @@
-import { Example } from "@/Example"
+import { Header } from "./components/Header"
+import TodoList from "./components/TodoList"
+import type { Todo } from "./types/todo"
 
 export function App() {
+  const tasks: Todo[] = [
+    { id: 1, title: "Learn HTML", completed: true, priority: "high" },
+    { id: 2, title: "Learn CSS", completed: true, priority: "medium" },
+    { id: 3, title: "Learn JavaScript", completed: false, priority: "high" },
+    { id: 4, title: "Learn React", completed: false, priority: "medium" },
+  ]
+
+  const completedCount = tasks.filter((t: Todo) => t.completed).length
+
   return (
-    <div className="mx-auto max-w-lg p-4">
-      {" "}
-      {/* max width, centred, padding */}
-      <h1 className="mb-4 text-2xl font-bold">
-        {" "}
-        {/* large text, bold, bottom margin */}
-        My App
-      </h1>
-      <div className="flex items-center gap-3">
-        {" "}
-        {/* row layout, vertically centred, gap */}
-        <span className="flex-1">Take up space</span>{" "}
-        {/* fill remaining width */}
-        <span className="text-sm text-gray-500">
-          {" "}
-          {/* small, grey text */}
-          Secondary
-        </span>
-      </div>
-      <div className="mb-5 rounded-lg border bg-white p-3">
-        {/* white bg, rounded, border, padding */}
-        Card-like container
-      </div>
-      <Example />
+    <div className="mx-auto min-h-screen max-w-lg bg-gray-50 p-6">
+      <Header
+        title="My Todo App"
+        taskCount={tasks.length}
+        completedCount={completedCount}
+      />
+      <TodoList tasks={tasks} />
     </div>
   )
 }
