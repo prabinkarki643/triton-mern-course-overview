@@ -3,20 +3,20 @@ import type { Todo } from "@/types/todo"
 import { Button } from "./ui/button"
 import { Trash } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useTodo } from "@/context/TodoContext"
 
 interface TodoItemProps {
   task: Todo
-  onToggle: (id: number) => void
-  onDelete: (id: number) => void
 }
 
-function TodoItem({ task, onDelete, onToggle }: TodoItemProps) {
+function TodoItem({ task }: TodoItemProps) {
+  const { toggleTask, deleteTask } = useTodo()
   return (
     <li className="flex items-center gap-3 rounded-lg border bg-white p-3">
       <Checkbox
         checked={task.completed}
         onCheckedChange={() => {
-          onToggle(task.id)
+          toggleTask(task.id)
         }}
       />
       <span
@@ -38,7 +38,11 @@ function TodoItem({ task, onDelete, onToggle }: TodoItemProps) {
         </span>
       )}
       {/* )} */}
-      <Button variant="destructive" size="sm" onClick={() => onDelete(task.id)}>
+      <Button
+        variant="destructive"
+        size="sm"
+        onClick={() => deleteTask(task.id)}
+      >
         <Trash />
       </Button>
     </li>

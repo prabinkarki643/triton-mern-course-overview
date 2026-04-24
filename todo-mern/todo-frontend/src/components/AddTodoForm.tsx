@@ -3,13 +3,11 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { toast } from "sonner"
+import { useTodo } from "@/context/TodoContext"
 
-interface AddTodoFormProps {
-  onAdd: (title: string) => void
-}
-
-function AddTodoForm({ onAdd }: AddTodoFormProps) {
+function AddTodoForm() {
   const [inputValue, setInputValue] = useState<string>("")
+  const { addTask } = useTodo()
 
   const handleSubmit = (event: React.SubmitEvent<HTMLFormElement>): void => {
     event.preventDefault()
@@ -17,7 +15,7 @@ function AddTodoForm({ onAdd }: AddTodoFormProps) {
       toast("Please enter a todo title")
       return
     }
-    onAdd(inputValue.trim())
+    addTask(inputValue.trim())
     setInputValue("")
   }
 

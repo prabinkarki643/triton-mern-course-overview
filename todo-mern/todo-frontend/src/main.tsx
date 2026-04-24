@@ -5,12 +5,15 @@ import "./index.css"
 import App from "./App.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { Toaster } from "./components/ui/sonner.tsx"
+import { TodoProvider } from "./context/TodoContext.tsx"
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <ThemeProvider>
-      <App />
-      <Toaster />
-    </ThemeProvider>
+    <TodoProvider>
+      <ThemeProvider>
+        <App />
+        <Toaster />
+      </ThemeProvider>
+    </TodoProvider>
   </StrictMode>
 )
