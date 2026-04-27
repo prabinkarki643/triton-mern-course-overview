@@ -166,54 +166,74 @@ if (!result.success) {
 ### The useForm Hook
 
 ```tsx
-import { useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Field, FieldLabel, FieldError } from "@/components/ui/field";
 
 interface FormData {
   title: string;
 }
 
 function MyForm() {
-  const {
-    register,      // connects inputs to the form
-    handleSubmit,   // wraps your submit function with validation
-    formState: { errors },  // validation errors
-    reset,          // reset form to defaults
-  } = useForm<FormData>();
+  const form = useForm<FormData>({
+    defaultValues: { title: "" },
+  });
 
   const onSubmit = (data: FormData) => {
     console.log(data); // { title: "..." }
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)}>
-      <input {...register("title")} placeholder="Task title" />
-      <button type="submit">Add</button>
+    <form onSubmit={form.handleSubmit(onSubmit)}>
+      <Controller
+        name="title"
+        control={form.control}
+        render={({ field, fieldState }) => (
+          <Field data-invalid={fieldState.invalid}>
+            <FieldLabel htmlFor={field.name}>Task Title</FieldLabel>
+            <Input
+              {...field}
+              id={field.name}
+              placeholder="Enter a task..."
+              aria-invalid={fieldState.invalid}
+            />
+            {fieldState.invalid && (
+              <FieldError errors={[fieldState.error]} />
+            )}
+          </Field>
+        )}
+      />
+      <Button type="submit">Add</Button>
     </form>
   );
 }
 ```
 
 **How it works:**
-1. `register("fieldName")` returns props (`onChange`, `onBlur`, `ref`, `name`) that connect the input to the form
-2. The spread operator `{...register("title")}` applies those props to the input
-3. `handleSubmit(onSubmit)` validates the form, then calls `onSubmit` with the data
-4. No `useState` needed for form values!
+1. `useForm<FormData>()` creates the form with typed fields
+2. `Controller` connects each input to the form — it gives you `field` (value, onChange, etc.) and `fieldState` (errors, invalid state)
+3. `Field` is a shadcn/ui wrapper that handles layout and error styling
+4. `FieldLabel` and `FieldError` provide accessible labels and error display
+5. `data-invalid` on `Field` lets shadcn auto-style the whole group when there's an error
+6. `handleSubmit(onSubmit)` validates the form, then calls `onSubmit` with the data
 
-### Register with Validation Rules
+**Why Controller instead of register?**
 
-```tsx
-<input
-  {...register("title", {
-    required: "Title is required",
-    minLength: { value: 3, message: "Must be at least 3 characters" },
-    maxLength: { value: 100, message: "Must be under 100 characters" },
-  })}
-  placeholder="Task title"
-/>
-{errors.title && <p className="text-red-500">{errors.title.message}</p>}
+You might see `register()` in older tutorials, but `Controller` is the better approach:
+- Works with **any** component (Input, Select, Checkbox, custom components)
+- Gives you `fieldState` with error info right where you need it
+- One pattern for everything — learn it once, use it everywhere
+
+### Adding the Field Component
+
+First, add the Field component to your project:
+
+```bash
+npx shadcn@latest add field
 ```
 
-This works, but **Zod is better** for validation. Let's use it instead.
+This gives you `Field`, `FieldLabel`, `FieldDescription`, `FieldError`, `FieldGroup`, and more in `src/components/ui/field.tsx`.
 
 ---
 
@@ -222,9 +242,12 @@ This works, but **Zod is better** for validation. Let's use it instead.
 This is where the power comes together. Zod gives you both validation **and** types from a single schema:
 
 ```tsx
-import { useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Field, FieldLabel, FieldError } from "@/components/ui/field";
 
 // 1. Define the schema
 const todoSchema = z.object({
@@ -240,36 +263,38 @@ type TodoFormData = z.infer<typeof todoSchema>;
 
 function AddTodoForm() {
   // 3. Connect schema to form with the derived type
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-    reset,
-  } = useForm<TodoFormData>({
+  const form = useForm<TodoFormData>({
     resolver: zodResolver(todoSchema),
-    defaultValues: {
-      title: "",
-    },
+    defaultValues: { title: "" },
   });
 
   // 4. Handle valid submission - data is typed as TodoFormData
   const onSubmit = (data: TodoFormData) => {
     console.log("Valid data:", data); // { title: "..." }
-    reset(); // clear the form
+    form.reset();
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)}>
-      <input
-        {...register("title")}
-        placeholder="What needs to be done?"
+    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+      <Controller
+        name="title"
+        control={form.control}
+        render={({ field, fieldState }) => (
+          <Field data-invalid={fieldState.invalid}>
+            <FieldLabel htmlFor={field.name}>Task Title</FieldLabel>
+            <Input
+              {...field}
+              id={field.name}
+              placeholder="What needs to be done?"
+              aria-invalid={fieldState.invalid}
+            />
+            {fieldState.invalid && (
+              <FieldError errors={[fieldState.error]} />
+            )}
+          </Field>
+        )}
       />
-      {errors.title && (
-        <p className="text-red-500 text-sm mt-1">
-          {errors.title.message}
-        </p>
-      )}
-      <button type="submit">Add</button>
+      <Button type="submit">Add</Button>
     </form>
   );
 }
@@ -279,13 +304,14 @@ Now:
 - The form won't submit unless all Zod rules pass
 - Error messages come from your Zod schema
 - The `data` in `onSubmit` is guaranteed to be valid **and** fully typed
+- `Field` auto-styles as invalid when there's an error
 - TypeScript knows exactly what fields and types `data` contains
 
 ---
 
 ## 12.6 Full Todo Form with shadcn/ui
 
-Let's build a proper form with shadcn/ui components and Zod validation:
+Let's build a proper form with shadcn/ui Field components and Zod validation:
 
 ```ts
 // src/schemas/todoSchema.ts
@@ -308,23 +334,18 @@ export type TodoFormData = z.infer<typeof todoSchema>;
 
 ```tsx
 // src/components/AddTodoForm.tsx
-import { useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { todoSchema, type TodoFormData } from "../schemas/todoSchema";
 import { useTodo } from "../context/TodoContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Field, FieldLabel, FieldError } from "@/components/ui/field";
 
 function AddTodoForm() {
   const { addTask } = useTodo();
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-    reset,
-  } = useForm<TodoFormData>({
+  const form = useForm<TodoFormData>({
     resolver: zodResolver(todoSchema),
     defaultValues: {
       title: "",
@@ -334,44 +355,53 @@ function AddTodoForm() {
 
   const onSubmit = (data: TodoFormData) => {
     addTask(data.title, data.priority);
-    reset();
+    form.reset();
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
       {/* Title field */}
-      <div className="space-y-2">
-        <Label htmlFor="title">Task Title</Label>
-        <Input
-          id="title"
-          {...register("title")}
-          placeholder="What needs to be done?"
-        />
-        {errors.title && (
-          <p className="text-sm text-destructive">
-            {errors.title.message}
-          </p>
+      <Controller
+        name="title"
+        control={form.control}
+        render={({ field, fieldState }) => (
+          <Field data-invalid={fieldState.invalid}>
+            <FieldLabel htmlFor={field.name}>Task Title</FieldLabel>
+            <Input
+              {...field}
+              id={field.name}
+              placeholder="What needs to be done?"
+              aria-invalid={fieldState.invalid}
+            />
+            {fieldState.invalid && (
+              <FieldError errors={[fieldState.error]} />
+            )}
+          </Field>
         )}
-      </div>
+      />
 
       {/* Priority field */}
-      <div className="space-y-2">
-        <Label htmlFor="priority">Priority</Label>
-        <select
-          id="priority"
-          {...register("priority")}
-          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-        >
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-        </select>
-        {errors.priority && (
-          <p className="text-sm text-destructive">
-            {errors.priority.message}
-          </p>
+      <Controller
+        name="priority"
+        control={form.control}
+        render={({ field, fieldState }) => (
+          <Field data-invalid={fieldState.invalid}>
+            <FieldLabel htmlFor={field.name}>Priority</FieldLabel>
+            <select
+              {...field}
+              id={field.name}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+            {fieldState.invalid && (
+              <FieldError errors={[fieldState.error]} />
+            )}
+          </Field>
         )}
-      </div>
+      />
 
       {/* Submit button */}
       <Button type="submit" className="w-full">
@@ -383,6 +413,15 @@ function AddTodoForm() {
 
 export default AddTodoForm;
 ```
+
+**Notice the pattern is identical for every field:**
+1. Wrap with `Controller` — give it `name` and `control`
+2. Inside `render`, wrap with `Field` — set `data-invalid`
+3. Add `FieldLabel` with `htmlFor`
+4. Spread `{...field}` onto the input component
+5. Show `FieldError` when invalid
+
+This same pattern works for `<Input>`, `<select>`, `<Checkbox>`, `<Textarea>`, or any custom component.
 
 ### Update TodoContext to Accept Priority
 
@@ -401,49 +440,42 @@ const addTask = (title: string, priority: "low" | "medium" | "high" = "medium") 
 
 ---
 
-## 12.7 Displaying Errors Nicely
+## 12.7 The Field Component Family
 
-### Error Message Component
+shadcn/ui provides several Field sub-components for building forms:
 
-Create a reusable error component:
+| Component | Purpose |
+|-----------|---------|
+| `Field` | Wrapper for a single form field — handles layout and `data-invalid` styling |
+| `FieldLabel` | Accessible label that connects to the input via `htmlFor` |
+| `FieldDescription` | Helper text below the label (e.g. "Must be at least 3 characters") |
+| `FieldError` | Displays validation errors — accepts `errors` array from React Hook Form |
+| `FieldGroup` | Groups multiple Field components with consistent spacing |
 
-```tsx
-// src/components/FormError.tsx
-interface FormErrorProps {
-  message?: string;
-}
-
-function FormError({ message }: FormErrorProps) {
-  if (!message) return null;
-
-  return (
-    <p className="text-sm text-destructive mt-1">
-      {message}
-    </p>
-  );
-}
-
-export default FormError;
-```
-
-Use it:
+### Using FieldDescription
 
 ```tsx
-<Input {...register("title")} />
-<FormError message={errors.title?.message} />
-```
-
-### Highlighting Invalid Inputs
-
-```tsx
-import { cn } from "@/lib/utils";
-
-<Input
-  {...register("title")}
-  className={cn(
-    errors.title && "border-destructive focus-visible:ring-destructive"
+<Controller
+  name="title"
+  control={form.control}
+  render={({ field, fieldState }) => (
+    <Field data-invalid={fieldState.invalid}>
+      <FieldLabel htmlFor={field.name}>Task Title</FieldLabel>
+      <FieldDescription>Give your task a clear, short name</FieldDescription>
+      <Input {...field} id={field.name} aria-invalid={fieldState.invalid} />
+      {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+    </Field>
   )}
 />
+```
+
+### Using FieldGroup
+
+```tsx
+<FieldGroup>
+  <Controller name="title" control={form.control} render={...} />
+  <Controller name="priority" control={form.control} render={...} />
+</FieldGroup>
 ```
 
 ---
@@ -453,8 +485,7 @@ import { cn } from "@/lib/utils";
 ### Watch Field Values
 
 ```tsx
-const { watch } = useForm<TodoFormData>();
-const title = watch("title"); // reactive value, typed as string
+const title = form.watch("title"); // reactive value, typed as string
 
 return (
   <div>
@@ -466,30 +497,24 @@ return (
 ### Set Values Programmatically
 
 ```tsx
-const { setValue } = useForm<TodoFormData>();
-
 // Set a single field - TypeScript ensures you use valid field names and values
-setValue("title", "New value");
+form.setValue("title", "New value");
 ```
 
 ### Reset Form
 
 ```tsx
-const { reset } = useForm<TodoFormData>();
-
 // Reset to defaults
-reset();
+form.reset();
 
 // Reset to specific values - TypeScript checks the shape
-reset({ title: "Prefilled title", priority: "high" });
+form.reset({ title: "Prefilled title", priority: "high" });
 ```
 
 ### Form Submission State
 
 ```tsx
-const {
-  formState: { errors, isSubmitting, isValid },
-} = useForm<TodoFormData>({ mode: "onChange" }); // validate on every change
+const { isSubmitting, isValid } = form.formState;
 
 <Button type="submit" disabled={isSubmitting}>
   {isSubmitting ? "Adding..." : "Add Task"}
@@ -502,13 +527,13 @@ const {
 
 ```tsx
 // src/components/EditTaskForm.tsx
-import { useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { todoSchema, type TodoFormData } from "../schemas/todoSchema";
 import { useTodo } from "../context/TodoContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Field, FieldLabel, FieldError } from "@/components/ui/field";
 
 interface Task {
   id: number;
@@ -525,11 +550,7 @@ interface EditTaskFormProps {
 function EditTaskForm({ task, onClose }: EditTaskFormProps) {
   const { editTask } = useTodo();
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<TodoFormData>({
+  const form = useForm<TodoFormData>({
     resolver: zodResolver(todoSchema),
     defaultValues: {
       title: task.title,
@@ -543,30 +564,38 @@ function EditTaskForm({ task, onClose }: EditTaskFormProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-      <div className="space-y-2">
-        <Label htmlFor="edit-title">Task Title</Label>
-        <Input id="edit-title" {...register("title")} />
-        {errors.title && (
-          <p className="text-sm text-destructive">{errors.title.message}</p>
+    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+      <Controller
+        name="title"
+        control={form.control}
+        render={({ field, fieldState }) => (
+          <Field data-invalid={fieldState.invalid}>
+            <FieldLabel htmlFor={field.name}>Task Title</FieldLabel>
+            <Input {...field} id={field.name} aria-invalid={fieldState.invalid} />
+            {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+          </Field>
         )}
-      </div>
+      />
 
-      <div className="space-y-2">
-        <Label htmlFor="edit-priority">Priority</Label>
-        <select
-          id="edit-priority"
-          {...register("priority")}
-          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-        >
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-        </select>
-        {errors.priority && (
-          <p className="text-sm text-destructive">{errors.priority.message}</p>
+      <Controller
+        name="priority"
+        control={form.control}
+        render={({ field, fieldState }) => (
+          <Field data-invalid={fieldState.invalid}>
+            <FieldLabel htmlFor={field.name}>Priority</FieldLabel>
+            <select
+              {...field}
+              id={field.name}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+            {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+          </Field>
         )}
-      </div>
+      />
 
       <div className="flex gap-2 justify-end">
         <Button type="button" variant="outline" onClick={onClose}>
@@ -653,12 +682,13 @@ Add a live character counter below the title input:
 ---
 
 ## Key Takeaways
-1. **Zod** defines validation rules as schemas - clear, reusable, type-safe
-2. **`z.infer<typeof schema>`** derives TypeScript types from Zod schemas - one source of truth
+1. **Zod** defines validation rules as schemas — clear, reusable, type-safe
+2. **`z.infer<typeof schema>`** derives TypeScript types from Zod schemas — one source of truth
 3. **React Hook Form** manages form state without re-renders
 4. Connect them with `useForm<TodoFormData>({ resolver: zodResolver(schema) })`
-5. `register("fieldName")` connects inputs - spread it onto the element
-6. `handleSubmit(onSubmit)` validates before calling your function
-7. Access errors via `formState.errors.fieldName.message`
-8. Use `reset()` to clear the form after submission
-9. Define schemas in separate `.ts` files and export both the schema and the derived type
+5. **`Controller`** connects inputs to the form — use it for every field (Input, select, Checkbox, etc.)
+6. **`Field` + `FieldLabel` + `FieldError`** from shadcn/ui handle layout, labels, and error display
+7. `data-invalid` on `Field` auto-styles the whole group when there's an error
+8. **One pattern for everything**: `Controller` → `Field` → input → `FieldError`
+9. Use `form.reset()` to clear the form after submission
+10. Define schemas in separate `.ts` files and export both the schema and the derived type
