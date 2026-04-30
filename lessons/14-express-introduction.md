@@ -63,7 +63,13 @@ npm install -D typescript ts-node @types/express @types/cors @types/node nodemon
 - `@types/express`, `@types/cors`, `@types/node` - TypeScript type definitions
 - `nodemon` - auto-restarts the server when you change code (development tool)
 
-Create `tsconfig.json`:
+Generate `tsconfig.json` using the TypeScript CLI:
+
+```bash
+npx tsc --init
+```
+
+This creates a `tsconfig.json` with all available options documented as comments. Now update it with the settings we need for our Express project:
 
 ```json
 {
@@ -84,6 +90,8 @@ Create `tsconfig.json`:
   "exclude": ["node_modules", "dist"]
 }
 ```
+
+> **Tip:** `npx tsc --init` is handy because you can see every TypeScript option with explanations. For this project, we only need the settings shown above — you can delete or leave the rest commented out.
 
 Create a `nodemon.json` configuration file so nodemon watches TypeScript files:
 
