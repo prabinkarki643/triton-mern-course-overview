@@ -2,15 +2,15 @@ import type { Todo } from "@/types/todo"
 import { createContext, useContext, useState } from "react"
 
 // 1. Define the shape of the context value
-interface TodoContextType {
+export interface TodoContextType {
   tasks: Todo[]
   filteredTasks: Todo[]
   filter: string
   setFilter: (filter: string) => void
-  addTask: (title: string) => void
+  addTask: (title: string, priority?: Todo["priority"]) => void
   toggleTask: (id: number) => void
   deleteTask: (id: number) => void
-  editTask: (id: number, newTitle: string) => void
+  editTask: (id: number, title: string, priority: Todo["priority"]) => void
   completedCount: number
 }
 // 2. Create the context with undefined as default
@@ -44,12 +44,16 @@ export function TodoProvider({ children }: TodoProviderProps) {
 
   const [filter, setFilter] = useState<string>("all")
 
-  const addTask = (title: string): void => {
+  const addTask = (
+    title: string,
+    priority: Todo["priority"] = "medium"
+  ): void => {
     const newTask: Todo = {
       id: Date.now(),
       title,
+      priority,
       completed: false,
-      priority: "low",
+      createdAt: new Date().toISOString(),
     }
     setTasks((prev: Todo[]) => [...prev, newTask])
   }
@@ -66,11 +70,13 @@ export function TodoProvider({ children }: TodoProviderProps) {
     setTasks((prev: Todo[]) => prev.filter((task: Todo) => task.id !== id))
   }
 
-  const editTask = (id: number, newTitle: string): void => {
-    setTasks((prev: Todo[]) =>
-      prev.map((task: Todo) =>
-        task.id === id ? { ...task, title: newTitle } : task
-      )
+  const editTask = (
+    id: number,
+    title: string,
+    priority: Todo["priority"]
+  ): void => {
+    setTasks((prev) =>
+      prev.map((task) => (task.id === id ? { ...task, title, priority } : task))
     )
   }
 
