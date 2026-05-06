@@ -104,7 +104,7 @@ export const getAllTodos = async (req: Request, res: Response): Promise<void> =>
     }
 
     const todos: ITodo[] = await Todo.find(filter).sort(sortOption);
-    res.json(todos);
+    res.json({ data: todos });
   } catch (error: unknown) {
     console.error("getAllTodos error:", error);
     res.status(500).json({ error: "Failed to fetch todos" });
@@ -120,7 +120,7 @@ export const getTodoById = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
-    res.json(todo);
+    res.json({ data: todo });
   } catch (error: unknown) {
     console.error("getTodoById error:", error);
     res.status(500).json({ error: "Failed to fetch todo" });
@@ -137,7 +137,7 @@ export const createTodo = async (req: Request, res: Response): Promise<void> => 
       priority: priority || "medium",
     });
 
-    res.status(201).json(todo);
+    res.status(201).json({ data: todo });
   } catch (error: unknown) {
     if (error instanceof Error && error.name === "ValidationError") {
       res.status(400).json({ error: error.message });
@@ -170,7 +170,7 @@ export const updateTodo = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    res.json(todo);
+    res.json({ data: todo });
   } catch (error: unknown) {
     if (error instanceof Error && error.name === "ValidationError") {
       res.status(400).json({ error: error.message });
@@ -280,7 +280,7 @@ import { Todo, ITodo } from "../models/Todo";
 export const getAllTodos = asyncHandler(async (req: Request, res: Response): Promise<void> => {
   // No try/catch needed -- errors are automatically caught
   const todos: ITodo[] = await Todo.find().sort({ createdAt: -1 });
-  res.json(todos);
+  res.json({ data: todos });
 });
 ```
 

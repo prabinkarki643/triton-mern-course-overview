@@ -526,7 +526,7 @@ const router = Router();
 router.get('/', async (_req: Request, res: Response) => {
   try {
     const todos: ITodo[] = await Todo.find().sort({ createdAt: -1 });
-    res.json(todos);
+    res.json({ data: todos });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch todos' });
   }
@@ -539,7 +539,7 @@ router.get('/:id', async (req: Request, res: Response) => {
     if (!todo) {
       return res.status(404).json({ error: 'Todo not found' });
     }
-    res.json(todo);
+    res.json({ data: todo });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch todo' });
   }
@@ -557,7 +557,7 @@ router.post('/', async (req: Request, res: Response) => {
       title,
       priority: priority || 'medium',
     });
-    res.status(201).json(todo);
+    res.status(201).json({ data: todo });
   } catch (error: unknown) {
     if (error instanceof Error && error.name === 'ValidationError') {
       res.status(400).json({ error: error.message });
@@ -585,7 +585,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (!todo) {
       return res.status(404).json({ error: 'Todo not found' });
     }
-    res.json(todo);
+    res.json({ data: todo });
   } catch (error: unknown) {
     if (error instanceof Error && error.name === 'ValidationError') {
       res.status(400).json({ error: error.message });

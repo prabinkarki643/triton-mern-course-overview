@@ -69,8 +69,9 @@ const response = await fetch('http://localhost:3001/api/todos');
 // Axios throws automatically on 4xx/5xx
 // JSON is parsed automatically
 // Base URL configured once
-const { data } = await api.get<Todo[]>('/todos');
-// data is already typed as Todo[]
+const { data } = await api.get<{ data: Todo[] }>('/todos');
+// Our backend wraps responses in { data: ... }
+const todos = data.data;
 ```
 
 ---
@@ -178,26 +179,26 @@ export const todoApi = {
     if (filters.priority) params.priority = filters.priority;
     if (filters.search) params.search = filters.search;
 
-    const { data } = await api.get<Todo[]>('/todos', { params });
-    return data;
+    const { data } = await api.get<{ data: Todo[] }>('/todos', { params });
+    return data.data;
   },
 
   // Get single todo
   async getById(id: string): Promise<Todo> {
-    const { data } = await api.get<Todo>(`/todos/${id}`);
-    return data;
+    const { data } = await api.get<{ data: Todo }>(`/todos/${id}`);
+    return data.data;
   },
 
   // Create a new todo
   async create(todoData: CreateTodoData): Promise<Todo> {
-    const { data } = await api.post<Todo>('/todos', todoData);
-    return data;
+    const { data } = await api.post<{ data: Todo }>('/todos', todoData);
+    return data.data;
   },
 
   // Update a todo
   async update(id: string, todoData: UpdateTodoData): Promise<Todo> {
-    const { data } = await api.put<Todo>(`/todos/${id}`, todoData);
-    return data;
+    const { data } = await api.put<{ data: Todo }>(`/todos/${id}`, todoData);
+    return data.data;
   },
 
   // Delete a todo
@@ -208,11 +209,12 @@ export const todoApi = {
 ```
 
 **Notice the improvements over the Fetch API version:**
-- **No manual JSON parsing** -- `api.get<Todo[]>()` returns typed data automatically
+- **No manual JSON parsing** -- Axios returns typed data automatically
 - **No manual error checking** -- Axios throws on 4xx/5xx responses
 - **No base URL repeated** -- paths start with `/todos` instead of full URLs
 - **No headers repeated** -- Content-Type is set in the Axios instance
-- **Generic types** -- `api.get<Todo[]>()` tells TypeScript what the response contains
+- **Generic types** -- `api.get<{ data: Todo[] }>()` tells TypeScript what the response contains
+- **Wrapped responses** -- our backend returns `{ data: ... }` consistently, so we extract `.data` once at the API service layer
 - **IDs are strings** -- MongoDB ObjectIds, not integers
 
 ---

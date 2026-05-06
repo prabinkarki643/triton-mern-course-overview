@@ -299,7 +299,7 @@ let nextId = 4;
 
 // GET all todos
 app.get('/api/todos', (req: Request, res: Response) => {
-  res.json(todos);
+  res.json({ data: todos });
 });
 
 // GET single todo
@@ -308,7 +308,7 @@ app.get('/api/todos/:id', (req: Request, res: Response) => {
   if (!todo) {
     return res.status(404).json({ error: "Todo not found" });
   }
-  res.json(todo);
+  res.json({ data: todo });
 });
 
 // POST create todo
@@ -333,7 +333,7 @@ app.post('/api/todos', (req: Request, res: Response) => {
   };
 
   todos.push(newTodo);
-  res.status(201).json(newTodo);
+  res.status(201).json({ data: newTodo });
 });
 
 // PUT update todo
@@ -349,7 +349,7 @@ app.put('/api/todos/:id', (req: Request, res: Response) => {
   if (priority !== undefined) todo.priority = priority;
   if (completed !== undefined) todo.completed = completed;
 
-  res.json(todo);
+  res.json({ data: todo });
 });
 
 // DELETE todo
