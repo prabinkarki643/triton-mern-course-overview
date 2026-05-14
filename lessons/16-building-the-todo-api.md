@@ -1,8 +1,10 @@
 # Lesson 16: Building the Todo API
 
 ## What You Will Learn
-- Structuring an Express app properly (routes, controllers) with TypeScript
-- Complete CRUD endpoints using Mongoose models with typed validation
+- Structuring an Express app properly (routes, controllers, validators) with TypeScript
+- Complete CRUD endpoints using Mongoose models
+- **Request validation with `express-validator`** -- catch bad data before it hits the database
+- Building reusable validator chains and validation middleware
 - Error handling patterns and HTTP status codes
 - Filtering, sorting, and searching with typed query parameters
 - API best practices with full type safety
@@ -16,25 +18,28 @@ As your API grows, keeping everything in one file becomes messy. Let us organise
 ```
 backend/src/
 ├── models/
-│   └── Todo.ts             # Mongoose schema and model
+│   └── Todo.ts                          # Mongoose schema and model
 ├── routes/
-│   └── todoRoutes.ts       # Route definitions
+│   └── todoRoutes.ts                    # Route definitions
 ├── controllers/
-│   └── todoController.ts   # Request handling logic
+│   └── todoController.ts                # Request handling logic
 ├── middleware/
-│   └── asyncHandler.ts     # Async error handling middleware
+│   └── validate-result.middleware.ts    # Validation result handler
+├── validators/
+│   └── todo.validator.ts                # express-validator chains for todos
 ├── types/
-│   └── todo.ts             # Shared interfaces and types
-├── database.ts              # MongoDB connection
-└── index.ts                # App entry point
+│   └── todo.ts                          # Shared interfaces and types
+├── database.ts                           # MongoDB connection
+└── index.ts                             # App entry point
 ```
 
 **Separation of concerns:**
 - **Routes** -- define URL paths and HTTP methods
-- **Controllers** -- handle the request/response logic
+- **Controllers** -- handle the request/response logic (clean, no validation noise)
+- **Validators** -- declare validation rules per endpoint with `express-validator`
+- **Middleware** -- shared logic that runs before controllers (auth, validation results, error handling)
 - **Models** -- define the database structure with Mongoose schemas
 - **Types** -- shared TypeScript interfaces
-- **Middleware** -- shared logic that runs before controllers
 
 ---
 
@@ -64,13 +69,171 @@ export interface TodoQueryParams {
 }
 ```
 
-These interfaces describe the shape of the data we expect from the client. They do not enforce validation on their own (Mongoose handles that via the schema), but they give us autocomplete and type checking.
+These interfaces describe the shape of the data we expect from the client. They give us autocomplete and type checking — but they do **not** validate at runtime.
 
 ---
 
-## 16.3 The Controller
+## 16.3 Request Validation with express-validator
 
-Controllers contain the actual logic for each endpoint. Every handler is typed with Express's `Request` and `Response` types, and uses Mongoose model methods:
+We have two places where data validation can happen:
+
+1. **Mongoose schema** -- catches bad data at the database layer
+2. **express-validator** -- catches bad data at the route layer, *before* it reaches the controller
+
+**Why validate at the route layer too?**
+- Return clear, structured error messages (e.g. "title must be at least 3 characters")
+- Stop bad requests early (don't waste a database call)
+- Sanitise input (trim whitespace, escape HTML, normalise email)
+- Keep controllers focused on business logic, not input checking
+
+### Install express-validator
+
+```bash
+npm install express-validator
+```
+
+No `@types` package needed -- `express-validator` ships with its own TypeScript types.
+
+### Step 1: Create the Validation Result Middleware
+
+This middleware runs after the validation chain. If any rules failed, it returns a 400 response with the errors. Otherwise, it calls `next()` and the controller runs.
+
+```ts
+// backend/src/middleware/validate-result.middleware.ts
+import { Request, Response, NextFunction } from "express";
+import { validationResult } from "express-validator";
+
+export const validateResult = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  const errors = validationResult(req);
+
+  if (!errors.isEmpty()) {
+    res.status(400).json({
+      error: "Validation failed",
+      details: errors.array().map((err) => ({
+        field: err.type === "field" ? err.path : "unknown",
+        message: err.msg,
+      })),
+    });
+    return;
+  }
+
+  next();
+};
+```
+
+**Why a separate middleware?** Validation chains describe *what* to check. The result middleware decides *what to do* when something fails. Separating them keeps each piece reusable.
+
+### Step 2: Create the Todo Validators
+
+Each validator is an array of `express-validator` chains. We export one chain per endpoint:
+
+```ts
+// backend/src/validators/todo.validator.ts
+import { body, param, query } from "express-validator";
+
+// Reusable: validates the :id route parameter is a valid MongoDB ObjectId
+const todoIdParam = param("id")
+  .isMongoId()
+  .withMessage("Invalid todo ID format");
+
+// POST /api/todos -- create a new todo
+export const createTodoValidator = [
+  body("title")
+    .exists({ checkFalsy: true })
+    .withMessage("Title is required")
+    .bail()
+    .isString()
+    .withMessage("Title must be a string")
+    .trim()
+    .isLength({ min: 3, max: 100 })
+    .withMessage("Title must be between 3 and 100 characters"),
+
+  body("priority")
+    .optional()
+    .isIn(["low", "medium", "high"])
+    .withMessage("Priority must be low, medium, or high"),
+];
+
+// PUT /api/todos/:id -- update an existing todo (all fields optional)
+export const updateTodoValidator = [
+  todoIdParam,
+
+  body("title")
+    .optional()
+    .isString()
+    .withMessage("Title must be a string")
+    .trim()
+    .isLength({ min: 3, max: 100 })
+    .withMessage("Title must be between 3 and 100 characters"),
+
+  body("priority")
+    .optional()
+    .isIn(["low", "medium", "high"])
+    .withMessage("Priority must be low, medium, or high"),
+
+  body("completed")
+    .optional()
+    .isBoolean()
+    .withMessage("Completed must be a boolean"),
+];
+
+// GET /api/todos/:id and DELETE /api/todos/:id -- just validate the ID
+export const todoIdValidator = [todoIdParam];
+
+// GET /api/todos -- validate optional query parameters
+export const listTodosValidator = [
+  query("completed")
+    .optional()
+    .isIn(["true", "false"])
+    .withMessage("completed must be 'true' or 'false'"),
+
+  query("priority")
+    .optional()
+    .isIn(["low", "medium", "high"])
+    .withMessage("priority must be low, medium, or high"),
+
+  query("sort")
+    .optional()
+    .isIn(["title", "priority", "createdAt"])
+    .withMessage("sort must be title, priority, or createdAt"),
+
+  query("search")
+    .optional()
+    .isString()
+    .trim()
+    .isLength({ max: 100 })
+    .withMessage("search must be a string under 100 characters"),
+];
+```
+
+**Key validators explained:**
+
+| Validator | What it does |
+|-----------|-------------|
+| `body("field")` | Validate a field in `req.body` |
+| `param("id")` | Validate a URL parameter like `:id` |
+| `query("priority")` | Validate a query parameter like `?priority=high` |
+| `.exists({ checkFalsy: true })` | Field must be present and not empty/0/false |
+| `.bail()` | Stop checking this field if the previous rule failed |
+| `.optional()` | Skip validation if the field is missing |
+| `.trim()` | Sanitiser -- removes leading/trailing whitespace |
+| `.isMongoId()` | Must be a valid MongoDB ObjectId (24 hex chars) |
+| `.isIn([...])` | Must be one of the allowed values |
+| `.withMessage("...")` | Custom error message if the previous rule fails |
+
+> **Important:** Sanitisers like `.trim()` actually *modify* `req.body`. The trimmed value is what your controller receives.
+
+---
+
+## 16.4 The Controller
+
+Controllers contain the actual logic for each endpoint. Because validation runs in the middleware *before* the controller, the controller code stays focused on business logic -- no manual `if (!title)` checks needed.
+
+Every handler is typed with Express's `Request` and `Response` types, and uses Mongoose model methods:
 
 ```ts
 // backend/src/controllers/todoController.ts
@@ -128,6 +291,7 @@ export const getTodoById = async (req: Request, res: Response): Promise<void> =>
 };
 
 // POST /api/todos
+// Validation is handled by createTodoValidator + validateResult middleware
 export const createTodo = async (req: Request, res: Response): Promise<void> => {
   try {
     const { title, priority } = req.body as CreateTodoBody;
@@ -139,16 +303,13 @@ export const createTodo = async (req: Request, res: Response): Promise<void> => 
 
     res.status(201).json({ data: todo });
   } catch (error: unknown) {
-    if (error instanceof Error && error.name === "ValidationError") {
-      res.status(400).json({ error: error.message });
-      return;
-    }
     console.error("createTodo error:", error);
     res.status(500).json({ error: "Failed to create todo" });
   }
 };
 
 // PUT /api/todos/:id
+// Validation is handled by updateTodoValidator + validateResult middleware
 export const updateTodo = async (req: Request, res: Response): Promise<void> => {
   try {
     const { title, priority, completed } = req.body as UpdateTodoBody;
@@ -172,10 +333,6 @@ export const updateTodo = async (req: Request, res: Response): Promise<void> => 
 
     res.json({ data: todo });
   } catch (error: unknown) {
-    if (error instanceof Error && error.name === "ValidationError") {
-      res.status(400).json({ error: error.message });
-      return;
-    }
     console.error("updateTodo error:", error);
     res.status(500).json({ error: "Failed to update todo" });
   }
@@ -208,9 +365,9 @@ export const deleteTodo = async (req: Request, res: Response): Promise<void> => 
 
 ---
 
-## 16.4 Clean Routes File
+## 16.5 Clean Routes File with Validators
 
-Now the routes file is clean and readable:
+Now the routes file wires everything together: **validator → validateResult → controller**. Each request passes through validation before reaching the controller.
 
 ```ts
 // backend/src/routes/todoRoutes.ts
@@ -222,21 +379,53 @@ import {
   updateTodo,
   deleteTodo,
 } from "../controllers/todoController";
+import { validateResult } from "../middleware/validate-result.middleware";
+import {
+  createTodoValidator,
+  updateTodoValidator,
+  todoIdValidator,
+  listTodosValidator,
+} from "../validators/todo.validator";
 
 const router = Router();
 
-router.get("/", getAllTodos);
-router.get("/:id", getTodoById);
-router.post("/", createTodo);
-router.put("/:id", updateTodo);
-router.delete("/:id", deleteTodo);
+router.get("/", listTodosValidator, validateResult, getAllTodos);
+router.get("/:id", todoIdValidator, validateResult, getTodoById);
+router.post("/", createTodoValidator, validateResult, createTodo);
+router.put("/:id", updateTodoValidator, validateResult, updateTodo);
+router.delete("/:id", todoIdValidator, validateResult, deleteTodo);
 
 export default router;
 ```
 
+**How the middleware chain works:**
+
+```
+Request → [validator chain] → [validateResult] → [controller]
+                                      ↓
+                              If validation failed:
+                              respond 400 and stop
+```
+
+If validation passes, `next()` is called and the request flows to the controller. If anything fails, the client gets a clean 400 response with details — and the controller never runs.
+
+### Example Validation Error Response
+
+```json
+{
+  "error": "Validation failed",
+  "details": [
+    { "field": "title", "message": "Title must be between 3 and 100 characters" },
+    { "field": "priority", "message": "Priority must be low, medium, or high" }
+  ]
+}
+```
+
+The frontend can read this structure and show errors next to the relevant fields.
+
 ---
 
-## 16.5 HTTP Status Codes Reference
+## 16.6 HTTP Status Codes Reference
 
 | Code | Meaning | When to Use |
 |------|---------|-------------|
@@ -249,42 +438,11 @@ export default router;
 
 ---
 
-## 16.6 Error Handling Middleware
+## 16.7 Global Error Handler
 
-Instead of repeating try/catch everywhere, create a typed wrapper:
+Each controller already uses **try/catch** to handle errors from Mongoose calls (see section 16.4). That covers expected database errors -- but what about unexpected errors that slip through?
 
-```ts
-// backend/src/middleware/asyncHandler.ts
-import { Request, Response, NextFunction } from "express";
-
-type AsyncRouteHandler = (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => Promise<void>;
-
-export const asyncHandler = (fn: AsyncRouteHandler) => {
-  return (req: Request, res: Response, next: NextFunction): void => {
-    Promise.resolve(fn(req, res, next)).catch(next);
-  };
-};
-```
-
-Use it in controllers:
-
-```ts
-import { Request, Response } from "express";
-import { asyncHandler } from "../middleware/asyncHandler";
-import { Todo, ITodo } from "../models/Todo";
-
-export const getAllTodos = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  // No try/catch needed -- errors are automatically caught
-  const todos: ITodo[] = await Todo.find().sort({ createdAt: -1 });
-  res.json({ data: todos });
-});
-```
-
-Add a global error handler in `index.ts`:
+Add a **global error handler** in `index.ts` to catch anything that gets thrown without being caught:
 
 ```ts
 import { Request, Response, NextFunction } from "express";
@@ -293,7 +451,7 @@ import { Request, Response, NextFunction } from "express";
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error("Unhandled error:", err);
 
-  // Handle Mongoose validation errors
+  // Handle Mongoose validation errors (just in case schema validation fails)
   if (err.name === "ValidationError") {
     res.status(400).json({ error: err.message });
     return;
@@ -311,9 +469,16 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 });
 ```
 
+**The pattern in this project:**
+- **express-validator** catches bad input (400) before the controller runs
+- **try/catch** in each controller catches database errors and returns appropriate responses
+- **Global error handler** is the safety net for anything else
+
+Some projects use a helper called `asyncHandler` to avoid writing try/catch in every controller. It is a valid pattern -- but for learning, **explicit try/catch is clearer**. You can see exactly where errors are caught and what happens next.
+
 ---
 
-## 16.7 API Endpoint Summary
+## 16.8 API Endpoint Summary
 
 | Method | URL | Body | Response | Description |
 |--------|-----|------|----------|-------------|
@@ -328,7 +493,7 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 
 ---
 
-## 16.8 Testing the Complete API
+## 16.9 Testing the Complete API
 
 Create a test file to verify all endpoints:
 
@@ -398,7 +563,7 @@ Content-Type: application/json
 ### Delete todo (replace ID)
 DELETE http://localhost:3001/api/todos/6614a3f2b5e4c8a1d2e3f458
 
-### Test validation (should fail -- title too short)
+### Test validation -- title too short (400 with structured details)
 POST http://localhost:3001/api/todos
 Content-Type: application/json
 
@@ -406,7 +571,19 @@ Content-Type: application/json
   "title": "Hi"
 }
 
-### Test not found (should return 404)
+### Test validation -- invalid priority (400)
+POST http://localhost:3001/api/todos
+Content-Type: application/json
+
+{
+  "title": "Valid title",
+  "priority": "urgent"
+}
+
+### Test validation -- invalid MongoId in URL (400)
+GET http://localhost:3001/api/todos/not-a-real-id
+
+### Test not found (should return 404 -- valid format, no match)
 GET http://localhost:3001/api/todos/6614a3f2b5e4c8a1d2e3f999
 ```
 
@@ -417,11 +594,13 @@ GET http://localhost:3001/api/todos/6614a3f2b5e4c8a1d2e3f999
 ## Practice Exercises
 
 ### Exercise 1: Build the Structured API
-1. Refactor the code from Lesson 15 into separate files (controller, routes, types)
+1. Refactor the code from Lesson 15 into separate files (controller, routes, types, validators)
 2. Add the `TodoQueryParams`, `CreateTodoBody`, and `UpdateTodoBody` interfaces
-3. Import and use the `Todo` model from `models/Todo.ts` in the controller
-4. Test all endpoints work correctly
-5. Verify error cases return proper status codes
+3. Install `express-validator` and build the validator chains
+4. Create the `validateResult` middleware
+5. Wire validators into your routes (`validator → validateResult → controller`)
+6. Test all endpoints work correctly
+7. Verify validation failures return 400 with structured details, and not-found returns 404
 
 ### Exercise 2: Add Filtering
 Implement the query parameter features:
@@ -446,13 +625,15 @@ await Todo.updateMany({}, { completed: !allCompleted });
 ---
 
 ## Key Takeaways
-1. **Separate routes from controllers** -- routes define paths, controllers handle logic
-2. **Type your request bodies** with interfaces (`CreateTodoBody`, `UpdateTodoBody`)
-3. **Type your query parameters** with an interface (`TodoQueryParams`)
-4. **Mongoose handles validation** -- schema rules catch invalid data before it reaches the database
-5. Use proper **HTTP status codes** (201 for create, 404 for not found, etc.)
-6. **`Todo.findByIdAndUpdate()`** with `{ new: true }` replaces the find-then-save pattern
-7. **`Todo.findByIdAndDelete()`** returns the deleted document so you can check if it existed
-8. **Search uses `$regex`** -- MongoDB's built-in pattern matching for text search
-9. Always return **meaningful error messages** so the frontend can display them
-10. Test every endpoint and edge case before connecting to the frontend
+1. **Separate routes, validators, and controllers** -- each file has one job
+2. **`express-validator`** catches bad data *before* the controller runs
+3. **Validator chains** declare rules per endpoint -- one array per route
+4. **`validateResult` middleware** turns validation failures into clean 400 responses
+5. **`.bail()`** stops a chain early when a critical rule fails; **`.trim()`** sanitises input
+6. **Type your request bodies and query params** with interfaces (`CreateTodoBody`, `UpdateTodoBody`, `TodoQueryParams`)
+7. **Mongoose schema validation** is a second safety net at the database layer
+8. Use proper **HTTP status codes** (201 for create, 400 for validation, 404 for not found)
+9. **`Todo.findByIdAndUpdate()`** with `{ new: true }` replaces the find-then-save pattern
+10. **`Todo.findByIdAndDelete()`** returns the deleted document so you can check if it existed
+11. **Search uses `$regex`** -- MongoDB's built-in pattern matching for text search
+12. Always return **structured error messages** so the frontend can display field-level errors
