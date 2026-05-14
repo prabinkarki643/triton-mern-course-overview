@@ -1,10 +1,9 @@
 // backend/src/index.ts
-import 'dotenv/config';
+import "dotenv/config";
 import express, { NextFunction, Request, Response } from "express";
 import cors from "cors";
-import { connectDatabase } from './database';
-import todoRoutes from './routes/todoRoutes';
-
+import { connectDatabase } from "./database";
+import todoRoutes from "./routes/todoRoutes";
 
 const app = express();
 
@@ -29,15 +28,26 @@ app.get("/", (req: Request, res: Response) => {
 
 // Routes
 // TODO APIS
-app.use('/api/todos', todoRoutes);
-
+app.use("/api/todos", todoRoutes);
 
 // Error handling middleware (must have 4 parameters)
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  console.error(err.stack);
-  res
-    .status(500)
-    .json({ error: err.message || "Something went wrong!" });
+  console.error("Unhandled error:", err);
+  // Handle Mongoose validation errors (just in case schema validation fails)
+  if (err.name === "ValidationError") {
+    res.status(400).json({ error: err.message });
+    return;
+  }
+
+  // Handle invalid ObjectId errors
+  if (err.name === "CastError") {
+    res.status(400).json({ error: "Invalid ID format" });
+    return;
+  }
+
+  res.status(500).json({
+    error: err.message || "Something went wrong!",
+  });
 });
 
 // Connect to database, then start server

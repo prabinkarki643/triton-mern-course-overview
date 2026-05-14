@@ -10,6 +10,13 @@ export interface CreateTodoBody {
   priority?: Todo["priority"];
 }
 
+export interface TodoQueryParams {
+  completed?: string;
+  priority?: string;
+  search?: string;
+  sort?: string;
+}
+
 export interface UpdateTodoBody {
   title?: string;
   priority?: Todo["priority"];
