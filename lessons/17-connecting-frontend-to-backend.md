@@ -7,6 +7,9 @@
 - What React Query is and why it simplifies server state management
 - Setting up React Query with `QueryClientProvider`
 - Using `useQuery` for fetching data and `useMutation` for changes
+- **Custom hooks pattern**: one focused hook per action (`useTodos`, `useCreateTodo`, etc.)
+- **Query keys factory** for type-safe, hierarchical cache invalidation
+- **Toast notifications** with Sonner for success/error feedback inside mutation hooks
 - Replacing manual state management with React Query's automatic caching
 - Environment variables for API URLs
 
@@ -76,16 +79,18 @@ const todos = data.data;
 
 ---
 
-## 17.3 Installing Axios and React Query
+## 17.3 Installing Axios, React Query, and Sonner
 
 In your webapp project:
 
 ```bash
 npm install axios @tanstack/react-query
+npx shadcn@latest add sonner
 ```
 
 - `axios` -- HTTP client with interceptors, automatic JSON, and typed responses
 - `@tanstack/react-query` -- server state manager with caching, loading states, and automatic refetching
+- `sonner` (via shadcn) -- toast notifications for success and error feedback
 
 ---
 
@@ -275,15 +280,16 @@ const { data: todos, isLoading, isError } = useQuery({
 
 ---
 
-## 17.8 Setting Up React Query
+## 17.8 Setting Up React Query and the Toaster
 
-Wrap your app with the `QueryClientProvider`:
+Wrap your app with the `QueryClientProvider` and mount the Sonner `Toaster` at the root so toasts work everywhere in the app:
 
 ```tsx
 // webapp/src/main.tsx
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Toaster } from '@/components/ui/sonner';
 import App from './App';
 import './index.css';
 
@@ -305,6 +311,7 @@ root.render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <App />
+      <Toaster richColors position="top-right" />
     </QueryClientProvider>
   </React.StrictMode>
 );
@@ -314,6 +321,7 @@ root.render(
 - `staleTime` -- how long data is considered fresh. While fresh, React Query serves from cache without refetching
 - `retry: 1` -- retry a failed request once before showing an error
 - `refetchOnWindowFocus` -- when the user switches back to your tab, data is automatically refreshed
+- `<Toaster richColors />` -- enables coloured success/error toasts globally; mount it once at the root
 
 ---
 
@@ -530,111 +538,146 @@ export function TodoProvider({ children }: TodoProviderProps): JSX.Element {
 
 ---
 
-## 17.12 Custom Hooks for Clean Components
+## 17.12 Custom Hooks: One Hook Per Action
 
-Create custom hooks that combine React Query with your API service for reuse across components:
+Instead of one big `useTodos()` that bundles every query and mutation together, we'll create **one focused hook per action**. This is the industry-standard pattern -- each component only subscribes to what it needs, and each hook owns its own success/error logic.
+
+### Why One Hook Per Action?
+
+| Single `useTodos()` (bundled) | Individual hooks |
+|---------------------|-----------------|
+| Component re-renders when **any** mutation state changes | Component re-renders only when **its** hook changes |
+| All `onSuccess`/`onError` in one place | Each hook owns its own success/error logic |
+| Bundles `isPending` for create/update/delete together | Each hook has its own `isPending` |
+| Hard to test individually | Each hook is testable in isolation |
+
+### Step 1: Query Keys Factory
+
+Before writing the hooks, define a centralised object for all query keys. This gives us **type safety** and makes invalidation easier as the app grows:
 
 ```ts
 // webapp/src/hooks/useTodos.ts
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { todoApi } from '../services/todoApi';
-import { Todo, CreateTodoData, UpdateTodoData, TodoStats } from '../types/todo';
-import { useTodoFilter } from '../context/TodoContext';
+import type { CreateTodoData, UpdateTodoData, TodoFilters } from '../types/todo';
 
-export function useTodos() {
-  const queryClient = useQueryClient();
-  const { filter } = useTodoFilter();
+// Centralised query keys -- one source of truth
+export const todoKeys = {
+  all: ['todos'] as const,
+  lists: () => [...todoKeys.all, 'list'] as const,
+  list: (filters: TodoFilters) => [...todoKeys.lists(), filters] as const,
+  details: () => [...todoKeys.all, 'detail'] as const,
+  detail: (id: string) => [...todoKeys.details(), id] as const,
+};
+```
 
-  // Fetch all todos
-  const {
-    data: todos = [],
-    isLoading,
-    isError,
-    error,
-  } = useQuery<Todo[]>({
-    queryKey: ['todos'],
-    queryFn: () => todoApi.getAll(),
+**How the hierarchy works:**
+
+```
+todoKeys.all              =>  ['todos']
+todoKeys.lists()          =>  ['todos', 'list']
+todoKeys.list({page: 1})  =>  ['todos', 'list', {page: 1}]
+todoKeys.detail('abc123') =>  ['todos', 'detail', 'abc123']
+```
+
+When you invalidate `todoKeys.lists()`, **all list queries** (regardless of filters) are invalidated. When you invalidate `todoKeys.all`, **everything** -- lists and details -- is invalidated.
+
+### Step 2: Query Hooks (Reading Data)
+
+```ts
+// Fetch a list of todos (with optional filters)
+export function useTodos(filters: TodoFilters = {}) {
+  return useQuery({
+    queryKey: todoKeys.list(filters),
+    queryFn: () => todoApi.getAll(filters),
   });
+}
 
-  // Create mutation
-  const createMutation = useMutation({
-    mutationFn: (newTodo: CreateTodoData) => todoApi.create(newTodo),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['todos'] });
-    },
+// Fetch a single todo by id
+export function useTodo(id: string) {
+  return useQuery({
+    queryKey: todoKeys.detail(id),
+    queryFn: () => todoApi.getById(id),
+    enabled: !!id, // skip if id is empty
   });
-
-  // Update mutation
-  const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: UpdateTodoData }) =>
-      todoApi.update(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['todos'] });
-    },
-  });
-
-  // Delete mutation
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => todoApi.delete(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['todos'] });
-    },
-  });
-
-  // Client-side filtering
-  const filteredTodos: Todo[] = todos.filter((todo: Todo) => {
-    if (filter === 'active') return !todo.completed;
-    if (filter === 'completed') return todo.completed;
-    return true;
-  });
-
-  // Calculate stats
-  const stats: TodoStats = {
-    total: todos.length,
-    completed: todos.filter((t: Todo) => t.completed).length,
-    active: todos.filter((t: Todo) => !t.completed).length,
-    percentage: todos.length > 0
-      ? Math.round(
-          (todos.filter((t: Todo) => t.completed).length / todos.length) * 100
-        )
-      : 0,
-  };
-
-  return {
-    todos: filteredTodos,
-    allTodos: todos,
-    stats,
-    isLoading,
-    isError,
-    error,
-    addTodo: createMutation.mutate,
-    isAdding: createMutation.isPending,
-    updateTodo: (id: string, data: UpdateTodoData) =>
-      updateMutation.mutate({ id, data }),
-    isUpdating: updateMutation.isPending,
-    deleteTodo: deleteMutation.mutate,
-    isDeleting: deleteMutation.isPending,
-  };
 }
 ```
 
-**Now components are clean:**
+### Step 3: Mutation Hooks (Changing Data)
+
+Each mutation hook is focused on one action, invalidates the relevant queries, and shows a toast for success or error:
+
+```ts
+// Create a new todo
+export function useCreateTodo() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: CreateTodoData) => todoApi.create(data),
+    onSuccess: () => {
+      toast.success('Todo created successfully');
+      queryClient.invalidateQueries({ queryKey: todoKeys.lists() });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to create todo');
+    },
+  });
+}
+
+// Update an existing todo
+export function useUpdateTodo() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: UpdateTodoData }) =>
+      todoApi.update(id, data),
+    onSuccess: () => {
+      toast.success('Todo updated successfully');
+      queryClient.invalidateQueries({ queryKey: todoKeys.all });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to update todo');
+    },
+  });
+}
+
+// Delete a todo
+export function useDeleteTodo() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => todoApi.delete(id),
+    onSuccess: () => {
+      toast.success('Todo deleted');
+      queryClient.invalidateQueries({ queryKey: todoKeys.lists() });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to delete todo');
+    },
+  });
+}
+```
+
+**Notice:**
+- `useUpdateTodo` invalidates `todoKeys.all` because it might also be displayed on a detail page
+- `useCreateTodo` and `useDeleteTodo` only invalidate `todoKeys.lists()` -- there's no detail to worry about
+- Every mutation has a toast for both success and failure -- the user always knows what happened
+
+### Step 4: Components Consume Only What They Need
 
 ```tsx
 // webapp/src/components/TodoList.tsx
 import { useTodos } from '../hooks/useTodos';
-import { Todo } from '../types/todo';
+import { Skeleton } from '@/components/ui/skeleton';
 import TodoItem from './TodoItem';
+import type { Todo } from '../types/todo';
 
 function TodoList(): JSX.Element {
-  const { todos, isLoading, isError, error } = useTodos();
+  const { data: todos, isLoading, isError, error } = useTodos();
 
   if (isLoading) {
-    return (
-      <div className="text-center py-8 text-muted-foreground">
-        Loading tasks...
-      </div>
-    );
+    return <Skeleton className="h-32 w-full" />;
   }
 
   if (isError) {
@@ -645,7 +688,7 @@ function TodoList(): JSX.Element {
     );
   }
 
-  if (todos.length === 0) {
+  if (!todos || todos.length === 0) {
     return (
       <div className="text-center py-8 text-muted-foreground">
         No tasks found.
@@ -664,6 +707,61 @@ function TodoList(): JSX.Element {
 
 export default TodoList;
 ```
+
+```tsx
+// webapp/src/components/AddTodoForm.tsx
+import { useCreateTodo } from '../hooks/useTodos';
+
+function AddTodoForm() {
+  const { mutate: createTodo, isPending } = useCreateTodo();
+
+  const onSubmit = (data: TodoFormData) => {
+    createTodo(data, {
+      onSuccess: () => form.reset(),
+    });
+  };
+
+  return (
+    <form onSubmit={form.handleSubmit(onSubmit)}>
+      {/* fields ... */}
+      <Button type="submit" disabled={isPending}>
+        {isPending ? 'Adding...' : 'Add Todo'}
+      </Button>
+    </form>
+  );
+}
+```
+
+```tsx
+// webapp/src/components/TodoItem.tsx
+import { useUpdateTodo, useDeleteTodo } from '../hooks/useTodos';
+
+function TodoItem({ task }: { task: Todo }) {
+  const { mutate: updateTodo } = useUpdateTodo();
+  const { mutate: deleteTodo, isPending: isDeleting } = useDeleteTodo();
+
+  return (
+    <div>
+      <Checkbox
+        checked={task.completed}
+        onCheckedChange={(checked) =>
+          updateTodo({ id: task._id, data: { completed: !!checked } })
+        }
+      />
+      <span>{task.title}</span>
+      <Button
+        variant="destructive"
+        disabled={isDeleting}
+        onClick={() => deleteTodo(task._id)}
+      >
+        Delete
+      </Button>
+    </div>
+  );
+}
+```
+
+**The pattern:** import only the hooks you need, destructure `mutate` (or `data`/`isLoading` from queries), pass an `onSuccess` callback for component-specific actions like form reset.
 
 ---
 
@@ -836,62 +934,71 @@ project/
 
 ## Practice Exercises
 
-### Exercise 1: Set Up Axios and React Query
+### Exercise 1: Set Up Axios, React Query, and Sonner
 1. Install `axios` and `@tanstack/react-query` in the webapp project
-2. Create the Axios instance in `services/api.ts`
-3. Create the `todoApi.ts` service layer using Axios
-4. Set up `QueryClientProvider` in `main.tsx`
-5. Create the `useTodos` custom hook
+2. Add the Sonner component: `npx shadcn@latest add sonner`
+3. Create the Axios instance in `services/api.ts`
+4. Create the `todoApi.ts` service layer using Axios
+5. Set up `QueryClientProvider` and `<Toaster richColors />` in `main.tsx`
 
-### Exercise 2: Replace Context with React Query
+### Exercise 2: Build the Hooks
+1. Create `hooks/useTodos.ts` with the `todoKeys` factory
+2. Add the query hooks: `useTodos`, `useTodo`
+3. Add the mutation hooks: `useCreateTodo`, `useUpdateTodo`, `useDeleteTodo`
+4. Each mutation should show a toast on success and on error
+5. Invalidate the right query keys after each mutation
+
+### Exercise 3: Wire Up the Components
 1. Update `TodoContext` to only manage the filter state
 2. Update `TodoList` to use the `useTodos` hook
-3. Update `AddTodoForm` to use `createMutation`
-4. Update `TodoItem` to use update and delete mutations
+3. Update `AddTodoForm` to use `useCreateTodo` and reset the form on success
+4. Update `TodoItem` to use `useUpdateTodo` and `useDeleteTodo`
 5. Test that adding, completing, editing, and deleting all work
-6. Refresh the page -- verify data persists
+6. Refresh the page -- verify data persists and toasts appear
 
-### Exercise 3: Loading and Mutation States
-1. Show "Adding..." on the Add button while creating a todo
+### Exercise 4: Loading and Mutation States
+1. Show "Adding..." on the Add button while creating a todo (`isPending` from `useCreateTodo`)
 2. Disable the delete button while a deletion is in progress
-3. Show a loading spinner on individual todo items during updates
-4. Test by using the Network tab in browser DevTools to throttle the connection
-5. Stop the backend server and verify error states appear correctly
+3. Use the Network tab in browser DevTools to throttle the connection
+4. Stop the backend server and verify the error toasts appear correctly
 
-### Exercise 4: Optimistic Updates (Advanced)
-Instead of waiting for the re-fetch after a mutation, update the cache immediately:
+### Exercise 5: Optimistic Updates (Advanced)
+Update `useUpdateTodo` to update the cache immediately, before the server responds:
 ```tsx
-const updateMutation = useMutation({
-  mutationFn: ({ id, data }: { id: string; data: UpdateTodoData }) =>
-    todoApi.update(id, data),
-  onMutate: async ({ id, data }) => {
-    // Cancel in-flight queries
-    await queryClient.cancelQueries({ queryKey: ['todos'] });
+export function useUpdateTodo() {
+  const queryClient = useQueryClient();
 
-    // Snapshot previous value
-    const previousTodos = queryClient.getQueryData<Todo[]>(['todos']);
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: UpdateTodoData }) =>
+      todoApi.update(id, data),
+    onMutate: async ({ id, data }) => {
+      // Cancel any in-flight queries
+      await queryClient.cancelQueries({ queryKey: todoKeys.lists() });
 
-    // Optimistically update the cache
-    queryClient.setQueryData<Todo[]>(['todos'], (old) =>
-      old?.map((todo) =>
-        todo._id === id ? { ...todo, ...data } : todo
-      ) ?? []
-    );
+      // Snapshot previous value
+      const previousTodos = queryClient.getQueryData<Todo[]>(todoKeys.lists());
 
-    // Return the snapshot for rollback
-    return { previousTodos };
-  },
-  onError: (_err, _variables, context) => {
-    // Rollback on error
-    if (context?.previousTodos) {
-      queryClient.setQueryData(['todos'], context.previousTodos);
-    }
-  },
-  onSettled: () => {
-    // Always refetch to ensure consistency
-    queryClient.invalidateQueries({ queryKey: ['todos'] });
-  },
-});
+      // Optimistically update the cache
+      queryClient.setQueryData<Todo[]>(todoKeys.lists(), (old) =>
+        old?.map((todo) =>
+          todo._id === id ? { ...todo, ...data } : todo
+        ) ?? []
+      );
+
+      return { previousTodos };
+    },
+    onError: (error, _variables, context) => {
+      // Rollback on error
+      if (context?.previousTodos) {
+        queryClient.setQueryData(todoKeys.lists(), context.previousTodos);
+      }
+      toast.error(error.message || 'Failed to update todo');
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: todoKeys.lists() });
+    },
+  });
+}
 ```
 
 This makes the app feel instant -- the UI updates before the server responds.
@@ -904,11 +1011,13 @@ This makes the app feel instant -- the UI updates before the server responds.
 3. **React Query** manages server state -- fetching, caching, loading, errors, and synchronisation
 4. **`useQuery`** handles GET requests with automatic loading/error states and caching
 5. **`useMutation`** handles POST/PUT/DELETE with `onSuccess` callbacks to invalidate the cache
-6. **Query keys** like `['todos']` identify cached data -- invalidating a key triggers a re-fetch for all components using it
-7. **Context API is only needed for client-side state** (like filters) -- server state belongs in React Query
-8. **Custom hooks** like `useTodos` keep components clean by combining queries and mutations
-9. **Environment variables** (`VITE_*`) keep API URLs configurable across environments
-10. **CORS** must be configured on the backend for cross-origin requests
+6. **One hook per action** -- `useTodos`, `useCreateTodo`, `useUpdateTodo`, `useDeleteTodo`. Each component only subscribes to what it needs
+7. **Query keys factory** (`todoKeys.all`, `todoKeys.list(filters)`, `todoKeys.detail(id)`) gives type-safe, hierarchical invalidation
+8. **Sonner toasts** inside mutation hooks (`onSuccess` / `onError`) provide consistent user feedback across the app
+9. **Mount `<Toaster />` once** at the root next to `QueryClientProvider`
+10. **Context API is only needed for client-side state** (like filters) -- server state belongs in React Query
+11. **Environment variables** (`VITE_*`) keep API URLs configurable across environments
+12. **CORS** must be configured on the backend for cross-origin requests
 
 ## Course Complete!
 

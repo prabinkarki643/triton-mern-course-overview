@@ -7,6 +7,7 @@
 - Building reusable validator chains and validation middleware
 - Error handling patterns and HTTP status codes
 - Filtering, sorting, and searching with typed query parameters
+- **Pagination** -- returning data in pages with `skip` + `limit` and a meta object
 - API best practices with full type safety
 
 ---
@@ -66,6 +67,17 @@ export interface TodoQueryParams {
   priority?: string;
   search?: string;
   sort?: string;
+  page?: string;
+  limit?: string;
+}
+
+export interface PaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
 }
 ```
 
@@ -207,6 +219,18 @@ export const listTodosValidator = [
     .trim()
     .isLength({ max: 100 })
     .withMessage("search must be a string under 100 characters"),
+
+  query("page")
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage("page must be a positive integer")
+    .toInt(),
+
+  query("limit")
+    .optional()
+    .isInt({ min: 1, max: 100 })
+    .withMessage("limit must be between 1 and 100")
+    .toInt(),
 ];
 ```
 
@@ -223,6 +247,8 @@ export const listTodosValidator = [
 | `.trim()` | Sanitiser -- removes leading/trailing whitespace |
 | `.isMongoId()` | Must be a valid MongoDB ObjectId (24 hex chars) |
 | `.isIn([...])` | Must be one of the allowed values |
+| `.isInt({ min, max })` | Must be an integer within the range |
+| `.toInt()` | Sanitiser -- converts the string value to a number |
 | `.withMessage("...")` | Custom error message if the previous rule fails |
 
 > **Important:** Sanitisers like `.trim()` actually *modify* `req.body`. The trimmed value is what your controller receives.
@@ -244,7 +270,8 @@ import { CreateTodoBody, UpdateTodoBody, TodoQueryParams } from "../types/todo";
 // GET /api/todos
 export const getAllTodos = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { completed, priority, search, sort } = req.query as TodoQueryParams;
+    const { completed, priority, search, sort, page, limit } =
+      req.query as TodoQueryParams;
 
     // Build filter object
     const filter: Record<string, unknown> = {};
@@ -266,8 +293,30 @@ export const getAllTodos = async (req: Request, res: Response): Promise<void> =>
       sortOption = { priority: 1 };
     }
 
-    const todos: ITodo[] = await Todo.find(filter).sort(sortOption);
-    res.json({ data: todos });
+    // Pagination -- defaults: page 1, 10 items per page
+    const pageNum: number = page ? Number(page) : 1;
+    const limitNum: number = limit ? Number(limit) : 10;
+    const skip: number = (pageNum - 1) * limitNum;
+
+    // Run the query and a count in parallel for performance
+    const [todos, total] = await Promise.all([
+      Todo.find(filter).sort(sortOption).skip(skip).limit(limitNum),
+      Todo.countDocuments(filter),
+    ]);
+
+    const totalPages: number = Math.ceil(total / limitNum);
+
+    res.json({
+      data: todos,
+      meta: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages,
+        hasNextPage: pageNum < totalPages,
+        hasPrevPage: pageNum > 1,
+      },
+    });
   } catch (error: unknown) {
     console.error("getAllTodos error:", error);
     res.status(500).json({ error: "Failed to fetch todos" });
@@ -365,7 +414,103 @@ export const deleteTodo = async (req: Request, res: Response): Promise<void> => 
 
 ---
 
-## 16.5 Clean Routes File with Validators
+## 16.5 Pagination
+
+When your database has hundreds or thousands of todos, returning them all in one response is wasteful — slow for the server, slow for the network, slow for the user. **Pagination** breaks the list into smaller chunks called *pages*.
+
+### How Pagination Works
+
+Pagination is built from two query parameters:
+
+| Parameter | Meaning |
+|-----------|---------|
+| `page` | Which page of results to return (1, 2, 3, ...) |
+| `limit` | How many items per page (e.g. 10) |
+
+To get the right items from the database, we calculate `skip`:
+
+```
+skip = (page - 1) * limit
+```
+
+| page | limit | skip | items returned |
+|------|-------|------|---------------|
+| 1 | 10 | 0 | Items 1-10 |
+| 2 | 10 | 10 | Items 11-20 |
+| 3 | 10 | 20 | Items 21-30 |
+| 5 | 20 | 80 | Items 81-100 |
+
+### MongoDB skip and limit
+
+Mongoose provides `.skip()` and `.limit()` directly on the query:
+
+```ts
+const todos = await Todo.find(filter)
+  .sort({ createdAt: -1 })
+  .skip(20)   // skip the first 20 documents
+  .limit(10); // return at most 10 documents
+```
+
+> **Always combine `.skip()` with `.sort()`** -- without an explicit sort order, MongoDB does not guarantee consistent results across pages.
+
+### Returning Pagination Metadata
+
+The frontend needs more than just the items — it needs to know how many total items exist, how many pages there are, and whether there is a next/previous page. We send this in a `meta` object alongside the `data`:
+
+```json
+{
+  "data": [/* ... 10 todos ... */],
+  "meta": {
+    "page": 2,
+    "limit": 10,
+    "total": 47,
+    "totalPages": 5,
+    "hasNextPage": true,
+    "hasPrevPage": true
+  }
+}
+```
+
+### Getting the Total Count
+
+`Todo.countDocuments(filter)` returns the count of matching documents. We use `Promise.all` to run the query and the count **in parallel** (saves one round trip):
+
+```ts
+const [todos, total] = await Promise.all([
+  Todo.find(filter).sort(sortOption).skip(skip).limit(limitNum),
+  Todo.countDocuments(filter),
+]);
+
+const totalPages = Math.ceil(total / limitNum);
+```
+
+> **Important:** Pass the same `filter` to `countDocuments` -- otherwise you'll get the total of *all* todos instead of just the ones matching your filters.
+
+### Example Requests
+
+```http
+### First page (default limit of 10)
+GET http://localhost:3001/api/todos?page=1
+
+### Second page, 5 items per page
+GET http://localhost:3001/api/todos?page=2&limit=5
+
+### Combine pagination with filters
+GET http://localhost:3001/api/todos?completed=false&priority=high&page=1&limit=20
+```
+
+### Why Validate page and limit?
+
+We validate `page` and `limit` for two reasons:
+
+1. **Safety** -- prevent `limit=1000000` from crashing the server
+2. **Type conversion** -- query params arrive as strings; `.toInt()` converts them to numbers
+
+This is why our validator includes `.isInt({ min: 1, max: 100 })` on `limit` and `.toInt()` to convert the value.
+
+---
+
+## 16.6 Clean Routes File with Validators
 
 Now the routes file wires everything together: **validator → validateResult → controller**. Each request passes through validation before reaching the controller.
 
@@ -425,7 +570,7 @@ The frontend can read this structure and show errors next to the relevant fields
 
 ---
 
-## 16.6 HTTP Status Codes Reference
+## 16.7 HTTP Status Codes Reference
 
 | Code | Meaning | When to Use |
 |------|---------|-------------|
@@ -438,7 +583,7 @@ The frontend can read this structure and show errors next to the relevant fields
 
 ---
 
-## 16.7 Global Error Handler
+## 16.8 Global Error Handler
 
 Each controller already uses **try/catch** to handle errors from Mongoose calls (see section 16.4). That covers expected database errors -- but what about unexpected errors that slip through?
 
@@ -478,22 +623,23 @@ Some projects use a helper called `asyncHandler` to avoid writing try/catch in e
 
 ---
 
-## 16.8 API Endpoint Summary
+## 16.9 API Endpoint Summary
 
 | Method | URL | Body | Response | Description |
 |--------|-----|------|----------|-------------|
-| GET | `/api/todos` | -- | `[{...}, {...}]` | List all todos |
-| GET | `/api/todos?completed=true` | -- | `[{...}]` | Filter by completion |
-| GET | `/api/todos?priority=high` | -- | `[{...}]` | Filter by priority |
-| GET | `/api/todos?search=learn` | -- | `[{...}]` | Search by title |
-| GET | `/api/todos/:id` | -- | `{...}` | Get one todo |
+| GET | `/api/todos` | -- | `{ data: [...], meta: {...} }` | List todos (paginated) |
+| GET | `/api/todos?page=2&limit=5` | -- | `{ data: [...], meta: {...} }` | Specific page |
+| GET | `/api/todos?completed=true` | -- | `{ data: [...], meta: {...} }` | Filter by completion |
+| GET | `/api/todos?priority=high` | -- | `{ data: [...], meta: {...} }` | Filter by priority |
+| GET | `/api/todos?search=learn` | -- | `{ data: [...], meta: {...} }` | Search by title |
+| GET | `/api/todos/:id` | -- | `{ data: {...} }` | Get one todo |
 | POST | `/api/todos` | `{title, priority}` | `{...}` | Create a todo |
 | PUT | `/api/todos/:id` | `{title?, priority?, completed?}` | `{...}` | Update a todo |
 | DELETE | `/api/todos/:id` | -- | (empty) | Delete a todo |
 
 ---
 
-## 16.9 Testing the Complete API
+## 16.10 Testing the Complete API
 
 Create a test file to verify all endpoints:
 
@@ -539,6 +685,15 @@ GET http://localhost:3001/api/todos?completed=false
 
 ### Search
 GET http://localhost:3001/api/todos?search=learn
+
+### Pagination -- first page, 5 per page
+GET http://localhost:3001/api/todos?page=1&limit=5
+
+### Pagination -- second page
+GET http://localhost:3001/api/todos?page=2&limit=5
+
+### Combine pagination with filters
+GET http://localhost:3001/api/todos?completed=false&page=1&limit=10
 
 ### Get single todo (replace with a real ID from the create responses)
 GET http://localhost:3001/api/todos/6614a3f2b5e4c8a1d2e3f456
@@ -602,13 +757,15 @@ GET http://localhost:3001/api/todos/6614a3f2b5e4c8a1d2e3f999
 6. Test all endpoints work correctly
 7. Verify validation failures return 400 with structured details, and not-found returns 404
 
-### Exercise 2: Add Filtering
+### Exercise 2: Add Filtering and Pagination
 Implement the query parameter features:
 - `?completed=true` or `?completed=false`
 - `?priority=high`
 - `?search=keyword` (using MongoDB's `$regex`)
 - `?sort=title` or `?sort=priority`
+- `?page=2&limit=5` (pagination)
 - Test each filter combination
+- Verify the `meta` object returns correct `total`, `totalPages`, `hasNextPage`, `hasPrevPage`
 
 ### Exercise 3: Bulk Operations
 Add two new endpoints with proper typing:
@@ -629,11 +786,14 @@ await Todo.updateMany({}, { completed: !allCompleted });
 2. **`express-validator`** catches bad data *before* the controller runs
 3. **Validator chains** declare rules per endpoint -- one array per route
 4. **`validateResult` middleware** turns validation failures into clean 400 responses
-5. **`.bail()`** stops a chain early when a critical rule fails; **`.trim()`** sanitises input
+5. **`.bail()`** stops a chain early when a critical rule fails; **`.trim()`** and **`.toInt()`** sanitise input
 6. **Type your request bodies and query params** with interfaces (`CreateTodoBody`, `UpdateTodoBody`, `TodoQueryParams`)
 7. **Mongoose schema validation** is a second safety net at the database layer
 8. Use proper **HTTP status codes** (201 for create, 400 for validation, 404 for not found)
 9. **`Todo.findByIdAndUpdate()`** with `{ new: true }` replaces the find-then-save pattern
 10. **`Todo.findByIdAndDelete()`** returns the deleted document so you can check if it existed
 11. **Search uses `$regex`** -- MongoDB's built-in pattern matching for text search
-12. Always return **structured error messages** so the frontend can display field-level errors
+12. **Pagination** uses `.skip((page-1)*limit).limit(limit)` -- always combined with `.sort()`
+13. **`Promise.all`** lets you run `find()` and `countDocuments()` in parallel for fewer round trips
+14. Return a **`meta` object** alongside `data` with `page`, `limit`, `total`, `totalPages`, `hasNextPage`, `hasPrevPage`
+15. Always return **structured error messages** so the frontend can display field-level errors
