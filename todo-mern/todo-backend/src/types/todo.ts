@@ -15,6 +15,17 @@ export interface TodoQueryParams {
   priority?: string;
   search?: string;
   sort?: string;
+  page?: string;
+  limit?: string;
+}
+
+export interface PaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
 }
 
 export interface UpdateTodoBody {

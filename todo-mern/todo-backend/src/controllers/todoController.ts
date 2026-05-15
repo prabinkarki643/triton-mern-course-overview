@@ -9,7 +9,8 @@ export const getAllTodos = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { completed, priority, search, sort } = req.query as TodoQueryParams;
+    const { completed, priority, search, sort, page, limit } =
+      req.query as TodoQueryParams;
 
     // Build filter object
     const filter: Record<string, unknown> = {};
@@ -31,8 +32,37 @@ export const getAllTodos = async (
       sortOption = { priority: 1 };
     }
 
-    const todos: ITodo[] = await Todo.find(filter).sort(sortOption);
-    res.json({ data: todos });
+    // Pagination -- defaults: page 1, 10 items per page
+    const pageNum: number = page ? Number(page) : 1;
+    const limitNum: number = limit ? Number(limit) : 10;
+    const skip: number = (pageNum - 1) * limitNum;
+
+    // Run the query and a count in parallel for performance
+    // const [todos, total] = await Promise.all([
+    //   Todo.find(filter).sort(sortOption).skip(skip).limit(limitNum),
+    //   Todo.countDocuments(filter),
+    // ]);
+
+    const todos: ITodo[] = await Todo.find(filter)
+      .sort(sortOption)
+      .skip(skip)
+      .limit(limitNum);
+
+    const total = await Todo.countDocuments(filter);
+
+    const totalPages: number = Math.ceil(total / limitNum);
+
+    res.json({
+      data: todos,
+      meta: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages,
+        hasNextPage: pageNum < totalPages,
+        hasPrevPage: pageNum > 1,
+      },
+    });
   } catch (error: unknown) {
     console.error("getAllTodos error:", error);
     res.status(500).json({ error: "Failed to fetch todos" });
