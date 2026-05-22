@@ -3,7 +3,6 @@ import type { Todo } from "@/types/todo"
 import { Button } from "./ui/button"
 import { Trash } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useTodo } from "@/context/TodoContext"
 
 import {
   AlertDialog,
@@ -17,19 +16,26 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { EditTaskDialog } from "./EditTaskDialog"
+import { useDeleteTodo, useUpdateTodo } from "@/hooks/useTodos"
 
 interface TodoItemProps {
   task: Todo
 }
 
 function TodoItem({ task }: TodoItemProps) {
-  const { toggleTask, deleteTask } = useTodo()
+  const { mutateAsync: deleteTask } = useDeleteTodo()
+  const { mutateAsync: editTask } = useUpdateTodo()
   return (
     <li className="flex items-center gap-3 rounded-lg border bg-white p-3">
       <Checkbox
         checked={task.completed}
         onCheckedChange={() => {
-          toggleTask(task.id)
+          editTask({
+            id: task._id,
+            data: {
+              completed: !task.completed,
+            },
+          })
         }}
       />
       <span
@@ -70,7 +76,7 @@ function TodoItem({ task }: TodoItemProps) {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => deleteTask(task.id)}>
+            <AlertDialogAction onClick={() => deleteTask(task._id)}>
               Continue
             </AlertDialogAction>
           </AlertDialogFooter>

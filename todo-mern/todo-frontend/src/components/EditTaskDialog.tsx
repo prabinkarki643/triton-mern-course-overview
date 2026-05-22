@@ -14,7 +14,6 @@ import { EditIcon } from "lucide-react"
 import { z } from "zod"
 import { Controller, useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useTodo } from "@/context/TodoContext"
 import { useState } from "react"
 import { Field, FieldError } from "./ui/field"
 import {
@@ -25,6 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select"
+import { useUpdateTodo } from "@/hooks/useTodos"
 
 // 1. Define the schema
 const todoSchema = z.object({
@@ -49,7 +49,8 @@ interface EditTaskDialogProps {
 
 export function EditTaskDialog({ task }: EditTaskDialogProps) {
   const [open, setOpen] = useState<boolean>(false)
-  const { editTask } = useTodo()
+
+  const { mutateAsync: editTask, isPending } = useUpdateTodo()
 
   const form = useForm<TodoFormData>({
     resolver: zodResolver(todoSchema),
@@ -61,7 +62,13 @@ export function EditTaskDialog({ task }: EditTaskDialogProps) {
 
   const handleSubmit = (data: TodoFormData) => {
     console.log(data)
-    editTask(task.id, data.title, data.priority)
+    editTask({
+      id: task._id,
+      data: {
+        title: data.title,
+        priority: data.priority,
+      },
+    })
     setOpen(false)
   }
 
@@ -134,7 +141,9 @@ export function EditTaskDialog({ task }: EditTaskDialogProps) {
           </div>
 
           <DialogFooter>
-            <Button type="submit">Save changes</Button>
+            <Button disabled={isPending} type="submit">
+              {isPending ? "Saving..." : "Save Changes"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

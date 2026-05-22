@@ -7,6 +7,7 @@ function TodoList() {
   if (isLoading) {
     return <p className="text-center">Loading...</p>
   }
+
   if (isError) {
     return (
       <p className="text-center text-destructive">Error: {error.message}</p>

@@ -1,7 +1,6 @@
 // src/components/AddTodoForm.tsx
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { useTodo } from "@/context/TodoContext"
 
 import { z } from "zod"
 import { useForm, Controller } from "react-hook-form"
@@ -15,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select"
+import { useCreateTodo } from "@/hooks/useTodos"
 
 // 1. Define the schema
 const todoSchema = z.object({
@@ -40,10 +40,10 @@ function AddTodoForm() {
     defaultValues: { title: "", priority: "medium" },
   })
 
-  const { addTask } = useTodo()
+  const { mutateAsync: addTask, isPending } = useCreateTodo()
 
   const handleSubmit = (data: TodoFormData): void => {
-    addTask(data.title, data.priority)
+    addTask({ title: data.title, priority: data.priority })
     form.reset()
   }
 
@@ -93,7 +93,9 @@ function AddTodoForm() {
           </Field>
         )}
       />
-      <Button type="submit">Add</Button>
+      <Button disabled={isPending} type="submit">
+        {isPending ? "Adding..." : "Add"}
+      </Button>
     </form>
   )
 }
