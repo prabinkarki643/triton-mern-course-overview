@@ -125,7 +125,7 @@ mongod --version    # Should show 7.x.x or higher (if installed locally)
 
 ---
 
-### Phase 2: Backend & Integration (Lessons 14--17)
+### Phase 2: Backend & Integration (Lessons 14--17.1)
 
 **Goal**: Build a REST API and connect it to the React frontend.
 
@@ -133,10 +133,11 @@ mongod --version    # Should show 7.x.x or higher (if installed locally)
 |--------|-------|-------------|
 | 14 | Express.js Introduction | Server setup, routing, middleware, error handling |
 | 15 | MongoDB & Mongoose | Document model, schemas, CRUD operations, connections |
-| 16 | Building the Todo API | RESTful endpoints, request validation, Mongoose integration |
-| 17 | Connecting Frontend to Backend | Axios setup, React Query, loading/error states, data sync |
+| 16 | Building the Todo API | RESTful endpoints, request validation, Mongoose integration, pagination |
+| 17 | Connecting Frontend to Backend | Axios setup, React Query, hooks per action, Sonner toasts |
+| 17.1 | Data Table with Pagination | `@tanstack/react-table`, URL search params, debounced search, server-side pagination |
 
-**Outcome**: A full-stack Todo App with persistent data storage and proper API communication.
+**Outcome**: A full-stack Todo App with persistent data storage, server-side pagination, and an admin-style table view.
 
 ---
 
@@ -188,7 +189,8 @@ mongod --version    # Should show 7.x.x or higher (if installed locally)
 | 14 | Server routing, middleware pipeline | Express.js |
 | 15 | Document database, schema design | MongoDB, Mongoose |
 | 16 | REST API design, CRUD endpoints | Express.js, Mongoose |
-| 17 | HTTP client, server state caching | Axios, React Query |
+| 17 | HTTP client, server state caching | Axios, React Query, Sonner |
+| 17.1 | Headless table, URL state, server pagination | @tanstack/react-table, React Router |
 | 18 | Client-side routing, navigation guards | React Router v6 |
 | 19 | Project architecture, data modelling | Mongoose, TypeScript |
 | 20 | Authentication, authorisation, hashing | JWT, bcrypt |
@@ -277,7 +279,7 @@ mongod --version    # Should show 7.x.x or higher (if installed locally)
 |-------|---------|---------|-------|
 | Prerequisites (optional) | 01--03 | 3 | 1 week |
 | Phase 1: React Fundamentals | 04--13 | 12 | 4 weeks |
-| Phase 2: Backend & Integration | 14--17 | 5 | ~2 weeks |
+| Phase 2: Backend & Integration | 14--17.1 | 6 | ~2 weeks |
 | Phase 3: BookMyRoom Build | 18--27 | 12 | 4 weeks |
 | Phase 4: Deployment | 28 | 1 | 1 day |
 | **Total** | **01--28** | **~36** | **~12 weeks** |

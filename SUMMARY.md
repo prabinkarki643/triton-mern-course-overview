@@ -148,7 +148,7 @@ A hands-on full-stack / MERN Stack (MongoDB, Express, React, Node.js) course tha
 
 ---
 
-## Phase 6: Backend with Express & MongoDB (Lessons 14-17)
+## Phase 6: Backend with Express & MongoDB (Lessons 14-17.1)
 
 ### Lesson 14: Express.js Introduction
 - [ ] What is Express.js and REST APIs
@@ -182,10 +182,23 @@ A hands-on full-stack / MERN Stack (MongoDB, Express, React, Node.js) course tha
 - [ ] Introduction to React Query (TanStack Query)
 - [ ] `useQuery` for fetching data (GET)
 - [ ] `useMutation` for create/update/delete
-- [ ] Cache invalidation with `invalidateQueries`
-- [ ] Loading and error states with React Query
+- [ ] One hook per action (`useTodos`, `useCreateTodo`, etc.)
+- [ ] Query keys factory for hierarchical invalidation
+- [ ] Sonner toasts in mutation hooks
 - [ ] Environment variables for API URLs
 - **Exercise**: Connect the React Todo app to the Express API using Axios + React Query
+
+### Lesson 17.1: Data Table with Pagination, Search & Filters
+- [ ] Why use `@tanstack/react-table` for real apps
+- [ ] Building a reusable generic `<DataTable>` component with shadcn
+- [ ] Defining columns with `ColumnDef` (text, badge, date, action cells)
+- [ ] Server-side pagination with `manualPagination` and `pageCount`
+- [ ] Syncing table state with URL search params (`?page=2&search=...`)
+- [ ] Debounced search input (300ms)
+- [ ] Filter dropdowns wired to URL state
+- [ ] Row actions (edit dialog, delete with confirm)
+- [ ] `placeholderData` to avoid page flicker
+- **Exercise**: Replace the card-based Todo list with a full admin-style table
 
 ---
 
@@ -331,7 +344,8 @@ A hands-on full-stack / MERN Stack (MongoDB, Express, React, Node.js) course tha
 | 14 | REST APIs, routes, middleware | Express.js |
 | 15 | Document DB, schemas, models, CRUD | MongoDB, Mongoose |
 | 16 | CRUD operations, error handling | Express + Mongoose |
-| 17 | HTTP client, server state caching | Axios, React Query |
+| 17 | HTTP client, server state caching | Axios, React Query, Sonner |
+| 17.1 | Data table, pagination, URL filters, search | @tanstack/react-table, React Router |
 | 18 | Client-side routing, navigation, layouts | React Router v6 |
 | 19 | Project architecture, data modelling | Mongoose, TypeScript |
 | 20 | Authentication, JWT, password hashing | JWT, bcrypt |
@@ -355,7 +369,7 @@ A hands-on full-stack / MERN Stack (MongoDB, Express, React, Node.js) course tha
 | Phase 3: React Fundamentals | 6-9 | 4 | ~1.5 weeks |
 | Phase 4: Modern UI & Forms | 10-12 | 3 | 1 week |
 | Phase 5: Todo App Build | 13 | 2 | ~1 week |
-| Phase 6: Backend & Integration | 14-17 | 5 | ~2 weeks |
+| Phase 6: Backend & Integration | 14-17.1 | 6 | ~2 weeks |
 | Phase 7: BookMyRoom Build | 18-27 | 12 | 4 weeks |
 | Phase 8: Deployment | 28 | 1 | 1 day |
 | **Total** | **1-28** | **~32** | **~10 weeks** |
