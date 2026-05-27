@@ -19,9 +19,21 @@ export interface UpdateTodoData {
 }
 
 export interface TodoFilters {
+  page?: number;
+  limit?: number;
   completed?: boolean
   priority?: string
   search?: string
+  sort?: string
+}
+
+export interface PaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
 }
 
 export interface TodoStats {

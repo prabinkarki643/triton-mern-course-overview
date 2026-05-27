@@ -1,15 +1,16 @@
 // webapp/src/services/todoApi.ts
 import type {
   CreateTodoData,
+  PaginationMeta,
   Todo,
   TodoFilters,
   UpdateTodoData,
 } from "@/types/todo"
 import api from "./api"
 
-interface GetAllTodosResponse {
-  data: Todo[]
-  meta?: unknown
+export interface GetAllTodosResponse {
+  data: Todo[];
+  meta: PaginationMeta;
 }
 
 interface GetSingleTodoResponse {
@@ -29,7 +30,7 @@ export const todoApi = {
     const { data } = await api.get<GetAllTodosResponse>("/todos", {
       params: params,
     })
-    return data.data
+    return data
   },
 
   // Get single todo

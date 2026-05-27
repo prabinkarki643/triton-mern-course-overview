@@ -19,6 +19,7 @@ export function useTodos(filters: TodoFilters = {}) {
   return useQuery({
     queryKey: todoKeys.list(filters),
     queryFn: () => todoApi.getAll(filters),
+    placeholderData: (previousData) => previousData, // keep showing old data while fetching new page
   })
 }
 

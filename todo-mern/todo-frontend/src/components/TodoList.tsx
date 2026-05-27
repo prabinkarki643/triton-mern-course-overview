@@ -14,7 +14,7 @@ function TodoList() {
     )
   }
 
-  const todoData = data || []
+  const todoData = data?.data || []
 
   if (todoData.length === 0) {
     return <p className="py-8 text-center text-gray-500">No tasks yet!</p>
