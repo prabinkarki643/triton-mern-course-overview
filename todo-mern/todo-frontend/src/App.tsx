@@ -1,22 +1,29 @@
-import { Header } from "./components/Header"
-import AddTodoForm from "./components/AddTodoForm"
-import { Card, CardContent } from "./components/ui/card"
-import { TodosTable } from "./components/todos/todos-table"
+import { Routes, Route } from "react-router-dom"
+import HomePage from "./pages/HomePage"
+import AboutPage from "./pages/AboutPage"
+import LoginPage from "./pages/LoginPage"
+import RegisterPage from "./pages/RegisterPage"
+import NotFoundPage from "./pages/NotFoundPage"
+import RoomDetailPage from "./pages/RoomDetailsPage/RoomDetailPage"
+import MainLayout from "./layouts/MainLayout"
+import TodoPage from "./pages/TodoPage"
 
 export function App() {
   return (
-    <div className="mx-auto min-h-screen max-w-2xl bg-gray-50 p-6">
-      <Header title="My Todo App" />
-      <Card>
-        <CardContent>
-          <div className="mb-2">
-            <AddTodoForm />
-            <hr className="mt-5" />
-          </div>
-          <TodosTable />
-        </CardContent>
-      </Card>
-    </div>
+    <Routes>
+      <Route element={<MainLayout />}>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/about" element={<AboutPage />} />
+        <Route path="/todos" element={<TodoPage />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+
+        <Route path="/rooms/:id" element={<RoomDetailPage />} />
+
+        {/* Catch All Route to catch not found URL */}
+        <Route path="*" element={<NotFoundPage />} />
+      </Route>
+    </Routes>
   )
 }
 
