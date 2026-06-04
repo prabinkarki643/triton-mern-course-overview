@@ -2,74 +2,82 @@
 
 ## What You Will Learn
 - Building an owner layout with sidebar navigation using shadcn components
-- Listing the owner's rooms with React Query (`useQuery`)
-- Creating a room with React Hook Form, Zod validation, and image uploads
+- Defining a **roomApi service layer** with Axios (mirroring the L17 `todoApi` pattern)
+- Building a **`useRooms` hook family** with a typed `roomKeys` factory: `useRooms`, `useRoom`, `useCreateRoom`, `useUpdateRoom`, `useDeleteRoom`
+- Listing the owner's rooms with the **generic `<DataTable>`** from Lesson 17.1 (server-side pagination + URL-synced filters)
+- Defining typed columns with `useRoomColumns()` returning `ColumnDef<Room>[]`
+- Writing a complete **shadcn `Form`** (with `Form`, `FormField`, `FormItem`, `FormLabel`, `FormControl`, `FormMessage`) for Add Room
+- Validating with Zod and deriving types via `z.infer`
 - Building `FormData` for multipart file uploads with Axios
-- Previewing selected images before uploading
-- Editing and deleting rooms with `useMutation` and `invalidateQueries`
-- Displaying uploaded images from the backend
+- Previewing selected images before uploading and revoking object URLs on unmount
+- Editing rooms with a pre-filled form
+- Deleting rooms with shadcn `AlertDialog` confirmation
+- Showing Sonner **toasts** inside mutation hooks for consistent success / error feedback
 
 ---
 
 ## 23.1 The Big Picture
 
-The owner portal is a protected area where room owners manage their listings. It has three main pages:
+The owner portal is a protected area where room owners manage their listings. It is built on the same patterns we already used for todos: an Axios service layer, focused React Query hooks, a reusable `<DataTable>`, and shadcn `Form` with Zod.
 
 ```
-Owner Portal Layout
-├── Sidebar Navigation
-│   ├── My Rooms        (list all rooms belonging to this owner)
-│   ├── Add Room        (create a new room with images)
-│   └── Booking Requests (incoming bookings -- covered in Lesson 25)
+Owner Portal Layout (sidebar + main)
+├── My Rooms             (DataTable: image, title, location, price, capacity, status, actions)
+│   ├── Filters (search, location, status) -> URL params
+│   ├── Pagination       -> URL params (?page=2)
+│   └── Row actions      -> Edit (link) + Delete (AlertDialog)
 │
-├── My Rooms Page
-│   ├── Room cards with images, price, status
-│   ├── Edit button → Edit Room page
-│   └── Delete button → Confirmation dialog
-│
-├── Add Room Page
+├── Add Room             (shadcn Form + Zod + image upload)
 │   ├── Text fields (title, description, location, price, capacity)
 │   ├── Amenities checkboxes
-│   ├── Image upload with previews
-│   └── Submit → POST /api/rooms (multipart)
+│   ├── Image upload with previews (URL.createObjectURL)
+│   └── Submit -> FormData -> POST /api/rooms (multipart)
 │
-└── Edit Room Page
-    ├── Pre-filled form with existing data
+└── Edit Room            (same form, pre-filled via form.reset())
     ├── Current images displayed
     ├── Option to upload replacement images
-    └── Submit → PUT /api/rooms/:id (multipart)
+    └── Submit -> FormData -> PUT /api/rooms/:id
 ```
+
+We are **not reinventing patterns** here. Everything builds on:
+
+- **Lesson 17** -- Axios service layer, `roomKeys` factory, mutation hooks with toasts
+- **Lesson 17.1** -- generic `<DataTable>`, `useSearchParams` filter sync, server-side pagination
+- **Lesson 12** -- shadcn `Form` + Zod + React Hook Form
 
 ---
 
 ## 23.2 Installing Dependencies
 
-We need React Query (TanStack Query) for server state management and Axios for HTTP requests:
+If you already completed Lessons 17 and 17.1 in the Todo app, most of these are installed. For BookMyRoom (`webapp/`) ensure you have:
 
 ```bash
 cd webapp
-npm install @tanstack/react-query axios
+npm install @tanstack/react-query @tanstack/react-table axios react-hook-form zod @hookform/resolvers lucide-react
+npx shadcn@latest add form input textarea label checkbox button card table select alert-dialog skeleton sonner badge
 ```
 
 ---
 
-## 23.3 Setting Up Axios and React Query
+## 23.3 Axios Instance with JWT Interceptor
 
-### API Client
+The owner portal is protected, so every request must carry the JWT created in Lesson 21.
 
-```typescript
+```ts
 // webapp/src/services/api.ts
-import axios, { AxiosInstance } from "axios";
+import axios, { AxiosInstance } from 'axios';
 
-const API_URL: string = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001/api";
+const API_URL: string =
+  (import.meta.env.VITE_API_URL as string) || 'http://localhost:3001/api';
 
 const api: AxiosInstance = axios.create({
   baseURL: API_URL,
+  timeout: 10000,
 });
 
 // Attach JWT token to every request automatically
 api.interceptors.request.use((config) => {
-  const token: string | null = localStorage.getItem("token");
+  const token: string | null = localStorage.getItem('token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -80,32 +88,36 @@ export default api;
 export { API_URL };
 ```
 
-### React Query Provider
-
-Wrap your app with the QueryClientProvider so all components can use React Query:
+### React Query + Toaster Provider
 
 ```tsx
 // webapp/src/main.tsx
-import React from "react";
-import ReactDOM from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import App from "./App";
-import "./index.css";
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Toaster } from '@/components/ui/sonner';
+import App from './App';
+import './index.css';
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5 * 60 * 1000, // Data is fresh for 5 minutes
-      retry: 1, // Retry failed requests once
+      staleTime: 1000 * 60,
+      retry: 1,
+      refetchOnWindowFocus: true,
     },
   },
 });
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
+ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
+    <BrowserRouter>
+      <QueryClientProvider client={queryClient}>
+        <App />
+        <Toaster richColors position="top-right" />
+      </QueryClientProvider>
+    </BrowserRouter>
   </React.StrictMode>
 );
 ```
@@ -114,10 +126,12 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 
 ## 23.4 Room Types
 
-Define TypeScript interfaces for rooms:
+The shape of a room and the paginated envelope returned by the API. Note we use `meta` (consistent with the L17.1 todo response).
 
-```typescript
+```ts
 // webapp/src/types/room.ts
+export type RoomStatus = 'active' | 'inactive';
+
 export interface Room {
   _id: string;
   title: string;
@@ -127,6 +141,7 @@ export interface Room {
   capacity: number;
   amenities: string[];
   images: string[];
+  status: RoomStatus;
   owner: {
     _id: string;
     name: string;
@@ -136,45 +151,258 @@ export interface Room {
   updatedAt: string;
 }
 
-export interface RoomFormData {
-  title: string;
-  description: string;
-  location: string;
-  price: number;
-  capacity: number;
-  amenities: string[];
+export interface PaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
 }
 
 export interface RoomsResponse {
-  success: boolean;
   data: Room[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-    hasNextPage: boolean;
-    hasPrevPage: boolean;
-  };
+  meta: PaginationMeta;
 }
 
-export interface RoomResponse {
-  success: boolean;
-  data: Room;
+export interface RoomFilters {
+  page?: number;
+  limit?: number;
+  search?: string;
+  location?: string;
+  status?: RoomStatus;
+  sort?: string;
 }
 ```
 
 ---
 
-## 23.5 Owner Layout with Sidebar
+## 23.5 The `roomApi` Service Layer
 
-The owner portal uses a sidebar layout. We build this as a wrapper component:
+This is identical in spirit to `todoApi` from Lesson 17 -- one method per CRUD action, fully typed, automatic JSON parsing, automatic error throwing on 4xx/5xx. Create and update accept a `FormData` because rooms include image uploads.
+
+```ts
+// webapp/src/services/roomApi.ts
+import api from './api';
+import type { Room, RoomFilters, RoomsResponse } from '../types/room';
+
+export const roomApi = {
+  // GET /api/rooms?page=&limit=&search=&location=&status=
+  async getAll(filters: RoomFilters = {}): Promise<RoomsResponse> {
+    const { data } = await api.get<RoomsResponse>('/rooms', { params: filters });
+    return data;
+  },
+
+  // GET /api/rooms/my-rooms -- only the current owner's rooms
+  async getMine(filters: RoomFilters = {}): Promise<RoomsResponse> {
+    const { data } = await api.get<RoomsResponse>('/rooms/my-rooms', {
+      params: filters,
+    });
+    return data;
+  },
+
+  // GET /api/rooms/:id
+  async getById(id: string): Promise<Room> {
+    const { data } = await api.get<{ data: Room }>(`/rooms/${id}`);
+    return data.data;
+  },
+
+  // POST /api/rooms (multipart/form-data)
+  async create(formData: FormData): Promise<Room> {
+    const { data } = await api.post<{ data: Room }>('/rooms', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data.data;
+  },
+
+  // PUT /api/rooms/:id (multipart/form-data)
+  async update(id: string, formData: FormData): Promise<Room> {
+    const { data } = await api.put<{ data: Room }>(`/rooms/${id}`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data.data;
+  },
+
+  // DELETE /api/rooms/:id
+  async delete(id: string): Promise<void> {
+    await api.delete(`/rooms/${id}`);
+  },
+};
+```
+
+**Notice:** the service knows nothing about React Query. It is pure HTTP. This is the same separation we used in Lesson 17 -- the API service is reusable from anywhere (a hook, a script, a test).
+
+---
+
+## 23.6 The `useRooms` Hook Family
+
+One focused hook per action. Each mutation invalidates the right keys and fires a toast. The pattern is identical to `useTodos` from Lesson 17.
+
+```ts
+// webapp/src/hooks/useRooms.ts
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { roomApi } from '../services/roomApi';
+import type { RoomFilters } from '../types/room';
+
+// Centralised query keys -- one source of truth for cache invalidation
+export const roomKeys = {
+  all: ['rooms'] as const,
+  lists: () => [...roomKeys.all, 'list'] as const,
+  list: (filters: RoomFilters) => [...roomKeys.lists(), filters] as const,
+  mine: (filters: RoomFilters) => [...roomKeys.all, 'mine', filters] as const,
+  details: () => [...roomKeys.all, 'detail'] as const,
+  detail: (id: string) => [...roomKeys.details(), id] as const,
+};
+
+// --- QUERY HOOKS ---------------------------------------------------------
+
+// Public rooms list (used in the public browse page in Lesson 24)
+export function useRooms(filters: RoomFilters = {}) {
+  return useQuery({
+    queryKey: roomKeys.list(filters),
+    queryFn: () => roomApi.getAll(filters),
+    placeholderData: (previousData) => previousData,
+  });
+}
+
+// Owner's rooms list (used in the My Rooms page below)
+export function useMyRooms(filters: RoomFilters = {}) {
+  return useQuery({
+    queryKey: roomKeys.mine(filters),
+    queryFn: () => roomApi.getMine(filters),
+    placeholderData: (previousData) => previousData,
+  });
+}
+
+// Single room by id -- used by Edit page and public detail page
+export function useRoom(id: string) {
+  return useQuery({
+    queryKey: roomKeys.detail(id),
+    queryFn: () => roomApi.getById(id),
+    enabled: !!id,
+  });
+}
+
+// --- MUTATION HOOKS ------------------------------------------------------
+
+export function useCreateRoom() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (formData: FormData) => roomApi.create(formData),
+    onSuccess: () => {
+      toast.success('Room created successfully');
+      queryClient.invalidateQueries({ queryKey: roomKeys.all });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to create room');
+    },
+  });
+}
+
+export function useUpdateRoom() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, formData }: { id: string; formData: FormData }) =>
+      roomApi.update(id, formData),
+    onSuccess: (_room, variables) => {
+      toast.success('Room updated successfully');
+      queryClient.invalidateQueries({ queryKey: roomKeys.all });
+      queryClient.invalidateQueries({ queryKey: roomKeys.detail(variables.id) });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to update room');
+    },
+  });
+}
+
+export function useDeleteRoom() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => roomApi.delete(id),
+    onSuccess: () => {
+      toast.success('Room deleted');
+      queryClient.invalidateQueries({ queryKey: roomKeys.all });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to delete room');
+    },
+  });
+}
+```
+
+**Why the `roomKeys` factory matters:**
+
+```
+roomKeys.all                      => ['rooms']
+roomKeys.lists()                  => ['rooms', 'list']
+roomKeys.list({page:1})           => ['rooms', 'list', {page:1}]
+roomKeys.mine({page:1})           => ['rooms', 'mine', {page:1}]
+roomKeys.detail('abc123')         => ['rooms', 'detail', 'abc123']
+```
+
+Invalidating `roomKeys.all` after a delete refreshes **every** room query -- both the public browse list and the owner's "My Rooms" list -- in one line. This is what keeps the UI in sync.
+
+---
+
+## 23.7 The URL Filter Hook for Rooms
+
+Reusing the same idea from Lesson 17.1 -- store the table state in the URL so filters are bookmarkable and refresh-proof.
+
+```ts
+// webapp/src/hooks/useRoomsFilters.ts
+import { useSearchParams } from 'react-router-dom';
+import type { RoomFilters, RoomStatus } from '../types/room';
+
+export function useRoomsFilters() {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const filters: RoomFilters = {
+    page: Number(searchParams.get('page')) || 1,
+    limit: Number(searchParams.get('limit')) || 10,
+    search: searchParams.get('search') || undefined,
+    location: searchParams.get('location') || undefined,
+    status: (searchParams.get('status') as RoomStatus) || undefined,
+    sort: searchParams.get('sort') || undefined,
+  };
+
+  const setFilters = (updates: Partial<RoomFilters>) => {
+    const next = new URLSearchParams(searchParams);
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === undefined || value === '' || value === null) {
+        next.delete(key);
+      } else {
+        next.set(key, String(value));
+      }
+    }
+    setSearchParams(next, { replace: true });
+  };
+
+  // Changing any filter jumps back to page 1
+  const setFilter = (key: keyof RoomFilters, value: RoomFilters[typeof key]) => {
+    setFilters({ [key]: value, page: 1 });
+  };
+
+  const resetFilters = () => setSearchParams(new URLSearchParams(), { replace: true });
+
+  return { filters, setFilters, setFilter, resetFilters };
+}
+```
+
+---
+
+## 23.8 Owner Layout with Sidebar
+
+The owner portal uses a sidebar layout shared by every owner page:
 
 ```tsx
 // webapp/src/components/owner/OwnerLayout.tsx
-import { NavLink, Outlet } from "react-router-dom";
-import { Home, PlusCircle, CalendarCheck } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { NavLink, Outlet } from 'react-router-dom';
+import { Home, PlusCircle, CalendarCheck } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface NavItem {
   to: string;
@@ -183,15 +411,14 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { to: "/owner/rooms", label: "My Rooms", icon: <Home className="h-4 w-4" /> },
-  { to: "/owner/rooms/new", label: "Add Room", icon: <PlusCircle className="h-4 w-4" /> },
-  { to: "/owner/bookings", label: "Booking Requests", icon: <CalendarCheck className="h-4 w-4" /> },
+  { to: '/owner/rooms', label: 'My Rooms', icon: <Home className="h-4 w-4" /> },
+  { to: '/owner/rooms/new', label: 'Add Room', icon: <PlusCircle className="h-4 w-4" /> },
+  { to: '/owner/bookings', label: 'Booking Requests', icon: <CalendarCheck className="h-4 w-4" /> },
 ];
 
 function OwnerLayout(): JSX.Element {
   return (
     <div className="flex min-h-screen">
-      {/* Sidebar */}
       <aside className="w-64 border-r bg-muted/30 p-4">
         <h2 className="mb-6 text-lg font-semibold">Owner Portal</h2>
         <nav className="space-y-1">
@@ -199,12 +426,13 @@ function OwnerLayout(): JSX.Element {
             <NavLink
               key={item.to}
               to={item.to}
+              end={item.to === '/owner/rooms'}
               className={({ isActive }) =>
                 cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colours",
+                  'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
                   isActive
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                 )
               }
             >
@@ -215,7 +443,6 @@ function OwnerLayout(): JSX.Element {
         </nav>
       </aside>
 
-      {/* Main content area */}
       <main className="flex-1 p-6">
         <Outlet />
       </main>
@@ -226,140 +453,427 @@ function OwnerLayout(): JSX.Element {
 export default OwnerLayout;
 ```
 
-**How it works:**
-- `NavLink` from React Router highlights the active page automatically
-- `Outlet` renders whichever child route is currently active
-- The sidebar stays visible on all owner pages
-
-### Adding Owner Routes
+### Owner Routes
 
 ```tsx
-// webapp/src/App.tsx (relevant route section)
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import OwnerLayout from "./components/owner/OwnerLayout";
-import MyRooms from "./pages/owner/MyRooms";
-import AddRoom from "./pages/owner/AddRoom";
-import EditRoom from "./pages/owner/EditRoom";
-import OwnerBookings from "./pages/owner/OwnerBookings";
+// webapp/src/App.tsx (relevant section)
+import { Routes, Route } from 'react-router-dom';
+import OwnerLayout from './components/owner/OwnerLayout';
+import MyRooms from './pages/owner/MyRooms';
+import AddRoom from './pages/owner/AddRoom';
+import EditRoom from './pages/owner/EditRoom';
+import OwnerBookings from './pages/owner/OwnerBookings';
 
 function App(): JSX.Element {
   return (
-    <BrowserRouter>
-      <Routes>
-        {/* ... public routes ... */}
+    <Routes>
+      {/* ... public routes ... */}
 
-        {/* Owner portal routes */}
-        <Route path="/owner" element={<OwnerLayout />}>
-          <Route path="rooms" element={<MyRooms />} />
-          <Route path="rooms/new" element={<AddRoom />} />
-          <Route path="rooms/:id/edit" element={<EditRoom />} />
-          <Route path="bookings" element={<OwnerBookings />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+      <Route path="/owner" element={<OwnerLayout />}>
+        <Route path="rooms" element={<MyRooms />} />
+        <Route path="rooms/new" element={<AddRoom />} />
+        <Route path="rooms/:id/edit" element={<EditRoom />} />
+        <Route path="bookings" element={<OwnerBookings />} />
+      </Route>
+    </Routes>
   );
 }
 ```
 
 ---
 
-## 23.6 My Rooms Page
+## 23.9 Room Columns -- `useRoomColumns()`
 
-This page lists all rooms belonging to the currently logged-in owner:
+A custom hook returning a typed `ColumnDef<Room>[]`. Each column knows nothing about pagination or filters -- the `<DataTable>` handles all that.
+
+```tsx
+// webapp/src/components/owner/room-columns.tsx
+import type { ColumnDef } from '@tanstack/react-table';
+import { Badge } from '@/components/ui/badge';
+import { RoomRowActions } from './room-row-actions';
+import { API_URL } from '@/services/api';
+import type { Room } from '@/types/room';
+
+const statusVariant: Record<Room['status'], 'default' | 'secondary'> = {
+  active: 'default',
+  inactive: 'secondary',
+};
+
+// Helper: build the absolute image URL from the stored filename
+const buildImageUrl = (filename: string): string => {
+  const base: string = API_URL.replace(/\/api\/?$/, '');
+  return `${base}/uploads/rooms/${filename}`;
+};
+
+export function useRoomColumns(): ColumnDef<Room>[] {
+  return [
+    {
+      id: 'image',
+      header: '',
+      cell: ({ row }) => {
+        const first: string | undefined = row.original.images[0];
+        return (
+          <div className="h-12 w-16 overflow-hidden rounded-md bg-muted">
+            {first ? (
+              <img
+                src={buildImageUrl(first)}
+                alt={row.original.title}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">
+                No image
+              </div>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: 'title',
+      header: 'Title',
+      cell: ({ row }) => <span className="font-medium">{row.original.title}</span>,
+    },
+    {
+      accessorKey: 'location',
+      header: 'Location',
+    },
+    {
+      accessorKey: 'price',
+      header: 'Price',
+      cell: ({ row }) => (
+        <span>
+          &pound;{row.original.price}
+          <span className="text-xs text-muted-foreground"> / night</span>
+        </span>
+      ),
+    },
+    {
+      accessorKey: 'capacity',
+      header: 'Capacity',
+      cell: ({ row }) => `${row.original.capacity} guests`,
+    },
+    {
+      accessorKey: 'status',
+      header: 'Status',
+      cell: ({ row }) => (
+        <Badge variant={statusVariant[row.original.status]} className="capitalize">
+          {row.original.status}
+        </Badge>
+      ),
+    },
+    {
+      id: 'actions',
+      header: '',
+      cell: ({ row }) => <RoomRowActions room={row.original} />,
+    },
+  ];
+}
+```
+
+---
+
+## 23.10 Row Actions -- Edit Link + Delete with `AlertDialog`
+
+Each row has an edit link (navigates to the edit page) and a delete button guarded by an `AlertDialog` confirmation.
+
+```tsx
+// webapp/src/components/owner/room-row-actions.tsx
+import { Link } from 'react-router-dom';
+import { Pencil, Trash2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { useDeleteRoom } from '@/hooks/useRooms';
+import type { Room } from '@/types/room';
+
+interface RoomRowActionsProps {
+  room: Room;
+}
+
+export function RoomRowActions({ room }: RoomRowActionsProps) {
+  const { mutate: deleteRoom, isPending: isDeleting } = useDeleteRoom();
+
+  return (
+    <div className="flex items-center justify-end gap-1">
+      <Button asChild variant="ghost" size="icon">
+        <Link to={`/owner/rooms/${room._id}/edit`} aria-label="Edit room">
+          <Pencil className="h-4 w-4" />
+        </Link>
+      </Button>
+
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <Button variant="ghost" size="icon" disabled={isDeleting} aria-label="Delete room">
+            <Trash2 className="h-4 w-4 text-destructive" />
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this room?</AlertDialogTitle>
+            <AlertDialogDescription>
+              "{room.title}" will be permanently removed. All images and booking history
+              for this room will also be deleted. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => deleteRoom(room._id)}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+```
+
+The success / error toasts come from `useDeleteRoom` itself -- this component does not need its own `onSuccess` callback.
+
+---
+
+## 23.11 Filters Bar -- Search + Status
+
+Reuses the same debounced-search + `useSearchParams` pattern from Lesson 17.1.
+
+```tsx
+// webapp/src/components/owner/room-filters.tsx
+import { useEffect, useState } from 'react';
+import { X } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { useRoomsFilters } from '@/hooks/useRoomsFilters';
+
+export function RoomFilters() {
+  const { filters, setFilter, resetFilters } = useRoomsFilters();
+  const [searchInput, setSearchInput] = useState(filters.search ?? '');
+
+  // Debounce: wait 300ms after the last keystroke before updating the URL
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      if (searchInput !== (filters.search ?? '')) {
+        setFilter('search', searchInput || undefined);
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [searchInput]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setSearchInput(filters.search ?? '');
+  }, [filters.search]);
+
+  const hasActiveFilters = !!filters.search || !!filters.location || !!filters.status;
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Input
+        placeholder="Search by title or description..."
+        value={searchInput}
+        onChange={(e) => setSearchInput(e.target.value)}
+        className="max-w-xs"
+      />
+
+      <Input
+        placeholder="Location"
+        value={filters.location ?? ''}
+        onChange={(e) => setFilter('location', e.target.value || undefined)}
+        className="max-w-[180px]"
+      />
+
+      <Select
+        value={filters.status ?? 'all'}
+        onValueChange={(v) =>
+          setFilter('status', v === 'all' ? undefined : (v as 'active' | 'inactive'))
+        }
+      >
+        <SelectTrigger className="w-[140px]">
+          <SelectValue placeholder="Status" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All statuses</SelectItem>
+          <SelectItem value="active">Active</SelectItem>
+          <SelectItem value="inactive">Inactive</SelectItem>
+        </SelectContent>
+      </Select>
+
+      {hasActiveFilters && (
+        <Button variant="ghost" size="sm" onClick={resetFilters}>
+          <X className="h-4 w-4 mr-1" /> Clear
+        </Button>
+      )}
+    </div>
+  );
+}
+```
+
+---
+
+## 23.12 Pagination Controls
+
+Same as Lesson 17.1, wired to `useRoomsFilters`.
+
+```tsx
+// webapp/src/components/owner/room-pagination.tsx
+import {
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { useRoomsFilters } from '@/hooks/useRoomsFilters';
+import type { PaginationMeta } from '@/types/room';
+
+interface RoomPaginationProps {
+  meta?: PaginationMeta;
+}
+
+export function RoomPagination({ meta }: RoomPaginationProps) {
+  const { filters, setFilters } = useRoomsFilters();
+
+  if (!meta) return null;
+  const { page, totalPages, total, hasNextPage, hasPrevPage } = meta;
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-4 px-2">
+      <div className="text-sm text-muted-foreground">
+        Showing page {page} of {totalPages} ({total} total)
+      </div>
+
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-muted-foreground">Rows per page</span>
+        <Select
+          value={String(filters.limit ?? 10)}
+          onValueChange={(v) => setFilters({ limit: Number(v), page: 1 })}
+        >
+          <SelectTrigger className="h-8 w-[70px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {[5, 10, 20, 50].map((n) => (
+              <SelectItem key={n} value={String(n)}>
+                {n}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <div className="flex items-center gap-1">
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setFilters({ page: 1 })}
+            disabled={!hasPrevPage}
+          >
+            <ChevronsLeft className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setFilters({ page: page - 1 })}
+            disabled={!hasPrevPage}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setFilters({ page: page + 1 })}
+            disabled={!hasNextPage}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setFilters({ page: totalPages })}
+            disabled={!hasNextPage}
+          >
+            <ChevronsRight className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+## 23.13 My Rooms Page -- Using `<DataTable>`
+
+This is the orchestrator. Notice how short it is -- every piece is reusable.
 
 ```tsx
 // webapp/src/pages/owner/MyRooms.tsx
-import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
-import { Pencil, Trash2, Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import api, { API_URL } from "@/services/api";
-import { Room, RoomsResponse } from "@/types/room";
-import DeleteRoomDialog from "@/components/owner/DeleteRoomDialog";
+import { Link } from 'react-router-dom';
+import { Plus } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { DataTable } from '@/components/ui/data-table';
+import { RoomFilters } from '@/components/owner/room-filters';
+import { RoomPagination } from '@/components/owner/room-pagination';
+import { useRoomColumns } from '@/components/owner/room-columns';
+import { useMyRooms } from '@/hooks/useRooms';
+import { useRoomsFilters } from '@/hooks/useRoomsFilters';
 
 function MyRooms(): JSX.Element {
-  const { data, isLoading, error } = useQuery<RoomsResponse>({
-    queryKey: ["ownerRooms"],
-    queryFn: async (): Promise<RoomsResponse> => {
-      const response = await api.get<RoomsResponse>("/rooms/my-rooms");
-      return response.data;
-    },
-  });
-
-  if (isLoading) {
-    return <div className="text-centre text-muted-foreground py-8">Loading your rooms...</div>;
-  }
-
-  if (error) {
-    return (
-      <div className="text-centre text-destructive py-8">
-        Failed to load rooms. Please try again.
-      </div>
-    );
-  }
-
-  const rooms: Room[] = data?.data || [];
+  const { filters } = useRoomsFilters();
+  const columns = useRoomColumns();
+  const { data, isLoading } = useMyRooms(filters);
 
   return (
-    <div>
-      <div className="flex items-centre justify-between mb-6">
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">My Rooms</h1>
-        <Button render={<Link to="/owner/rooms/new" />}>
-          <Plus className="h-4 w-4 mr-2" />
-          Add Room
+        <Button asChild>
+          <Link to="/owner/rooms/new">
+            <Plus className="h-4 w-4 mr-2" />
+            Add Room
+          </Link>
         </Button>
       </div>
 
-      {rooms.length === 0 ? (
-        <div className="text-centre py-12 text-muted-foreground">
-          <p className="text-lg mb-2">You have not added any rooms yet.</p>
-          <Button variant="outline" render={<Link to="/owner/rooms/new" />}>
-            Add your first room
-          </Button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {rooms.map((room: Room) => (
-            <Card key={room._id}>
-              {/* Room image */}
-              {room.images.length > 0 && (
-                <div className="aspect-video overflow-hidden rounded-t-lg">
-                  <img
-                    src={`${API_URL.replace("/api", "")}/uploads/rooms/${room.images[0]}`}
-                    alt={room.title}
-                    className="h-full w-full object-cover"
-                  />
-                </div>
-              )}
+      <RoomFilters />
 
-              <CardHeader>
-                <CardTitle className="text-lg">{room.title}</CardTitle>
-                <p className="text-sm text-muted-foreground">{room.location}</p>
-              </CardHeader>
+      <DataTable
+        columns={columns}
+        data={data?.data ?? []}
+        isLoading={isLoading}
+        emptyMessage="You have no rooms matching these filters. Add your first room to get started."
+        pageCount={data?.meta.totalPages ?? 1}
+        pageIndex={(filters.page ?? 1) - 1}
+        pageSize={filters.limit ?? 10}
+      />
 
-              <CardContent>
-                <div className="flex items-centre justify-between">
-                  <span className="text-lg font-semibold">
-                    &pound;{room.price}<span className="text-sm font-normal">/night</span>
-                  </span>
-                  <span className="text-sm text-muted-foreground">
-                    Up to {room.capacity} guests
-                  </span>
-                </div>
-              </CardContent>
-
-              <CardFooter className="flex gap-2">
-                <Button variant="outline" size="sm" render={<Link to={`/owner/rooms/${room._id}/edit`} />}>
-                  <Pencil className="h-3 w-3 mr-1" />
-                  Edit
-                </Button>
-                <DeleteRoomDialog roomId={room._id} roomTitle={room.title} />
-              </CardFooter>
-            </Card>
-          ))}
-        </div>
-      )}
+      <RoomPagination meta={data?.meta} />
     </div>
   );
 }
@@ -367,367 +881,349 @@ function MyRooms(): JSX.Element {
 export default MyRooms;
 ```
 
-**Key points:**
-- `useQuery` fetches data and provides `isLoading` and `error` states automatically
-- `queryKey: ["ownerRooms"]` uniquely identifies this query for caching and invalidation
-- Images are displayed by constructing the full URL: `${API_URL}/uploads/rooms/filename.jpg`
+That is it -- 30 lines for a fully filterable, paginated, URL-synced rooms table with row actions. Every concept (`DataTable`, `useRoomColumns`, `useMyRooms`, `useRoomsFilters`) is reused from the patterns we already taught.
 
 ---
 
-## 23.7 Delete Room with Confirmation
+## 23.14 Room Form Schema (Zod)
 
-We reuse the `ConfirmDialog` component we built in Lesson 11 (the same one used for deleting tasks in the Todo app). No need to write AlertDialog boilerplate again:
+A single schema used by both Add and Edit. We use `z.coerce.number()` for the numeric fields so HTML inputs (which emit strings) are converted cleanly.
 
-```tsx
-// webapp/src/components/owner/DeleteRoomButton.tsx
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
-import api from "@/services/api";
-
-interface DeleteRoomButtonProps {
-  roomId: string;
-  roomTitle: string;
-}
-
-function DeleteRoomButton({ roomId, roomTitle }: DeleteRoomButtonProps): JSX.Element {
-  const queryClient = useQueryClient();
-
-  const deleteMutation = useMutation({
-    mutationFn: async (): Promise<void> => {
-      await api.delete(`/rooms/${roomId}`);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["ownerRooms"] });
-    },
-  });
-
-  return (
-    <ConfirmDialog
-      trigger={
-        <Button variant="destructive" size="sm">
-          <Trash2 className="h-3 w-3 mr-1" />
-          Delete
-        </Button>
-      }
-      title="Delete Room"
-      description={`Are you sure you want to delete "${roomTitle}"? This action cannot be undone. All images and booking history for this room will be permanently removed.`}
-      confirmLabel="Delete Room"
-      variant="destructive"
-      onConfirm={() => deleteMutation.mutate()}
-    />
-  );
-}
-
-export default DeleteRoomButton;
-```
-
-**This is the power of reusable components** -- the same `ConfirmDialog` from Lesson 11 works here with different props. Compare this with writing the full AlertDialog markup every time.
-
-### The `useMutation` + `invalidateQueries` Pattern
-
-This is one of the most important patterns in React Query:
-
-1. **`useMutation`** handles the DELETE request
-2. **`onSuccess`** runs after the request succeeds
-3. **`invalidateQueries({ queryKey: ["ownerRooms"] })`** tells React Query that the `ownerRooms` data is now stale
-4. React Query automatically **re-fetches** the rooms list
-5. The UI updates to show the room has been removed
-
-This pattern keeps your UI in sync with the server without manually updating local state.
-
----
-
-## 23.8 Room Form Schema with Zod
-
-Define validation rules for the room form:
-
-```typescript
+```ts
 // webapp/src/schemas/roomSchema.ts
-import { z } from "zod";
+import { z } from 'zod';
 
-export const roomSchema = z.object({
+export const roomFormSchema = z.object({
   title: z
     .string()
-    .min(3, "Title must be at least 3 characters")
-    .max(100, "Title cannot exceed 100 characters"),
+    .min(3, 'Title must be at least 3 characters')
+    .max(100, 'Title cannot exceed 100 characters'),
   description: z
     .string()
-    .min(10, "Description must be at least 10 characters")
-    .max(2000, "Description cannot exceed 2000 characters"),
+    .min(10, 'Description must be at least 10 characters')
+    .max(1000, 'Description cannot exceed 1000 characters'),
   location: z
     .string()
-    .min(2, "Location is required"),
-  price: z
-    .number({ invalid_type_error: "Price must be a number" })
-    .min(1, "Price must be at least 1")
-    .max(10000, "Price cannot exceed 10,000"),
-  capacity: z
-    .number({ invalid_type_error: "Capacity must be a number" })
-    .min(1, "Capacity must be at least 1")
-    .max(50, "Capacity cannot exceed 50"),
-  amenities: z
-    .array(z.string())
-    .default([]),
+    .min(2, 'Location is required')
+    .max(100, 'Location cannot exceed 100 characters'),
+  price: z.coerce
+    .number({ invalid_type_error: 'Price must be a number' })
+    .positive('Price must be greater than 0'),
+  capacity: z.coerce
+    .number({ invalid_type_error: 'Capacity must be a number' })
+    .int('Capacity must be a whole number')
+    .min(1, 'Capacity must be at least 1')
+    .max(50, 'Capacity cannot exceed 50'),
+  amenities: z.array(z.string()).optional().default([]),
 });
 
-export type RoomFormValues = z.infer<typeof roomSchema>;
+export type RoomFormData = z.infer<typeof roomFormSchema>;
+
+export const AMENITY_OPTIONS: string[] = [
+  'WiFi',
+  'Parking',
+  'Air Conditioning',
+  'Projector',
+  'Whiteboard',
+  'TV Screen',
+  'Kitchen',
+  'Accessible',
+];
 ```
 
 ---
 
-## 23.9 Add Room Page -- The Complete Form
+## 23.15 Image Preview Hook
 
-This is the most complex form in the application. It combines text inputs, checkboxes, and file uploads:
+Image previews use `URL.createObjectURL()` -- a browser API that creates a temporary URL pointing at a `File` already in memory. We **must** revoke the URL when the component unmounts (or when a new selection replaces it) to free memory.
+
+```ts
+// webapp/src/hooks/useImagePreviews.ts
+import { useEffect, useState } from 'react';
+
+const MAX_IMAGES = 5;
+
+export function useImagePreviews() {
+  const [files, setFiles] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
+
+  // Build previews whenever files change, and revoke them on cleanup
+  useEffect(() => {
+    if (files.length === 0) {
+      setPreviews([]);
+      return;
+    }
+    const urls: string[] = files.map((f) => URL.createObjectURL(f));
+    setPreviews(urls);
+
+    // Cleanup: revoke when files change again OR when the component unmounts
+    return () => {
+      urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [files]);
+
+  const onSelect = (input: FileList | null): void => {
+    if (!input) return;
+    const arr: File[] = Array.from(input);
+    if (arr.length > MAX_IMAGES) {
+      // toast.error or alert -- we keep it simple here
+      alert(`You can upload a maximum of ${MAX_IMAGES} images.`);
+      return;
+    }
+    setFiles(arr);
+  };
+
+  const clear = (): void => setFiles([]);
+
+  return { files, previews, onSelect, clear };
+}
+```
+
+**The key insight:** by putting `URL.createObjectURL` inside a `useEffect`, we get automatic cleanup on unmount or re-selection. No more leaked blob URLs.
+
+---
+
+## 23.16 Add Room Page -- Full shadcn `Form`
+
+This is the complete pattern from Lesson 12, applied to the room form: `Form` provider, `FormField`, `FormItem`, `FormLabel`, `FormControl`, `FormMessage`.
 
 ```tsx
 // webapp/src/pages/owner/AddRoom.tsx
-import { useState } from "react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import api from "@/services/api";
-import { roomSchema, RoomFormValues } from "@/schemas/roomSchema";
-
-const AMENITY_OPTIONS: string[] = [
-  "WiFi",
-  "Parking",
-  "Air Conditioning",
-  "Projector",
-  "Whiteboard",
-  "TV Screen",
-  "Kitchen",
-  "Accessible",
-];
+import { useNavigate } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+  FormDescription,
+} from '@/components/ui/form';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { useCreateRoom } from '@/hooks/useRooms';
+import { useImagePreviews } from '@/hooks/useImagePreviews';
+import {
+  roomFormSchema,
+  AMENITY_OPTIONS,
+  type RoomFormData,
+} from '@/schemas/roomSchema';
 
 function AddRoom(): JSX.Element {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
+  const { mutate: createRoom, isPending } = useCreateRoom();
+  const { files, previews, onSelect } = useImagePreviews();
 
-  // Image state (not part of the Zod schema -- files cannot be validated with Zod)
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
-
-  const {
-    register,
-    handleSubmit,
-    setValue,
-    watch,
-    formState: { errors },
-  } = useForm<RoomFormValues>({
-    resolver: zodResolver(roomSchema),
+  const form = useForm<RoomFormData>({
+    resolver: zodResolver(roomFormSchema),
     defaultValues: {
-      title: "",
-      description: "",
-      location: "",
+      title: '',
+      description: '',
+      location: '',
       price: 0,
       capacity: 1,
       amenities: [],
     },
   });
 
-  const selectedAmenities: string[] = watch("amenities");
-
-  // Handle amenity checkbox toggle
-  const toggleAmenity = (amenity: string): void => {
-    const current: string[] = selectedAmenities || [];
-    const updated: string[] = current.includes(amenity)
-      ? current.filter((a: string) => a !== amenity)
-      : [...current, amenity];
-    setValue("amenities", updated);
-  };
-
-  // Handle image selection with preview
-  const handleImageChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
-    const files: FileList | null = event.target.files;
-    if (!files) return;
-
-    const fileArray: File[] = Array.from(files);
-
-    // Validate: maximum 5 images
-    if (fileArray.length > 5) {
-      alert("You can upload a maximum of 5 images.");
+  const onSubmit = (data: RoomFormData): void => {
+    if (files.length === 0) {
+      alert('Please select at least one image.');
       return;
     }
 
-    setSelectedFiles(fileArray);
+    // Build FormData for multipart upload
+    const formData = new FormData();
+    formData.append('title', data.title);
+    formData.append('description', data.description);
+    formData.append('location', data.location);
+    formData.append('price', String(data.price));
+    formData.append('capacity', String(data.capacity));
+    data.amenities?.forEach((a) => formData.append('amenities[]', a));
+    files.forEach((file) => formData.append('images', file));
 
-    // Generate preview URLs
-    const previews: string[] = fileArray.map((file: File) => URL.createObjectURL(file));
-
-    // Revoke old preview URLs to prevent memory leaks
-    imagePreviews.forEach((url: string) => URL.revokeObjectURL(url));
-
-    setImagePreviews(previews);
-  };
-
-  // Submit mutation
-  const createMutation = useMutation({
-    mutationFn: async (data: RoomFormValues): Promise<void> => {
-      // Build FormData for multipart upload
-      const formData = new FormData();
-      formData.append("title", data.title);
-      formData.append("description", data.description);
-      formData.append("location", data.location);
-      formData.append("price", String(data.price));
-      formData.append("capacity", String(data.capacity));
-      formData.append("amenities", JSON.stringify(data.amenities));
-
-      // Append each image file
-      selectedFiles.forEach((file: File) => {
-        formData.append("images", file);
-      });
-
-      await api.post("/rooms", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["ownerRooms"] });
-      navigate("/owner/rooms");
-    },
-  });
-
-  const onSubmit = (data: RoomFormValues): void => {
-    createMutation.mutate(data);
+    createRoom(formData, {
+      onSuccess: () => navigate('/owner/rooms'),
+    });
   };
 
   return (
     <div className="max-w-2xl">
       <h1 className="text-2xl font-bold mb-6">Add New Room</h1>
 
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-        {/* Title */}
-        <div className="space-y-2">
-          <Label htmlFor="title">Room Title</Label>
-          <Input id="title" placeholder="e.g., Spacious Meeting Room" {...register("title")} />
-          {errors.title && (
-            <p className="text-sm text-destructive">{errors.title.message}</p>
-          )}
-        </div>
-
-        {/* Description */}
-        <div className="space-y-2">
-          <Label htmlFor="description">Description</Label>
-          <Textarea
-            id="description"
-            placeholder="Describe the room, its features, and what makes it special..."
-            rows={4}
-            {...register("description")}
-          />
-          {errors.description && (
-            <p className="text-sm text-destructive">{errors.description.message}</p>
-          )}
-        </div>
-
-        {/* Location */}
-        <div className="space-y-2">
-          <Label htmlFor="location">Location</Label>
-          <Input id="location" placeholder="e.g., London, Manchester" {...register("location")} />
-          {errors.location && (
-            <p className="text-sm text-destructive">{errors.location.message}</p>
-          )}
-        </div>
-
-        {/* Price and Capacity side by side */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="price">Price per Night (&pound;)</Label>
-            <Input
-              id="price"
-              type="number"
-              min={1}
-              {...register("price", { valueAsNumber: true })}
-            />
-            {errors.price && (
-              <p className="text-sm text-destructive">{errors.price.message}</p>
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+          {/* Title */}
+          <FormField
+            control={form.control}
+            name="title"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Room Title</FormLabel>
+                <FormControl>
+                  <Input placeholder="Cosy 2BR apartment in central London" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
             )}
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="capacity">Maximum Capacity</Label>
-            <Input
-              id="capacity"
-              type="number"
-              min={1}
-              max={50}
-              {...register("capacity", { valueAsNumber: true })}
-            />
-            {errors.capacity && (
-              <p className="text-sm text-destructive">{errors.capacity.message}</p>
-            )}
-          </div>
-        </div>
-
-        {/* Amenities Checkboxes */}
-        <div className="space-y-2">
-          <Label>Amenities</Label>
-          <div className="grid grid-cols-2 gap-2">
-            {AMENITY_OPTIONS.map((amenity: string) => (
-              <div key={amenity} className="flex items-centre space-x-2">
-                <Checkbox
-                  id={`amenity-${amenity}`}
-                  checked={selectedAmenities?.includes(amenity) || false}
-                  onCheckedChange={() => toggleAmenity(amenity)}
-                />
-                <Label htmlFor={`amenity-${amenity}`} className="text-sm font-normal">
-                  {amenity}
-                </Label>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Image Upload */}
-        <div className="space-y-2">
-          <Label htmlFor="images">Room Images (max 5)</Label>
-          <Input
-            id="images"
-            type="file"
-            accept=".jpg,.jpeg,.png,.webp"
-            multiple
-            onChange={handleImageChange}
           />
-          <p className="text-xs text-muted-foreground">
-            Accepted formats: JPG, PNG, WebP. Maximum 5 MB per file.
-          </p>
 
-          {/* Image Previews */}
-          {imagePreviews.length > 0 && (
-            <div className="grid grid-cols-3 gap-2 mt-2">
-              {imagePreviews.map((preview: string, index: number) => (
-                <div key={index} className="aspect-video overflow-hidden rounded-md border">
-                  <img
-                    src={preview}
-                    alt={`Preview ${index + 1}`}
-                    className="h-full w-full object-cover"
+          {/* Description */}
+          <FormField
+            control={form.control}
+            name="description"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Description</FormLabel>
+                <FormControl>
+                  <Textarea
+                    rows={4}
+                    placeholder="Describe the room, its features, and what makes it special..."
+                    {...field}
                   />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          {/* Location */}
+          <FormField
+            control={form.control}
+            name="location"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Location</FormLabel>
+                <FormControl>
+                  <Input placeholder="e.g. London, Manchester" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          {/* Price + Capacity side-by-side */}
+          <div className="grid grid-cols-2 gap-4">
+            <FormField
+              control={form.control}
+              name="price"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Price per Night (&pound;)</FormLabel>
+                  <FormControl>
+                    <Input type="number" min={1} step="0.01" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="capacity"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Maximum Capacity</FormLabel>
+                  <FormControl>
+                    <Input type="number" min={1} max={50} {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+
+          {/* Amenities -- multi-checkbox */}
+          <FormField
+            control={form.control}
+            name="amenities"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Amenities</FormLabel>
+                <div className="grid grid-cols-2 gap-2">
+                  {AMENITY_OPTIONS.map((amenity: string) => {
+                    const checked = field.value?.includes(amenity) ?? false;
+                    return (
+                      <div key={amenity} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`amenity-${amenity}`}
+                          checked={checked}
+                          onCheckedChange={(isChecked) => {
+                            const current: string[] = field.value ?? [];
+                            field.onChange(
+                              isChecked
+                                ? [...current, amenity]
+                                : current.filter((a) => a !== amenity)
+                            );
+                          }}
+                        />
+                        <Label
+                          htmlFor={`amenity-${amenity}`}
+                          className="text-sm font-normal"
+                        >
+                          {amenity}
+                        </Label>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
 
-        {/* Error message */}
-        {createMutation.isError && (
-          <p className="text-sm text-destructive">
-            Failed to create room. Please check your inputs and try again.
-          </p>
-        )}
+          {/* Images -- managed outside the form because Zod cannot validate files */}
+          <div className="space-y-2">
+            <Label htmlFor="images">Room Images (1-5)</Label>
+            <Input
+              id="images"
+              type="file"
+              accept=".jpg,.jpeg,.png,.webp"
+              multiple
+              onChange={(e) => onSelect(e.target.files)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Accepted: JPG, PNG, WebP. Maximum 5 MB per file, 5 images total.
+            </p>
 
-        {/* Submit */}
-        <Button type="submit" disabled={createMutation.isPending} className="w-full">
-          {createMutation.isPending ? "Creating Room..." : "Create Room"}
-        </Button>
-      </form>
+            {previews.length > 0 && (
+              <div className="grid grid-cols-3 gap-2 mt-2">
+                {previews.map((preview, index) => (
+                  <div
+                    key={index}
+                    className="aspect-video overflow-hidden rounded-md border"
+                  >
+                    <img
+                      src={preview}
+                      alt={`Preview ${index + 1}`}
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Submit */}
+          <div className="flex gap-2">
+            <Button type="submit" disabled={isPending} className="flex-1">
+              {isPending ? 'Creating Room...' : 'Create Room'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => navigate('/owner/rooms')}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+      </Form>
     </div>
   );
 }
@@ -735,88 +1231,104 @@ function AddRoom(): JSX.Element {
 export default AddRoom;
 ```
 
-### How Image Previews Work
+### How the shadcn `Form` Pattern Works
 
-When the user selects files, we create temporary URLs using `URL.createObjectURL()`. These URLs point to the files in the browser's memory -- they are not uploaded yet. This lets users see what they selected before submitting the form.
+This is the **standard shadcn pattern** for forms. Compare it to the manual approach in Lesson 12 -- the shadcn primitives wire labels, error messages, and accessibility attributes for you:
 
-**Important:** Always call `URL.revokeObjectURL()` on old preview URLs to free up memory.
+| Component | Job |
+|-----------|-----|
+| `<Form {...form}>` | The provider -- gives every `FormField` access to the form context |
+| `<FormField name="..." />` | Connects one field to React Hook Form via `control` and `name` |
+| `<FormItem>` | The wrapper that groups label, control, description, and error |
+| `<FormLabel>` | Auto-wires `htmlFor` to the input id |
+| `<FormControl>` | Wraps the actual input; auto-applies `aria-invalid`, `aria-describedby` |
+| `<FormDescription>` | Helper text below the label |
+| `<FormMessage>` | Renders the Zod error message automatically |
 
-### How FormData Works
+You **never** write `htmlFor` or `aria-invalid` manually -- the primitives do it. That is the win.
 
-Regular JSON cannot carry files. `FormData` is a special browser API that constructs `multipart/form-data` -- the same encoding that HTML forms use when you include `enctype="multipart/form-data"`.
+### Why Image Files Live Outside the Form
 
-```typescript
+Zod and React Hook Form work brilliantly for serialisable data (strings, numbers, arrays). `File` objects are not serialisable, so we keep them in a separate hook (`useImagePreviews`). At submit time we merge them into a single `FormData` payload.
+
+### How `FormData` for Multipart Works
+
+JSON cannot carry files. `FormData` is a browser API that builds the `multipart/form-data` body -- the same encoding HTML forms with `enctype="multipart/form-data"` produce.
+
+```ts
 const formData = new FormData();
-formData.append("title", "My Room");        // Text field
-formData.append("images", fileObject1);      // File field
-formData.append("images", fileObject2);      // Another file, same field name
+formData.append('title', 'My Room');           // text field
+formData.append('amenities[]', 'WiFi');         // array element
+formData.append('amenities[]', 'Parking');      // another array element
+formData.append('images', fileObject1);         // file field
+formData.append('images', fileObject2);         // multiple files -> same field name
 ```
 
-When Axios sends this with `"Content-Type": "multipart/form-data"`, Multer on the backend can parse both the text fields and the files.
+Axios sends this with `Content-Type: multipart/form-data; boundary=...` so Multer on the backend can parse both the text fields and the files in one go.
 
 ---
 
-## 23.10 Edit Room Page
+## 23.17 Edit Room Page -- Pre-Filled Form
 
-The edit page is similar to the add page, but it pre-fills the form with existing room data and shows current images:
+The edit page reuses the same schema, the same hook for previews, and the same shadcn `Form` blocks. The only differences:
+
+1. We fetch the existing room with `useRoom(id)`
+2. We `reset()` the form once the data arrives
+3. We display the existing images alongside the new file input
+4. Images are **optional** on update -- if the user picks nothing, the existing images remain
 
 ```tsx
 // webapp/src/pages/owner/EditRoom.tsx
-import { useState, useEffect } from "react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
-import api, { API_URL } from "@/services/api";
-import { RoomResponse } from "@/types/room";
-import { roomSchema, RoomFormValues } from "@/schemas/roomSchema";
-
-const AMENITY_OPTIONS: string[] = [
-  "WiFi", "Parking", "Air Conditioning", "Projector",
-  "Whiteboard", "TV Screen", "Kitchen", "Accessible",
-];
+import { useEffect } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useRoom, useUpdateRoom } from '@/hooks/useRooms';
+import { useImagePreviews } from '@/hooks/useImagePreviews';
+import { API_URL } from '@/services/api';
+import {
+  roomFormSchema,
+  AMENITY_OPTIONS,
+  type RoomFormData,
+} from '@/schemas/roomSchema';
 
 function EditRoom(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
+  const { data: room, isLoading } = useRoom(id ?? '');
+  const { mutate: updateRoom, isPending } = useUpdateRoom();
+  const { files, previews, onSelect } = useImagePreviews();
 
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
-  const [existingImages, setExistingImages] = useState<string[]>([]);
-
-  // Fetch existing room data
-  const { data: roomData, isLoading } = useQuery<RoomResponse>({
-    queryKey: ["room", id],
-    queryFn: async (): Promise<RoomResponse> => {
-      const response = await api.get<RoomResponse>(`/rooms/${id}`);
-      return response.data;
+  const form = useForm<RoomFormData>({
+    resolver: zodResolver(roomFormSchema),
+    defaultValues: {
+      title: '',
+      description: '',
+      location: '',
+      price: 0,
+      capacity: 1,
+      amenities: [],
     },
   });
 
-  const {
-    register,
-    handleSubmit,
-    setValue,
-    watch,
-    reset,
-    formState: { errors },
-  } = useForm<RoomFormValues>({
-    resolver: zodResolver(roomSchema),
-  });
-
-  const selectedAmenities: string[] = watch("amenities") || [];
-
-  // Pre-fill form when data loads
+  // Pre-fill the form once the room data arrives
   useEffect(() => {
-    if (roomData?.data) {
-      const room = roomData.data;
-      reset({
+    if (room) {
+      form.reset({
         title: room.title,
         description: room.description,
         location: room.location,
@@ -824,176 +1336,227 @@ function EditRoom(): JSX.Element {
         capacity: room.capacity,
         amenities: room.amenities,
       });
-      setExistingImages(room.images);
     }
-  }, [roomData, reset]);
+  }, [room, form]);
 
-  const toggleAmenity = (amenity: string): void => {
-    const current: string[] = selectedAmenities || [];
-    const updated: string[] = current.includes(amenity)
-      ? current.filter((a: string) => a !== amenity)
-      : [...current, amenity];
-    setValue("amenities", updated);
-  };
+  const onSubmit = (data: RoomFormData): void => {
+    if (!id) return;
 
-  const handleImageChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
-    const files: FileList | null = event.target.files;
-    if (!files) return;
+    const formData = new FormData();
+    formData.append('title', data.title);
+    formData.append('description', data.description);
+    formData.append('location', data.location);
+    formData.append('price', String(data.price));
+    formData.append('capacity', String(data.capacity));
+    data.amenities?.forEach((a) => formData.append('amenities[]', a));
 
-    const fileArray: File[] = Array.from(files);
-    if (fileArray.length > 5) {
-      alert("You can upload a maximum of 5 images.");
-      return;
+    // Only append images if the owner picked new ones
+    if (files.length > 0) {
+      files.forEach((file) => formData.append('images', file));
     }
 
-    setSelectedFiles(fileArray);
-    imagePreviews.forEach((url: string) => URL.revokeObjectURL(url));
-    setImagePreviews(fileArray.map((file: File) => URL.createObjectURL(file)));
+    updateRoom(
+      { id, formData },
+      { onSuccess: () => navigate('/owner/rooms') }
+    );
   };
-
-  // Update mutation
-  const updateMutation = useMutation({
-    mutationFn: async (data: RoomFormValues): Promise<void> => {
-      const formData = new FormData();
-      formData.append("title", data.title);
-      formData.append("description", data.description);
-      formData.append("location", data.location);
-      formData.append("price", String(data.price));
-      formData.append("capacity", String(data.capacity));
-      formData.append("amenities", JSON.stringify(data.amenities));
-
-      // Only append images if new ones were selected
-      if (selectedFiles.length > 0) {
-        selectedFiles.forEach((file: File) => {
-          formData.append("images", file);
-        });
-      }
-
-      await api.put(`/rooms/${id}`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["ownerRooms"] });
-      queryClient.invalidateQueries({ queryKey: ["room", id] });
-      navigate("/owner/rooms");
-    },
-  });
 
   if (isLoading) {
-    return <div className="text-muted-foreground py-8">Loading room data...</div>;
+    return (
+      <div className="max-w-2xl space-y-4">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-32 w-full" />
+      </div>
+    );
   }
+
+  if (!room) {
+    return <div className="text-destructive">Room not found.</div>;
+  }
+
+  const baseUrl: string = API_URL.replace(/\/api\/?$/, '');
 
   return (
     <div className="max-w-2xl">
       <h1 className="text-2xl font-bold mb-6">Edit Room</h1>
 
-      <form onSubmit={handleSubmit((data) => updateMutation.mutate(data))} className="space-y-6">
-        {/* Same fields as AddRoom -- title, description, location, price, capacity, amenities */}
-        <div className="space-y-2">
-          <Label htmlFor="title">Room Title</Label>
-          <Input id="title" {...register("title")} />
-          {errors.title && <p className="text-sm text-destructive">{errors.title.message}</p>}
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="description">Description</Label>
-          <Textarea id="description" rows={4} {...register("description")} />
-          {errors.description && <p className="text-sm text-destructive">{errors.description.message}</p>}
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="location">Location</Label>
-          <Input id="location" {...register("location")} />
-          {errors.location && <p className="text-sm text-destructive">{errors.location.message}</p>}
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="price">Price per Night (&pound;)</Label>
-            <Input id="price" type="number" {...register("price", { valueAsNumber: true })} />
-            {errors.price && <p className="text-sm text-destructive">{errors.price.message}</p>}
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="capacity">Maximum Capacity</Label>
-            <Input id="capacity" type="number" {...register("capacity", { valueAsNumber: true })} />
-            {errors.capacity && <p className="text-sm text-destructive">{errors.capacity.message}</p>}
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label>Amenities</Label>
-          <div className="grid grid-cols-2 gap-2">
-            {AMENITY_OPTIONS.map((amenity: string) => (
-              <div key={amenity} className="flex items-centre space-x-2">
-                <Checkbox
-                  id={`amenity-${amenity}`}
-                  checked={selectedAmenities.includes(amenity)}
-                  onCheckedChange={() => toggleAmenity(amenity)}
-                />
-                <Label htmlFor={`amenity-${amenity}`} className="text-sm font-normal">
-                  {amenity}
-                </Label>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Current Images */}
-        {existingImages.length > 0 && selectedFiles.length === 0 && (
-          <div className="space-y-2">
-            <Label>Current Images</Label>
-            <div className="grid grid-cols-3 gap-2">
-              {existingImages.map((image: string, index: number) => (
-                <div key={index} className="aspect-video overflow-hidden rounded-md border">
-                  <img
-                    src={`${API_URL.replace("/api", "")}/uploads/rooms/${image}`}
-                    alt={`Room image ${index + 1}`}
-                    className="h-full w-full object-cover"
-                  />
-                </div>
-              ))}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Uploading new images will replace the existing ones.
-            </p>
-          </div>
-        )}
-
-        {/* Upload new images */}
-        <div className="space-y-2">
-          <Label htmlFor="images">Upload New Images (optional)</Label>
-          <Input
-            id="images"
-            type="file"
-            accept=".jpg,.jpeg,.png,.webp"
-            multiple
-            onChange={handleImageChange}
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+          <FormField
+            control={form.control}
+            name="title"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Room Title</FormLabel>
+                <FormControl>
+                  <Input {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
           />
-          {imagePreviews.length > 0 && (
-            <div className="grid grid-cols-3 gap-2 mt-2">
-              {imagePreviews.map((preview: string, index: number) => (
-                <div key={index} className="aspect-video overflow-hidden rounded-md border">
-                  <img src={preview} alt={`Preview ${index + 1}`} className="h-full w-full object-cover" />
+
+          <FormField
+            control={form.control}
+            name="description"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Description</FormLabel>
+                <FormControl>
+                  <Textarea rows={4} {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="location"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Location</FormLabel>
+                <FormControl>
+                  <Input {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <div className="grid grid-cols-2 gap-4">
+            <FormField
+              control={form.control}
+              name="price"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Price per Night (&pound;)</FormLabel>
+                  <FormControl>
+                    <Input type="number" min={1} step="0.01" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="capacity"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Maximum Capacity</FormLabel>
+                  <FormControl>
+                    <Input type="number" min={1} max={50} {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+
+          <FormField
+            control={form.control}
+            name="amenities"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Amenities</FormLabel>
+                <div className="grid grid-cols-2 gap-2">
+                  {AMENITY_OPTIONS.map((amenity: string) => {
+                    const checked = field.value?.includes(amenity) ?? false;
+                    return (
+                      <div key={amenity} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`amenity-${amenity}`}
+                          checked={checked}
+                          onCheckedChange={(isChecked) => {
+                            const current: string[] = field.value ?? [];
+                            field.onChange(
+                              isChecked
+                                ? [...current, amenity]
+                                : current.filter((a) => a !== amenity)
+                            );
+                          }}
+                        />
+                        <Label htmlFor={`amenity-${amenity}`} className="text-sm font-normal">
+                          {amenity}
+                        </Label>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          {/* Current images */}
+          {room.images.length > 0 && files.length === 0 && (
+            <div className="space-y-2">
+              <Label>Current Images</Label>
+              <div className="grid grid-cols-3 gap-2">
+                {room.images.map((image, index) => (
+                  <div
+                    key={image}
+                    className="aspect-video overflow-hidden rounded-md border"
+                  >
+                    <img
+                      src={`${baseUrl}/uploads/rooms/${image}`}
+                      alt={`Room image ${index + 1}`}
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Uploading new images will replace the existing ones.
+              </p>
             </div>
           )}
-        </div>
 
-        {updateMutation.isError && (
-          <p className="text-sm text-destructive">Failed to update room. Please try again.</p>
-        )}
+          {/* Upload new images */}
+          <div className="space-y-2">
+            <Label htmlFor="images">Upload New Images (optional)</Label>
+            <Input
+              id="images"
+              type="file"
+              accept=".jpg,.jpeg,.png,.webp"
+              multiple
+              onChange={(e) => onSelect(e.target.files)}
+            />
 
-        <div className="flex gap-2">
-          <Button type="submit" disabled={updateMutation.isPending}>
-            {updateMutation.isPending ? "Saving..." : "Save Changes"}
-          </Button>
-          <Button type="button" variant="outline" onClick={() => navigate("/owner/rooms")}>
-            Cancel
-          </Button>
-        </div>
-      </form>
+            {previews.length > 0 && (
+              <div className="grid grid-cols-3 gap-2 mt-2">
+                {previews.map((preview, index) => (
+                  <div
+                    key={index}
+                    className="aspect-video overflow-hidden rounded-md border"
+                  >
+                    <img
+                      src={preview}
+                      alt={`New preview ${index + 1}`}
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-2">
+            <Button type="submit" disabled={isPending}>
+              {isPending ? 'Saving...' : 'Save Changes'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => navigate('/owner/rooms')}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+      </Form>
     </div>
   );
 }
@@ -1001,109 +1564,115 @@ function EditRoom(): JSX.Element {
 export default EditRoom;
 ```
 
-**Key differences from AddRoom:**
-- We fetch existing room data with `useQuery` and pre-fill the form with `reset()`
-- Current images are displayed so the owner can see what is already uploaded
-- New images are optional -- if none are selected, the existing images remain
-- On success, we invalidate both `ownerRooms` and the specific `room` query
-
 ---
 
-## 23.11 Displaying Room Images
+## 23.18 Displaying Room Images
 
-Throughout the portal, room images are displayed by constructing the URL from the filename stored in the database:
+Across the portal, room images come from filenames stored in the database. We build the absolute URL from the API base URL:
 
-```typescript
-// Pattern for constructing image URLs
-const baseUrl: string = API_URL.replace("/api", "");
+```ts
+const baseUrl: string = API_URL.replace(/\/api\/?$/, '');
 const imageUrl: string = `${baseUrl}/uploads/rooms/${room.images[0]}`;
 ```
 
 If `API_URL` is `http://localhost:3001/api` and the filename is `1700000000000-kitchen.jpg`, the full URL becomes:
+
 ```
 http://localhost:3001/uploads/rooms/1700000000000-kitchen.jpg
 ```
 
-This works because we set up `express.static` in Lesson 22 to serve the `uploads` directory.
+This works because we set up `express.static('uploads')` in Lesson 22 to serve the uploaded files.
 
 ---
 
-## 23.12 Complete File Summary
+## 23.19 Complete File Summary
 
 ```
 webapp/src/
 ├── components/
 │   ├── owner/
-│   │   ├── OwnerLayout.tsx        # Sidebar + Outlet wrapper
-│   │   └── DeleteRoomDialog.tsx   # Confirmation dialog with useMutation
-│   └── ui/                       # shadcn components
+│   │   ├── OwnerLayout.tsx          # sidebar + Outlet
+│   │   ├── room-columns.tsx         # useRoomColumns -> ColumnDef<Room>[]
+│   │   ├── room-row-actions.tsx     # edit link + delete with AlertDialog
+│   │   ├── room-filters.tsx         # debounced search + status select
+│   │   └── room-pagination.tsx      # page controls
+│   └── ui/
+│       ├── data-table.tsx           # generic <DataTable> from Lesson 17.1
+│       ├── form.tsx                 # shadcn Form, FormField, FormItem, etc.
+│       └── ... other shadcn pieces
+├── hooks/
+│   ├── useRooms.ts                  # roomKeys + 5 hooks
+│   ├── useRoomsFilters.ts           # URL <-> filters sync
+│   └── useImagePreviews.ts          # File state + object URL lifecycle
 ├── pages/
 │   └── owner/
-│       ├── MyRooms.tsx            # List owner's rooms with useQuery
-│       ├── AddRoom.tsx            # Create room form with image upload
-│       ├── EditRoom.tsx           # Edit room with pre-filled form
-│       └── OwnerBookings.tsx      # Placeholder (Lesson 25)
+│       ├── MyRooms.tsx              # DataTable orchestrator
+│       ├── AddRoom.tsx              # shadcn Form + image upload
+│       ├── EditRoom.tsx             # pre-filled shadcn Form
+│       └── OwnerBookings.tsx        # placeholder (Lesson 25)
 ├── schemas/
-│   └── roomSchema.ts             # Zod validation for room form
+│   └── roomSchema.ts                # Zod schema + AMENITY_OPTIONS
 ├── services/
-│   └── api.ts                    # Axios instance with JWT interceptor
+│   ├── api.ts                       # Axios instance + JWT interceptor
+│   └── roomApi.ts                   # CRUD methods (FormData on write)
 ├── types/
-│   └── room.ts                   # Room interfaces
-└── main.tsx                      # QueryClientProvider setup
+│   └── room.ts                      # Room, RoomFilters, RoomsResponse
+└── main.tsx                         # BrowserRouter + QueryClientProvider + Toaster
 ```
 
 ---
 
 ## Practice Exercises
 
-### Exercise 1: Complete Owner Portal
-1. Set up Axios with JWT interceptor and React Query provider
-2. Create the owner layout with sidebar navigation
-3. Build the "My Rooms" page with room cards showing images and details
-4. Build the "Add Room" page with all form fields, amenity checkboxes, and image upload with previews
-5. Test creating a room and verify it appears in the "My Rooms" list
+### Exercise 1: Build the Service and Hooks
+1. Create `services/roomApi.ts` with `getAll`, `getMine`, `getById`, `create`, `update`, `delete`
+2. Create `hooks/useRooms.ts` with the `roomKeys` factory and all five hooks
+3. Verify every mutation shows a Sonner toast on success and on error
+4. Confirm `invalidateQueries({ queryKey: roomKeys.all })` refreshes the list
 
-### Exercise 2: Edit and Delete
-1. Build the "Edit Room" page that pre-fills with existing data
-2. Test editing a room's title, price, and images
-3. Add the delete confirmation dialog using shadcn AlertDialog
-4. Verify that deleting a room removes it from the list immediately
+### Exercise 2: Build the My Rooms Table
+1. Create `useRoomColumns()` returning a `ColumnDef<Room>[]`
+2. Wire `<DataTable>` with `manualPagination` and `pageCount` from `data.meta.totalPages`
+3. Confirm the URL updates when you change the search box (after 300ms debounce)
+4. Refresh the page -- the filters and current page should be preserved
 
-### Exercise 3: Form Validation Feedback
-Add toast notifications (shadcn `useToast`) for success and error states:
-```tsx
-import { useToast } from "@/components/ui/use-toast";
+### Exercise 3: Build the Add Room Form
+1. Create the Zod schema in `schemas/roomSchema.ts`
+2. Use `Form`, `FormField`, `FormItem`, `FormLabel`, `FormControl`, `FormMessage` for every field
+3. Use the `useImagePreviews` hook for the file input
+4. On submit, build a `FormData` payload and call `createRoom(formData)`
+5. Confirm the toast appears and the navigation back to `/owner/rooms` happens on success
 
-const { toast } = useToast();
+### Exercise 4: Build the Edit Room Page
+1. Fetch the room with `useRoom(id)`
+2. Call `form.reset(roomData)` inside a `useEffect`
+3. Show the existing images when no new files are selected
+4. Confirm: leaving the file input empty preserves the existing images
 
-// In onSuccess:
-toast({ title: "Room created successfully!" });
+### Exercise 5: Image Management Improvement (Stretch)
+Allow the owner to remove individual existing images and add new ones alongside the survivors:
+1. Track removed filenames in state
+2. Show a small X button on each existing thumbnail
+3. Send the removed list to the backend as a JSON field:
 
-// In onError:
-toast({ title: "Failed to create room", variant: "destructive" });
+```ts
+formData.append('removedImages', JSON.stringify(removedImages));
 ```
 
-### Exercise 4: Image Management Improvement
-Instead of replacing all images on edit, allow the owner to:
-1. Remove individual existing images (click an "X" on each thumbnail)
-2. Add new images alongside existing ones
-3. Send the updated image list to the backend
-
-Hint: Track removed images in state and send them as a JSON field:
-```typescript
-formData.append("removedImages", JSON.stringify(["old-file-1.jpg"]));
-```
+The backend then deletes those files from disk and removes them from the room document.
 
 ---
 
 ## Key Takeaways
-1. **React Query's `useQuery`** fetches server data and provides `isLoading`, `error`, and `data` states automatically
-2. **`useMutation`** handles create, update, and delete operations with `isPending` and `isError` states
-3. **`invalidateQueries`** tells React Query to re-fetch data after a mutation, keeping the UI in sync with the server
-4. **`FormData`** is required for multipart file uploads -- you cannot send files as JSON
-5. **`URL.createObjectURL()`** creates temporary preview URLs for selected files before upload
-6. **Image URLs** are constructed by combining the API base URL with the filename: `${baseUrl}/uploads/rooms/${filename}`
-7. **React Hook Form's `reset()`** pre-fills forms with existing data when editing
-8. **`valueAsNumber: true`** in `register()` ensures number inputs are parsed as numbers, not strings
-9. **shadcn AlertDialog** provides a built-in confirmation pattern -- never delete without asking first
-10. Always **revoke object URLs** with `URL.revokeObjectURL()` to prevent memory leaks
+1. **Service layer first** -- `roomApi` owns HTTP, hooks own caching, components own UI
+2. **Query keys factory** (`roomKeys.all`, `roomKeys.list(filters)`, `roomKeys.detail(id)`) gives type-safe, hierarchical invalidation
+3. **One hook per action** -- `useRooms`, `useRoom`, `useCreateRoom`, `useUpdateRoom`, `useDeleteRoom`. Each owns its own toasts
+4. **Reuse `<DataTable>`** from Lesson 17.1 for any entity -- only the columns and the data hook change
+5. **URL is the source of truth** for table state via `useSearchParams` -- bookmarkable, refresh-proof, shareable
+6. **shadcn `Form` pattern** (`Form`, `FormField`, `FormItem`, `FormLabel`, `FormControl`, `FormMessage`) wires labels, ids, and aria attributes for you
+7. **Zod with `z.coerce.number()`** converts string inputs to numbers cleanly; `z.infer` derives types from the schema
+8. **Files live outside the schema** -- track them with a dedicated hook because Zod cannot validate `File` objects
+9. **`FormData`** is required for multipart upload; the same field name (`'images'`) can be appended multiple times for arrays of files
+10. **`URL.createObjectURL`** inside a `useEffect` with cleanup `URL.revokeObjectURL` prevents memory leaks from preview blobs
+11. **shadcn `AlertDialog`** wraps destructive actions -- never delete without explicit confirmation
+12. **Sonner toasts inside mutation hooks** mean every component using the hook gets consistent feedback for free

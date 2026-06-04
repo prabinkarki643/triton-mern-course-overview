@@ -4,8 +4,11 @@
 - Understanding different payment methods: online (eSewa) and offline (Cash on Delivery)
 - Building a COD payment flow with status tracking
 - Integrating eSewa using HMAC-SHA256 signed payloads
-- Creating backend endpoints to initiate and verify payments
-- Building a frontend payment selection and checkout flow
+- Creating backend endpoints to initiate and verify payments using **express-validator** and **asyncHandler**
+- Returning a consistent **`{ data: ... }` response envelope** from every endpoint
+- Building a payment selector inside a shadcn **Form** with React Hook Form + Zod
+- Wrapping payment calls in an Axios **service layer** (`paymentApi`)
+- Using **React Query mutation hooks** (`useInitiateEsewaPayment`, `useVerifyEsewaPayment`) for loading state, cache invalidation, and toast feedback
 - Using eSewa sandbox credentials for safe development testing
 
 ---
@@ -102,82 +105,95 @@ Backend updates paymentStatus to "paid"
 
 ### Backend: Create Booking with COD
 
-When the user selects COD during checkout, the booking is created with `paymentMethod: 'cod'` and `paymentStatus: 'pending'`:
+When the user selects COD during checkout, the booking is created with `paymentMethod: 'cod'` and `paymentStatus: 'pending'`.
+
+Following the patterns from Lesson 16, we split this into a **validator**, a **controller** (wrapped in `asyncHandler`), and a **route** that wires them together. Every response uses the `{ data: ... }` envelope.
+
+```typescript
+// backend/src/validators/booking.validator.ts
+import { body, param } from 'express-validator';
+
+export const createBookingValidator = [
+  body('roomId').exists({ checkFalsy: true }).isMongoId().withMessage('Valid room ID required'),
+  body('checkIn').exists({ checkFalsy: true }).isISO8601().withMessage('Valid check-in date required'),
+  body('checkOut').exists({ checkFalsy: true }).isISO8601().withMessage('Valid check-out date required'),
+  body('totalPrice').exists().isFloat({ min: 0 }).withMessage('Total price must be a positive number'),
+  body('paymentMethod').exists({ checkFalsy: true }).isIn(['esewa', 'cod']).withMessage('Payment method must be esewa or cod'),
+];
+
+export const bookingIdValidator = [
+  param('id').isMongoId().withMessage('Invalid booking ID format'),
+];
+```
+
+```typescript
+// backend/src/controllers/bookingController.ts
+import { Response } from 'express';
+import { asyncHandler } from '../middleware/asyncHandler';
+import { Booking } from '../models/Booking';
+import type { AuthRequest } from '../types/auth';
+
+// POST /api/bookings
+export const createBooking = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const { roomId, checkIn, checkOut, totalPrice, paymentMethod } = req.body;
+
+  const booking = await Booking.create({
+    user: req.userId,
+    room: roomId,
+    checkIn: new Date(checkIn),
+    checkOut: new Date(checkOut),
+    totalPrice,
+    paymentMethod,
+    paymentStatus: 'pending',
+    status: paymentMethod === 'cod' ? 'confirmed' : 'pending',
+  });
+
+  res.status(201).json({ data: booking });
+});
+
+// PATCH /api/bookings/:id/mark-paid (owner only)
+export const markBookingPaid = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const booking = await Booking.findById(req.params.id).populate('room');
+
+  if (!booking) {
+    res.status(404).json({ error: 'Booking not found' });
+    return;
+  }
+
+  if (booking.paymentMethod !== 'cod') {
+    res.status(400).json({ error: 'Only COD bookings can be manually marked as paid' });
+    return;
+  }
+
+  if (booking.paymentStatus === 'paid') {
+    res.status(400).json({ error: 'Booking is already marked as paid' });
+    return;
+  }
+
+  booking.paymentStatus = 'paid';
+  await booking.save();
+
+  res.json({ data: booking });
+});
+```
 
 ```typescript
 // backend/src/routes/bookings.ts
-import { Router, Request, Response } from 'express';
-import { Booking } from '../models/Booking';
+import { Router } from 'express';
+import { createBooking, markBookingPaid } from '../controllers/bookingController';
 import { authMiddleware } from '../middleware/auth';
+import { validateResult } from '../middleware/validate-result.middleware';
+import { createBookingValidator, bookingIdValidator } from '../validators/booking.validator';
 
 const router = Router();
 
-// Create a booking (supports both COD and eSewa)
-router.post('/', authMiddleware, async (req: Request, res: Response) => {
-  try {
-    const { roomId, checkIn, checkOut, totalPrice, paymentMethod } = req.body;
-
-    if (!['esewa', 'cod'].includes(paymentMethod)) {
-      return res.status(400).json({ error: 'Invalid payment method' });
-    }
-
-    const booking = await Booking.create({
-      user: req.userId,
-      room: roomId,
-      checkIn: new Date(checkIn),
-      checkOut: new Date(checkOut),
-      totalPrice,
-      paymentMethod,
-      paymentStatus: 'pending',
-      status: paymentMethod === 'cod' ? 'confirmed' : 'pending',
-    });
-
-    res.status(201).json(booking);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to create booking' });
-  }
-});
+router.post('/', authMiddleware, createBookingValidator, validateResult, createBooking);
+router.patch('/:id/mark-paid', authMiddleware, bookingIdValidator, validateResult, markBookingPaid);
 
 export default router;
 ```
 
-Notice that COD bookings are immediately set to `status: 'confirmed'` because no online payment step is needed. eSewa bookings stay `pending` until payment is verified.
-
-### Backend: Mark COD as Paid
-
-The room owner needs an endpoint to mark a COD booking as paid once they collect the cash:
-
-```typescript
-// Add to backend/src/routes/bookings.ts
-
-// Owner marks COD booking as paid
-router.patch('/:id/mark-paid', authMiddleware, async (req: Request, res: Response) => {
-  try {
-    const booking = await Booking.findById(req.params.id).populate('room');
-
-    if (!booking) {
-      return res.status(404).json({ error: 'Booking not found' });
-    }
-
-    if (booking.paymentMethod !== 'cod') {
-      return res.status(400).json({ error: 'Only COD bookings can be manually marked as paid' });
-    }
-
-    if (booking.paymentStatus === 'paid') {
-      return res.status(400).json({ error: 'Booking is already marked as paid' });
-    }
-
-    booking.paymentStatus = 'paid';
-    await booking.save();
-
-    res.json({ message: 'Payment marked as received', booking });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to update payment status' });
-  }
-});
-```
-
-That is all the backend needs for COD. It is deliberately simple.
+Notice that COD bookings are immediately set to `status: 'confirmed'` because no online payment step is needed. eSewa bookings stay `pending` until payment is verified. The controller stays clean -- input validation lives in the validator chain, and unhandled errors are caught by `asyncHandler` and forwarded to the global error handler.
 
 ---
 
@@ -306,44 +322,61 @@ Let us break down each function:
 
 ## 26.6 Payment Endpoints: Backend
 
-Now create the routes that the frontend will call:
+Now create the routes that the frontend will call. As in Lesson 16, we keep validation, controller logic and the route wiring in separate files. Every response uses the `{ data: ... }` envelope -- there is **no `success` boolean** on the envelope itself; the HTTP status code and a `paymentStatus` field on the booking tell the client what happened.
+
+### Step 1: Validators
 
 ```typescript
-// backend/src/routes/payments.ts
-import { Router, Request, Response } from 'express';
+// backend/src/validators/payment.validator.ts
+import { body } from 'express-validator';
+
+export const initiatePaymentValidator = [
+  body('bookingId').exists({ checkFalsy: true }).isMongoId().withMessage('Valid booking ID required'),
+];
+
+export const verifyPaymentValidator = [
+  body('bookingId').exists({ checkFalsy: true }).isMongoId().withMessage('Valid booking ID required'),
+];
+```
+
+### Step 2: Controller
+
+```typescript
+// backend/src/controllers/paymentController.ts
+import { Response } from 'express';
+import { asyncHandler } from '../middleware/asyncHandler';
 import { Booking } from '../models/Booking';
 import { buildPayload, verifyPayment } from '../services/esewa.service';
-import { authMiddleware } from '../middleware/auth';
+import type { AuthRequest } from '../types/auth';
 
-const router = Router();
-
-// Step 1: Initiate eSewa payment
-// The frontend calls this to get the form payload
-router.post('/initiate', authMiddleware, async (req: Request, res: Response) => {
-  try {
+// POST /api/payments/initiate
+// Returns the eSewa form action URL and the signed payload the frontend
+// will auto-submit. Wrapped in { data: { ... } }.
+export const initiateEsewaPayment = asyncHandler(
+  async (req: AuthRequest, res: Response) => {
     const { bookingId } = req.body;
 
     const booking = await Booking.findById(bookingId);
     if (!booking) {
-      return res.status(404).json({ error: 'Booking not found' });
+      res.status(404).json({ error: 'Booking not found' });
+      return;
     }
 
     if (booking.paymentMethod !== 'esewa') {
-      return res.status(400).json({ error: 'This booking does not use eSewa' });
+      res.status(400).json({ error: 'This booking does not use eSewa' });
+      return;
     }
 
     if (booking.paymentStatus === 'paid') {
-      return res.status(400).json({ error: 'This booking is already paid' });
+      res.status(400).json({ error: 'This booking is already paid' });
+      return;
     }
 
-    // Generate a unique transaction ID
+    // Generate a unique transaction ID and persist it on the booking
     const transactionId = `ESW-${booking._id}-${Date.now()}`;
-
-    // Save the transaction ID on the booking so we can match it later
     booking.transactionId = transactionId;
     await booking.save();
 
-    // Build the eSewa form payload
     const clientBaseUrl = process.env.CLIENT_URL || 'http://localhost:5173';
     const payload = buildPayload(
       booking.totalPrice,
@@ -352,53 +385,61 @@ router.post('/initiate', authMiddleware, async (req: Request, res: Response) => 
       `${clientBaseUrl}/payment/failure?bookingId=${booking._id}`
     );
 
-    // Return the payload and the eSewa form action URL
-    res.json({
-      formAction: `${process.env.ESEWA_TEST_MODE === 'false' ? 'https://epay.esewa.com.np' : 'https://rc-epay.esewa.com.np'}/api/epay/main/v2/form`,
-      payload,
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to initiate payment' });
-  }
-});
+    const paymentUrl =
+      process.env.ESEWA_TEST_MODE === 'false'
+        ? 'https://epay.esewa.com.np/api/epay/main/v2/form'
+        : 'https://rc-epay.esewa.com.np/api/epay/main/v2/form';
 
-// Step 2: Verify eSewa payment after redirect
-// The frontend calls this when the user lands on the success page
-router.post('/verify', authMiddleware, async (req: Request, res: Response) => {
-  try {
+    res.json({ data: { paymentUrl, payload } });
+  }
+);
+
+// POST /api/payments/verify
+// Calls eSewa's status check API. Returns the updated booking so the
+// frontend can read `paymentStatus` to decide what to show.
+export const verifyEsewaPayment = asyncHandler(
+  async (req: AuthRequest, res: Response) => {
     const { bookingId } = req.body;
 
     const booking = await Booking.findById(bookingId);
     if (!booking) {
-      return res.status(404).json({ error: 'Booking not found' });
+      res.status(404).json({ error: 'Booking not found' });
+      return;
     }
 
     if (!booking.transactionId) {
-      return res.status(400).json({ error: 'No transaction found for this booking' });
+      res.status(400).json({ error: 'No transaction found for this booking' });
+      return;
     }
 
-    // Verify with eSewa's API
     const isVerified = await verifyPayment(
       booking.transactionId,
       booking.totalPrice
     );
 
-    if (isVerified) {
-      booking.paymentStatus = 'paid';
-      booking.status = 'confirmed';
-      await booking.save();
+    booking.paymentStatus = isVerified ? 'paid' : 'failed';
+    if (isVerified) booking.status = 'confirmed';
+    await booking.save();
 
-      res.json({ success: true, message: 'Payment verified successfully', booking });
-    } else {
-      booking.paymentStatus = 'failed';
-      await booking.save();
-
-      res.json({ success: false, message: 'Payment verification failed' });
-    }
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to verify payment' });
+    res.json({ data: booking });
   }
-});
+);
+```
+
+### Step 3: Route Wiring
+
+```typescript
+// backend/src/routes/payments.ts
+import { Router } from 'express';
+import { initiateEsewaPayment, verifyEsewaPayment } from '../controllers/paymentController';
+import { authMiddleware } from '../middleware/auth';
+import { validateResult } from '../middleware/validate-result.middleware';
+import { initiatePaymentValidator, verifyPaymentValidator } from '../validators/payment.validator';
+
+const router = Router();
+
+router.post('/initiate', authMiddleware, initiatePaymentValidator, validateResult, initiateEsewaPayment);
+router.post('/verify', authMiddleware, verifyPaymentValidator, validateResult, verifyEsewaPayment);
 
 export default router;
 ```
@@ -411,6 +452,8 @@ import paymentRoutes from './routes/payments';
 
 app.use('/api/payments', paymentRoutes);
 ```
+
+**Why no `success` field?** A consistent envelope keeps the frontend simple. The HTTP status and the booking's `paymentStatus` (`paid` or `failed`) tell the client everything it needs. This matches the pattern from Lesson 16 where every response is `{ data: ... }` or `{ error: '...' }`.
 
 ---
 
@@ -432,121 +475,94 @@ CLIENT_URL=http://localhost:5173
 
 ---
 
-## 26.8 Frontend: Payment Method Selection
+## 26.8 Frontend: The Payment API Service Layer
 
-Now let us build the checkout component where users choose how to pay:
+Following the same pattern as `todoApi` in Lesson 17, we wrap every payment API call in a typed service. The component never calls `fetch` or Axios directly -- it calls `paymentApi.initiateEsewa(...)` or a React Query hook.
 
-```tsx
-// webapp/src/components/PaymentMethodSelector.tsx
-import { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+### Step 1: Types
 
-interface PaymentMethodSelectorProps {
+```typescript
+// webapp/src/types/payment.ts
+import type { Booking } from './booking';
+
+export interface EsewaPayload {
+  amount: string;
+  tax_amount: string;
+  total_amount: string;
+  transaction_uuid: string;
+  product_code: string;
+  product_service_charge: string;
+  product_delivery_charge: string;
+  success_url: string;
+  failure_url: string;
+  signed_field_names: string;
+  signature: string;
+}
+
+export interface InitiateEsewaResponse {
+  paymentUrl: string;
+  payload: EsewaPayload;
+}
+
+export interface VerifyPaymentParams {
   bookingId: string;
-  totalPrice: number;
-  onCodSelected: () => void;
 }
 
-export function PaymentMethodSelector({
-  bookingId,
-  totalPrice,
-  onCodSelected,
-}: PaymentMethodSelectorProps) {
-  const [method, setMethod] = useState<'esewa' | 'cod'>('esewa');
-  const [loading, setLoading] = useState(false);
-
-  const handlePayment = async () => {
-    if (method === 'cod') {
-      onCodSelected();
-      return;
-    }
-
-    // eSewa flow: get payload from backend, then redirect
-    setLoading(true);
-    try {
-      const response = await fetch('/api/payments/initiate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bookingId }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to initiate payment');
-      }
-
-      // Create a hidden form and submit it to eSewa
-      submitToEsewa(data.formAction, data.payload);
-    } catch (error) {
-      console.error('Payment initiation failed:', error);
-      alert('Failed to start payment. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Choose Payment Method</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <RadioGroup
-          value={method}
-          onValueChange={(value) => setMethod(value as 'esewa' | 'cod')}
-        >
-          <div className="flex items-center space-x-2">
-            <RadioGroupItem value="esewa" id="esewa" />
-            <Label htmlFor="esewa">Pay with eSewa (Online)</Label>
-          </div>
-          <div className="flex items-center space-x-2">
-            <RadioGroupItem value="cod" id="cod" />
-            <Label htmlFor="cod">Cash on Delivery</Label>
-          </div>
-        </RadioGroup>
-
-        <div className="pt-2">
-          <p className="text-sm text-muted-foreground mb-4">
-            Total: <span className="font-bold">NPR {totalPrice}</span>
-          </p>
-          <Button onClick={handlePayment} disabled={loading} className="w-full">
-            {loading
-              ? 'Processing...'
-              : method === 'esewa'
-                ? 'Pay with eSewa'
-                : 'Confirm COD Booking'}
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+// The verify endpoint returns the updated booking
+export type VerifyPaymentResponse = Booking;
 ```
 
----
+### Step 2: The `paymentApi` Service
 
-## 26.9 Frontend: Submitting to eSewa
+```typescript
+// webapp/src/services/paymentApi.ts
+import api from './api';
+import type {
+  InitiateEsewaResponse,
+  VerifyPaymentParams,
+  VerifyPaymentResponse,
+} from '../types/payment';
 
-When the backend returns the eSewa payload, we need to create an invisible HTML form and submit it. This redirects the user to eSewa's payment page:
+export const paymentApi = {
+  async initiateEsewa(bookingId: string): Promise<InitiateEsewaResponse> {
+    const { data } = await api.post<{ data: InitiateEsewaResponse }>(
+      '/payments/initiate',
+      { bookingId }
+    );
+    return data.data;
+  },
+
+  async verify(params: VerifyPaymentParams): Promise<VerifyPaymentResponse> {
+    const { data } = await api.post<{ data: VerifyPaymentResponse }>(
+      '/payments/verify',
+      params
+    );
+    return data.data;
+  },
+};
+```
+
+Notice the **double `.data`** -- Axios wraps the HTTP body in `response.data`, and our backend wraps the payload in `{ data: ... }`. We unwrap both at the service layer so consumers get the inner object directly.
+
+### Step 3: Submitting to eSewa
+
+When the backend returns the eSewa payload, we create an invisible HTML form and auto-submit it. This redirects the user to eSewa's payment page.
 
 ```typescript
 // webapp/src/utils/esewa.ts
+import type { EsewaPayload } from '../types/payment';
 
 /**
  * Create a hidden form, populate it with the eSewa payload fields,
  * and submit it. This redirects the user to eSewa's payment page.
  */
-export function submitToEsewa(
-  formAction: string,
-  payload: Record<string, string>
+export function submitEsewaForm(
+  paymentUrl: string,
+  payload: EsewaPayload
 ): void {
   const form = document.createElement('form');
   form.method = 'POST';
-  form.action = formAction;
+  form.action = paymentUrl;
 
   // Create a hidden input for each field in the payload
   for (const [key, value] of Object.entries(payload)) {
@@ -563,57 +579,202 @@ export function submitToEsewa(
 }
 ```
 
-This function is called from the `PaymentMethodSelector` component. It:
-1. Creates an invisible `<form>` element
-2. Adds a hidden `<input>` for every field in the payload (amount, signature, transaction ID, etc.)
-3. Appends the form to the page and submits it
-4. The browser navigates to eSewa's payment page
+### Step 4: React Query Mutation Hooks
+
+Following the **one-hook-per-action** pattern from Lesson 17, we create dedicated mutation hooks. Each hook owns its loading state, success/error toast, and cache invalidation.
+
+```typescript
+// webapp/src/hooks/usePayments.ts
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { paymentApi } from '../services/paymentApi';
+import { bookingKeys } from './useBookings';
+import { submitEsewaForm } from '../utils/esewa';
+import type { VerifyPaymentParams } from '../types/payment';
+
+export function useInitiateEsewaPayment() {
+  return useMutation({
+    mutationFn: (bookingId: string) => paymentApi.initiateEsewa(bookingId),
+    onSuccess: (data) => {
+      // Auto-submit the hidden form -- the page will navigate to eSewa
+      submitEsewaForm(data.paymentUrl, data.payload);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to initiate payment');
+    },
+  });
+}
+
+export function useVerifyEsewaPayment() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (params: VerifyPaymentParams) => paymentApi.verify(params),
+    onSuccess: () => {
+      toast.success('Payment verified successfully');
+      // Bookings will now show paymentStatus: 'paid' -- refresh all booking queries
+      queryClient.invalidateQueries({ queryKey: bookingKeys.all });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Payment verification failed');
+    },
+  });
+}
+```
+
+> `bookingKeys` is the query key factory for bookings (defined in `useBookings.ts`, mirroring `todoKeys` from Lesson 17). Invalidating `bookingKeys.all` refetches both the list and detail queries so the new `paymentStatus` is visible everywhere.
+
+---
+
+## 26.9 Frontend: Payment Method Selection with shadcn Form
+
+The payment method is part of the booking form. Following Lesson 12, we use React Hook Form + Zod with shadcn's `Form` and `FormField` components, and wire up `useInitiateEsewaPayment` for the eSewa path.
+
+```tsx
+// webapp/src/components/PaymentMethodSelector.tsx
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { useInitiateEsewaPayment } from '@/hooks/usePayments';
+
+const paymentSchema = z.object({
+  paymentMethod: z.enum(['esewa', 'cod']),
+});
+
+type PaymentFormData = z.infer<typeof paymentSchema>;
+
+interface PaymentMethodSelectorProps {
+  bookingId: string;
+  totalPrice: number;
+  onCodSelected: () => void;
+}
+
+export function PaymentMethodSelector({
+  bookingId,
+  totalPrice,
+  onCodSelected,
+}: PaymentMethodSelectorProps) {
+  const form = useForm<PaymentFormData>({
+    resolver: zodResolver(paymentSchema),
+    defaultValues: { paymentMethod: 'esewa' },
+  });
+
+  const { mutate: initiateEsewa, isPending } = useInitiateEsewaPayment();
+
+  const onSubmit = (values: PaymentFormData) => {
+    if (values.paymentMethod === 'cod') {
+      onCodSelected();
+      return;
+    }
+    // eSewa: the hook auto-submits the form to eSewa on success
+    initiateEsewa(bookingId);
+  };
+
+  const method = form.watch('paymentMethod');
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Choose Payment Method</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <FormField
+              control={form.control}
+              name="paymentMethod"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Payment Method</FormLabel>
+                  <FormControl>
+                    <RadioGroup
+                      onValueChange={field.onChange}
+                      value={field.value}
+                      className="space-y-2"
+                    >
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="esewa" id="esewa" />
+                        <FormLabel htmlFor="esewa" className="font-normal">
+                          Pay with eSewa (Online)
+                        </FormLabel>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="cod" id="cod" />
+                        <FormLabel htmlFor="cod" className="font-normal">
+                          Cash on Delivery
+                        </FormLabel>
+                      </div>
+                    </RadioGroup>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <p className="text-sm text-muted-foreground">
+              Total: <span className="font-bold">NPR {totalPrice}</span>
+            </p>
+
+            <Button type="submit" disabled={isPending} className="w-full">
+              {isPending
+                ? 'Processing...'
+                : method === 'esewa'
+                  ? 'Pay with eSewa'
+                  : 'Confirm COD Booking'}
+            </Button>
+          </form>
+        </Form>
+      </CardContent>
+    </Card>
+  );
+}
+```
+
+**What changed compared to a raw `useState` version:**
+- The radio is part of a typed schema (`z.enum(['esewa', 'cod'])`) -- TypeScript and runtime validation in one place
+- `isPending` from the React Query hook drives the button state -- no manual `setLoading`
+- Errors are surfaced as toasts inside `useInitiateEsewaPayment`, so the component does not need its own try/catch
+- The component is pure UI -- it never calls `fetch` directly
 
 ---
 
 ## 26.10 Frontend: Success and Failure Pages
 
-After the user pays (or cancels) on eSewa, they are redirected back to your application. You need pages to handle both outcomes.
+After the user pays (or cancels) on eSewa, they are redirected back to your application. You need pages to handle both outcomes. The Success page calls `useVerifyEsewaPayment()` on mount and reads `paymentStatus` from the returned booking.
 
 ### Success Page
 
 ```tsx
 // webapp/src/pages/PaymentSuccess.tsx
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { useVerifyEsewaPayment } from '@/hooks/usePayments';
 
 export function PaymentSuccess() {
   const [searchParams] = useSearchParams();
   const bookingId = searchParams.get('bookingId');
-  const [verifying, setVerifying] = useState(true);
-  const [success, setSuccess] = useState(false);
 
+  const { mutate: verify, data: booking, isPending, isError } = useVerifyEsewaPayment();
+
+  // Fire verification once on mount
   useEffect(() => {
-    if (!bookingId) return;
+    if (bookingId) verify({ bookingId });
+  }, [bookingId, verify]);
 
-    const verify = async () => {
-      try {
-        const response = await fetch('/api/payments/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bookingId }),
-        });
-        const data = await response.json();
-        setSuccess(data.success);
-      } catch (error) {
-        console.error('Verification failed:', error);
-        setSuccess(false);
-      } finally {
-        setVerifying(false);
-      }
-    };
-
-    verify();
-  }, [bookingId]);
-
-  if (verifying) {
+  if (isPending) {
     return (
       <div className="flex justify-center items-center min-h-screen">
         <p className="text-lg">Verifying your payment...</p>
@@ -621,32 +782,35 @@ export function PaymentSuccess() {
     );
   }
 
+  const isPaid = booking?.paymentStatus === 'paid';
+
   return (
     <div className="flex justify-center items-center min-h-screen p-4">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>
-            {success ? 'Payment Successful!' : 'Payment Verification Failed'}
+            {isPaid ? 'Payment Successful!' : 'Payment Verification Failed'}
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {success ? (
+          {isPaid ? (
             <div className="space-y-4">
               <p className="text-green-600">
                 Your payment has been verified and your booking is confirmed.
               </p>
-              <Button className="w-full" render={<Link to="/dashboard" />}>
-                Go to Dashboard
+              <Button className="w-full" asChild>
+                <Link to="/dashboard">Go to Dashboard</Link>
               </Button>
             </div>
           ) : (
             <div className="space-y-4">
               <p className="text-red-600">
-                We could not verify your payment. If money was deducted from your
-                account, please contact support.
+                {isError
+                  ? 'We could not verify your payment. If money was deducted, please contact support.'
+                  : 'Payment was not completed. Please try again from your bookings.'}
               </p>
-              <Button variant="outline" className="w-full" render={<Link to="/bookings" />}>
-                View Bookings
+              <Button variant="outline" className="w-full" asChild>
+                <Link to="/bookings">View Bookings</Link>
               </Button>
             </div>
           )}
@@ -656,6 +820,11 @@ export function PaymentSuccess() {
   );
 }
 ```
+
+**Notice:**
+- The hook handles the API call, loading state (`isPending`), error state (`isError`), and the toast feedback
+- We read `booking.paymentStatus` from the response rather than a `success` boolean -- the backend returns the updated booking, not a flag
+- `useEffect` only triggers the mutation once after mount; React Query takes over from there
 
 ### Failure Page
 
@@ -680,11 +849,11 @@ export function PaymentFailure() {
             Your payment was not completed. No money has been charged.
           </p>
           <div className="flex flex-col gap-2">
-            <Button className="w-full" render={<Link to={`/bookings/${bookingId}/pay`} />}>
-              Try Again
+            <Button className="w-full" asChild>
+              <Link to={`/bookings/${bookingId}/pay`}>Try Again</Link>
             </Button>
-            <Button variant="outline" className="w-full" render={<Link to="/bookings" />}>
-              View Bookings
+            <Button variant="outline" className="w-full" asChild>
+              <Link to="/bookings">View Bookings</Link>
             </Button>
           </div>
         </CardContent>
@@ -756,55 +925,62 @@ When testing:
 
 ## 26.13 Owner: Marking COD Payments as Received
 
-On the owner's dashboard, they need a button to mark COD bookings as paid. Here is a simple component for that:
+On the owner's dashboard, the owner needs a button to mark COD bookings as paid. We follow the same pattern again: a service method, a React Query mutation hook, and a thin component.
+
+```typescript
+// webapp/src/services/bookingApi.ts (add to existing file)
+async markAsPaid(bookingId: string): Promise<Booking> {
+  const { data } = await api.patch<{ data: Booking }>(
+    `/bookings/${bookingId}/mark-paid`
+  );
+  return data.data;
+},
+```
+
+```typescript
+// webapp/src/hooks/useBookings.ts (add to existing file)
+export function useMarkBookingPaid() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (bookingId: string) => bookingApi.markAsPaid(bookingId),
+    onSuccess: () => {
+      toast.success('Payment marked as received');
+      queryClient.invalidateQueries({ queryKey: bookingKeys.all });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to mark payment as received');
+    },
+  });
+}
+```
 
 ```tsx
 // webapp/src/components/MarkAsPaidButton.tsx
-import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { useMarkBookingPaid } from '@/hooks/useBookings';
 
 interface MarkAsPaidButtonProps {
   bookingId: string;
-  onMarkedPaid: () => void;
 }
 
-export function MarkAsPaidButton({ bookingId, onMarkedPaid }: MarkAsPaidButtonProps) {
-  const [loading, setLoading] = useState(false);
-
-  const handleMarkPaid = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(`/api/bookings/${bookingId}/mark-paid`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Failed to mark as paid');
-      }
-
-      onMarkedPaid();
-    } catch (error) {
-      console.error('Failed to mark as paid:', error);
-      alert('Could not mark payment as received. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
+export function MarkAsPaidButton({ bookingId }: MarkAsPaidButtonProps) {
+  const { mutate: markPaid, isPending } = useMarkBookingPaid();
 
   return (
     <Button
-      onClick={handleMarkPaid}
-      disabled={loading}
+      onClick={() => markPaid(bookingId)}
+      disabled={isPending}
       variant="outline"
       size="sm"
     >
-      {loading ? 'Updating...' : 'Mark as Paid'}
+      {isPending ? 'Updating...' : 'Mark as Paid'}
     </Button>
   );
 }
 ```
+
+The component is tiny because all the work -- the API call, loading state, toast, and cache invalidation -- lives inside the hook. The dashboard's booking list will automatically refresh after the mutation succeeds, thanks to `invalidateQueries`.
 
 ---
 
@@ -828,5 +1004,9 @@ export function MarkAsPaidButton({ bookingId, onMarkedPaid }: MarkAsPaidButtonPr
 - **eSewa uses a form-based redirect flow:** your backend generates a signed payload, the frontend submits it as a hidden form, the user pays on eSewa's site, and eSewa redirects back.
 - **HMAC-SHA256 signatures** prove that the payment request came from your application and has not been tampered with.
 - **Always verify payments server-side.** Never trust a redirect URL alone -- call eSewa's status check API to confirm the payment is genuinely complete.
+- **Backend endpoints follow the project pattern:** `validator + validateResult + asyncHandler` keeps controllers clean and consistent with Lesson 16.
+- **Every response uses the `{ data: ... }` envelope** -- no ad-hoc `success` booleans. The HTTP status and the booking's `paymentStatus` carry the meaning.
+- **The frontend never calls `fetch` directly for payments** -- a typed `paymentApi` service layer wraps every call, and React Query mutation hooks (`useInitiateEsewaPayment`, `useVerifyEsewaPayment`, `useMarkBookingPaid`) handle loading state, toasts, and cache invalidation.
+- **The Payment Method selector lives inside a shadcn `Form`** with React Hook Form + Zod, matching the form patterns from Lesson 12.
 - **Use sandbox credentials during development.** Switch to production credentials only when you are ready to accept real payments.
 - **Keep your secret key secure.** Store it in environment variables, never commit it to version control.

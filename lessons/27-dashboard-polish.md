@@ -3,12 +3,15 @@
 ## What You Will Learn
 - Building an owner dashboard with statistics cards and revenue data
 - Using MongoDB aggregation pipelines to calculate stats on the server
+- Wrapping backend endpoints with **asyncHandler** and returning the `{ data: ... }` envelope
 - Building a user dashboard with booking history
-- Adding toast notifications with shadcn Sonner
+- **Fetching dashboard data the right way** -- typed `dashboardApi` service over Axios, with React Query hooks (`useOwnerStats`, `useOwnerRecentBookings`, `useUserStats`)
+- Defining a **`dashboardKeys` query factory** for clean cache invalidation
+- Rendering Recent Bookings using the reusable **`<DataTable>`** from Lesson 17.1
+- Stats cards with `Skeleton` loading states using shadcn `Card`
+- Toast notifications with shadcn Sonner (already wired through mutation hooks across the app)
 - Implementing confirmation dialogs for destructive actions
-- Adding loading states and proper error messages
-- Making the navigation responsive with a mobile hamburger menu
-- Extracting reusable hooks for cleaner code
+- Making the navigation responsive with a mobile hamburger menu using shadcn `Sheet`
 
 ---
 
@@ -27,26 +30,25 @@ We will build both dashboards, then polish the entire application with proper no
 
 MongoDB's aggregation pipeline lets us calculate statistics directly in the database, which is far more efficient than fetching all records and counting in JavaScript.
 
+We follow the standard project pattern from Lesson 16: a controller wrapped in `asyncHandler`, and every response returned in the `{ data: ... }` envelope.
+
 ```typescript
-// backend/src/routes/dashboard.ts
-import { Router, Request, Response } from 'express';
+// backend/src/controllers/dashboardController.ts
+import { Response } from 'express';
 import mongoose from 'mongoose';
+import { asyncHandler } from '../middleware/asyncHandler';
 import { Booking } from '../models/Booking';
 import { Room } from '../models/Room';
-import { authMiddleware } from '../middleware/auth';
+import type { AuthRequest } from '../types/auth';
 
-const router = Router();
-
-// Owner dashboard stats
-router.get('/owner/stats', authMiddleware, async (req: Request, res: Response) => {
-  try {
+// GET /api/dashboard/owner/stats
+export const getOwnerStats = asyncHandler(
+  async (req: AuthRequest, res: Response) => {
     const ownerId = new mongoose.Types.ObjectId(req.userId);
 
     // Get all room IDs belonging to this owner
     const ownerRooms = await Room.find({ owner: ownerId }).select('_id');
     const ownerRoomIds = ownerRooms.map((room) => room._id);
-
-    // Count total rooms
     const totalRooms = ownerRooms.length;
 
     // Aggregate booking statistics
@@ -80,13 +82,24 @@ router.get('/owner/stats', authMiddleware, async (req: Request, res: Response) =
     };
 
     res.json({
-      totalRooms,
-      ...bookingStats,
+      data: {
+        totalRooms,
+        ...bookingStats,
+      },
     });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch dashboard stats' });
   }
-});
+);
+```
+
+```typescript
+// backend/src/routes/dashboard.ts
+import { Router } from 'express';
+import { getOwnerStats } from '../controllers/dashboardController';
+import { authMiddleware } from '../middleware/auth';
+
+const router = Router();
+
+router.get('/owner/stats', authMiddleware, getOwnerStats);
 
 export default router;
 ```
@@ -112,14 +125,14 @@ app.use('/api/dashboard', dashboardRoutes);
 
 ## 27.3 Owner Dashboard: Recent Bookings Endpoint
 
-The dashboard should also show the most recent bookings:
+The dashboard should also show the most recent bookings. Same pattern -- `asyncHandler` and `{ data: ... }`.
 
 ```typescript
-// Add to backend/src/routes/dashboard.ts
+// Add to backend/src/controllers/dashboardController.ts
 
-// Owner's recent bookings
-router.get('/owner/recent-bookings', authMiddleware, async (req: Request, res: Response) => {
-  try {
+// GET /api/dashboard/owner/recent-bookings
+export const getOwnerRecentBookings = asyncHandler(
+  async (req: AuthRequest, res: Response) => {
     const ownerId = new mongoose.Types.ObjectId(req.userId);
 
     const ownerRooms = await Room.find({ owner: ownerId }).select('_id');
@@ -131,34 +144,36 @@ router.get('/owner/recent-bookings', authMiddleware, async (req: Request, res: R
       .sort({ createdAt: -1 })
       .limit(10);
 
-    res.json(recentBookings);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch recent bookings' });
+    res.json({ data: recentBookings });
   }
-});
+);
+```
+
+```typescript
+// Add to backend/src/routes/dashboard.ts
+import { getOwnerStats, getOwnerRecentBookings } from '../controllers/dashboardController';
+
+router.get('/owner/recent-bookings', authMiddleware, getOwnerRecentBookings);
 ```
 
 ---
 
 ## 27.4 Owner Dashboard: Frontend
 
-Now build the dashboard UI using shadcn Card components:
+The Owner Dashboard pulls together everything we have built in previous lessons:
 
-```tsx
-// webapp/src/pages/OwnerDashboard.tsx
-import { useEffect, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
+1. A typed **`dashboardApi`** service over the Axios instance (Lesson 17)
+2. A **`dashboardKeys`** query factory and React Query hooks (Lesson 17)
+3. The reusable **`<DataTable>`** for Recent Bookings (Lesson 17.1)
+4. shadcn `Card` + `Skeleton` for stats cards with proper loading states
 
-interface DashboardStats {
+**No raw `fetch` anywhere -- the dashboard is just a thin consumer of hooks.**
+
+### Step 1: Dashboard Types
+
+```typescript
+// webapp/src/types/dashboard.ts
+export interface OwnerStats {
   totalRooms: number;
   totalBookings: number;
   totalRevenue: number;
@@ -167,52 +182,222 @@ interface DashboardStats {
   paidBookings: number;
 }
 
-interface RecentBooking {
+export interface UserStats {
+  totalBookings: number;
+  totalSpent: number;
+  upcomingBookings: number;
+}
+
+export interface DashboardBooking {
   _id: string;
   user: { name: string; email: string };
   room: { title: string };
   checkIn: string;
   checkOut: string;
   totalPrice: number;
-  status: string;
-  paymentStatus: string;
+  status: 'pending' | 'confirmed' | 'cancelled';
+  paymentStatus: 'pending' | 'paid' | 'failed';
+}
+```
+
+### Step 2: The `dashboardApi` Service
+
+```typescript
+// webapp/src/services/dashboardApi.ts
+import api from './api';
+import type {
+  OwnerStats,
+  UserStats,
+  DashboardBooking,
+} from '../types/dashboard';
+
+export const dashboardApi = {
+  async getOwnerStats(): Promise<OwnerStats> {
+    const { data } = await api.get<{ data: OwnerStats }>('/dashboard/owner/stats');
+    return data.data;
+  },
+
+  async getOwnerRecentBookings(): Promise<DashboardBooking[]> {
+    const { data } = await api.get<{ data: DashboardBooking[] }>(
+      '/dashboard/owner/recent-bookings'
+    );
+    return data.data;
+  },
+
+  async getUserStats(): Promise<UserStats> {
+    const { data } = await api.get<{ data: UserStats }>('/dashboard/user/stats');
+    return data.data;
+  },
+};
+```
+
+Notice the **double `.data`** -- Axios gives us the HTTP body in `response.data`, and our backend wraps the payload in `{ data: ... }`. We unwrap both at the service so consumers get a clean typed object.
+
+### Step 3: Query Keys Factory + Hooks
+
+```typescript
+// webapp/src/hooks/useDashboard.ts
+import { useQuery } from '@tanstack/react-query';
+import { dashboardApi } from '../services/dashboardApi';
+
+// Centralised query keys -- same pattern as todoKeys in Lesson 17
+export const dashboardKeys = {
+  all: ['dashboard'] as const,
+  ownerStats: () => [...dashboardKeys.all, 'owner', 'stats'] as const,
+  ownerRecent: () => [...dashboardKeys.all, 'owner', 'recent'] as const,
+  userStats: () => [...dashboardKeys.all, 'user', 'stats'] as const,
+};
+
+export function useOwnerStats() {
+  return useQuery({
+    queryKey: dashboardKeys.ownerStats(),
+    queryFn: () => dashboardApi.getOwnerStats(),
+  });
 }
 
+export function useOwnerRecentBookings() {
+  return useQuery({
+    queryKey: dashboardKeys.ownerRecent(),
+    queryFn: () => dashboardApi.getOwnerRecentBookings(),
+  });
+}
+
+export function useUserStats() {
+  return useQuery({
+    queryKey: dashboardKeys.userStats(),
+    queryFn: () => dashboardApi.getUserStats(),
+  });
+}
+```
+
+Now any component anywhere in the app can call these hooks and benefit from caching, loading states, and shared invalidation.
+
+### Step 4: Recent Bookings Columns
+
+Following the column-definition pattern from Lesson 17.1:
+
+```tsx
+// webapp/src/components/dashboard/recent-bookings-columns.tsx
+import type { ColumnDef } from '@tanstack/react-table';
+import { Badge } from '@/components/ui/badge';
+import type { DashboardBooking } from '@/types/dashboard';
+
+const statusVariant: Record<
+  DashboardBooking['status'],
+  'default' | 'secondary' | 'destructive'
+> = {
+  confirmed: 'default',
+  pending: 'secondary',
+  cancelled: 'destructive',
+};
+
+const paymentVariant: Record<
+  DashboardBooking['paymentStatus'],
+  'default' | 'secondary' | 'destructive'
+> = {
+  paid: 'default',
+  pending: 'secondary',
+  failed: 'destructive',
+};
+
+export const recentBookingsColumns: ColumnDef<DashboardBooking>[] = [
+  {
+    accessorKey: 'user',
+    header: 'Guest',
+    cell: ({ row }) => row.original.user.name,
+  },
+  {
+    accessorKey: 'room',
+    header: 'Room',
+    cell: ({ row }) => row.original.room.title,
+  },
+  {
+    id: 'dates',
+    header: 'Dates',
+    cell: ({ row }) =>
+      `${new Date(row.original.checkIn).toLocaleDateString('en-GB')} - ` +
+      `${new Date(row.original.checkOut).toLocaleDateString('en-GB')}`,
+  },
+  {
+    accessorKey: 'status',
+    header: 'Status',
+    cell: ({ row }) => (
+      <Badge variant={statusVariant[row.original.status]} className="capitalize">
+        {row.original.status}
+      </Badge>
+    ),
+  },
+  {
+    accessorKey: 'paymentStatus',
+    header: 'Payment',
+    cell: ({ row }) => (
+      <Badge
+        variant={paymentVariant[row.original.paymentStatus]}
+        className="capitalize"
+      >
+        {row.original.paymentStatus}
+      </Badge>
+    ),
+  },
+  {
+    accessorKey: 'totalPrice',
+    header: 'Total',
+    cell: ({ row }) => `NPR ${row.original.totalPrice.toLocaleString()}`,
+  },
+];
+```
+
+### Step 5: Reusable Stats Card with Skeleton Loading
+
+```tsx
+// webapp/src/components/dashboard/stats-card.tsx
+import type { ReactNode } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+
+interface StatsCardProps {
+  title: string;
+  value: string | number;
+  icon?: ReactNode;
+  isLoading?: boolean;
+}
+
+export function StatsCard({ title, value, icon, isLoading }: StatsCardProps) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        {icon}
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <Skeleton className="h-8 w-24" />
+        ) : (
+          <div className="text-2xl font-bold">{value}</div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+```
+
+### Step 6: The Owner Dashboard Page
+
+The page becomes tiny because every concern lives in a hook or a reusable component.
+
+```tsx
+// webapp/src/pages/OwnerDashboard.tsx
+import { Home, CalendarCheck, Wallet, Clock } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DataTable } from '@/components/ui/data-table';
+import { StatsCard } from '@/components/dashboard/stats-card';
+import { recentBookingsColumns } from '@/components/dashboard/recent-bookings-columns';
+import { useOwnerStats, useOwnerRecentBookings } from '@/hooks/useDashboard';
+
 export function OwnerDashboard() {
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [recentBookings, setRecentBookings] = useState<RecentBooking[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchDashboard = async () => {
-      try {
-        const [statsRes, bookingsRes] = await Promise.all([
-          fetch('/api/dashboard/owner/stats'),
-          fetch('/api/dashboard/owner/recent-bookings'),
-        ]);
-
-        const statsData = await statsRes.json();
-        const bookingsData = await bookingsRes.json();
-
-        setStats(statsData);
-        setRecentBookings(bookingsData);
-      } catch (error) {
-        console.error('Failed to fetch dashboard data:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchDashboard();
-  }, []);
-
-  if (loading) {
-    return <p className="text-center py-8">Loading dashboard...</p>;
-  }
-
-  if (!stats) {
-    return <p className="text-center py-8">Failed to load dashboard data.</p>;
-  }
+  const { data: stats, isLoading: statsLoading } = useOwnerStats();
+  const { data: recentBookings, isLoading: bookingsLoading } =
+    useOwnerRecentBookings();
 
   return (
     <div className="p-6 space-y-6">
@@ -220,118 +405,74 @@ export function OwnerDashboard() {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatsCard title="Total Rooms" value={stats.totalRooms} />
-        <StatsCard title="Total Bookings" value={stats.totalBookings} />
+        <StatsCard
+          title="Total Rooms"
+          value={stats?.totalRooms ?? 0}
+          icon={<Home className="h-4 w-4 text-muted-foreground" />}
+          isLoading={statsLoading}
+        />
+        <StatsCard
+          title="Total Bookings"
+          value={stats?.totalBookings ?? 0}
+          icon={<CalendarCheck className="h-4 w-4 text-muted-foreground" />}
+          isLoading={statsLoading}
+        />
         <StatsCard
           title="Total Revenue"
-          value={`NPR ${stats.totalRevenue.toLocaleString()}`}
+          value={`NPR ${(stats?.totalRevenue ?? 0).toLocaleString()}`}
+          icon={<Wallet className="h-4 w-4 text-muted-foreground" />}
+          isLoading={statsLoading}
         />
-        <StatsCard title="Pending Bookings" value={stats.pendingBookings} />
+        <StatsCard
+          title="Pending Bookings"
+          value={stats?.pendingBookings ?? 0}
+          icon={<Clock className="h-4 w-4 text-muted-foreground" />}
+          isLoading={statsLoading}
+        />
       </div>
 
-      {/* Recent Bookings Table */}
+      {/* Recent Bookings -- snapshot view, no pagination needed */}
       <Card>
         <CardHeader>
           <CardTitle>Recent Bookings</CardTitle>
         </CardHeader>
         <CardContent>
-          {recentBookings.length === 0 ? (
-            <p className="text-muted-foreground">No bookings yet.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Guest</TableHead>
-                  <TableHead>Room</TableHead>
-                  <TableHead>Check-in</TableHead>
-                  <TableHead>Check-out</TableHead>
-                  <TableHead>Amount</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Payment</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {recentBookings.map((booking) => (
-                  <TableRow key={booking._id}>
-                    <TableCell>{booking.user.name}</TableCell>
-                    <TableCell>{booking.room.title}</TableCell>
-                    <TableCell>
-                      {new Date(booking.checkIn).toLocaleDateString('en-GB')}
-                    </TableCell>
-                    <TableCell>
-                      {new Date(booking.checkOut).toLocaleDateString('en-GB')}
-                    </TableCell>
-                    <TableCell>NPR {booking.totalPrice}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={booking.status} />
-                    </TableCell>
-                    <TableCell>
-                      <PaymentBadge status={booking.paymentStatus} />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <DataTable
+            columns={recentBookingsColumns}
+            data={recentBookings ?? []}
+            isLoading={bookingsLoading}
+            emptyMessage="No bookings yet."
+            pageCount={1}
+            pageIndex={0}
+            pageSize={10}
+          />
         </CardContent>
       </Card>
     </div>
   );
 }
-
-// Reusable stats card component
-function StatsCard({ title, value }: { title: string; value: string | number }) {
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground">
-          {title}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="text-2xl font-bold">{value}</p>
-      </CardContent>
-    </Card>
-  );
-}
-
-// Status badge with colour coding
-function StatusBadge({ status }: { status: string }) {
-  const variant =
-    status === 'confirmed'
-      ? 'default'
-      : status === 'pending'
-        ? 'secondary'
-        : 'destructive';
-
-  return <Badge variant={variant}>{status}</Badge>;
-}
-
-// Payment status badge with colour coding
-function PaymentBadge({ status }: { status: string }) {
-  const variant =
-    status === 'paid'
-      ? 'default'
-      : status === 'pending'
-        ? 'secondary'
-        : 'destructive';
-
-  return <Badge variant={variant}>{status}</Badge>;
-}
 ```
+
+**What is happening:**
+- `useOwnerStats()` and `useOwnerRecentBookings()` handle fetching, caching, loading and error states automatically
+- `<StatsCard>` shows a `Skeleton` while `isLoading` is true -- no "Loading dashboard..." flash
+- `<DataTable>` is the same component we built in Lesson 17.1; we reuse it here for a snapshot view by passing `pageCount={1}` (no pagination controls needed for a "Top 10 recent" list)
+- Because the page only renders hooks and presentational components, swapping the source data, adding a new card, or extending the table is a one-line change
 
 ---
 
 ## 27.5 User Dashboard
 
-The user dashboard shows their own bookings and spending:
+The user dashboard shows the user's own bookings and spending. Same backend pattern as the owner endpoints -- `asyncHandler` and the `{ data: ... }` envelope.
+
+### Backend
 
 ```typescript
-// Add to backend/src/routes/dashboard.ts
+// Add to backend/src/controllers/dashboardController.ts
 
-// User dashboard stats
-router.get('/user/stats', authMiddleware, async (req: Request, res: Response) => {
-  try {
+// GET /api/dashboard/user/stats
+export const getUserStats = asyncHandler(
+  async (req: AuthRequest, res: Response) => {
     const userId = new mongoose.Types.ObjectId(req.userId);
 
     const stats = await Booking.aggregate([
@@ -342,9 +483,7 @@ router.get('/user/stats', authMiddleware, async (req: Request, res: Response) =>
           totalBookings: { $sum: 1 },
           totalSpent: { $sum: '$totalPrice' },
           upcomingBookings: {
-            $sum: {
-              $cond: [{ $gte: ['$checkIn', new Date()] }, 1, 0],
-            },
+            $sum: { $cond: [{ $gte: ['$checkIn', new Date()] }, 1, 0] },
           },
         },
       },
@@ -356,130 +495,77 @@ router.get('/user/stats', authMiddleware, async (req: Request, res: Response) =>
       upcomingBookings: 0,
     };
 
-    res.json(userStats);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch user stats' });
+    res.json({ data: userStats });
   }
-});
-
-// User's bookings (upcoming and past)
-router.get('/user/bookings', authMiddleware, async (req: Request, res: Response) => {
-  try {
-    const userId = new mongoose.Types.ObjectId(req.userId);
-    const now = new Date();
-
-    const [upcoming, past] = await Promise.all([
-      Booking.find({ user: userId, checkIn: { $gte: now } })
-        .populate('room', 'title location price')
-        .sort({ checkIn: 1 }),
-      Booking.find({ user: userId, checkIn: { $lt: now } })
-        .populate('room', 'title location price')
-        .sort({ checkIn: -1 })
-        .limit(20),
-    ]);
-
-    res.json({ upcoming, past });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch user bookings' });
-  }
-});
+);
 ```
+
+Wire it into the router:
+
+```typescript
+// backend/src/routes/dashboard.ts
+import { getOwnerStats, getOwnerRecentBookings, getUserStats } from '../controllers/dashboardController';
+
+router.get('/user/stats', authMiddleware, getUserStats);
+```
+
+> The user's upcoming/past bookings can reuse the existing **bookings list endpoint** (with filters like `?upcoming=true`) via the `useBookings` hook -- there is no need for a separate dashboard route. Lean on the patterns you already have.
+
+### Frontend
+
+The page consumes `useUserStats()` (from the dashboard hooks above) and `useBookings({ ... })` from your existing bookings hook. There is no `fetch`, no `useEffect`, no `useState` for server data.
 
 ```tsx
 // webapp/src/pages/UserDashboard.tsx
-import { useEffect, useState } from 'react';
+import { CalendarCheck, Wallet, Clock } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-
-interface UserStats {
-  totalBookings: number;
-  totalSpent: number;
-  upcomingBookings: number;
-}
-
-interface UserBooking {
-  _id: string;
-  room: { title: string; location: string };
-  checkIn: string;
-  checkOut: string;
-  totalPrice: number;
-  status: string;
-  paymentStatus: string;
-}
+import { StatsCard } from '@/components/dashboard/stats-card';
+import { useUserStats } from '@/hooks/useDashboard';
+import { useBookings } from '@/hooks/useBookings';
+import type { Booking } from '@/types/booking';
 
 export function UserDashboard() {
-  const [stats, setStats] = useState<UserStats | null>(null);
-  const [upcoming, setUpcoming] = useState<UserBooking[]>([]);
-  const [past, setPast] = useState<UserBooking[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: stats, isLoading: statsLoading } = useUserStats();
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [statsRes, bookingsRes] = await Promise.all([
-          fetch('/api/dashboard/user/stats'),
-          fetch('/api/dashboard/user/bookings'),
-        ]);
+  // Reuse the bookings hook with filters -- no special dashboard endpoint needed
+  const { data: upcomingResponse, isLoading: upcomingLoading } = useBookings({
+    upcoming: true,
+    limit: 20,
+  });
+  const { data: pastResponse, isLoading: pastLoading } = useBookings({
+    past: true,
+    limit: 20,
+  });
 
-        setStats(await statsRes.json());
-        const bookingsData = await bookingsRes.json();
-        setUpcoming(bookingsData.upcoming);
-        setPast(bookingsData.past);
-      } catch (error) {
-        console.error('Failed to fetch dashboard:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
-  }, []);
-
-  if (loading) {
-    return <p className="text-center py-8">Loading dashboard...</p>;
-  }
+  const upcoming = upcomingResponse?.data ?? [];
+  const past = pastResponse?.data ?? [];
 
   return (
     <div className="p-6 space-y-6">
       <h1 className="text-2xl font-bold">My Dashboard</h1>
 
       {/* Stats Cards */}
-      {stats && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-muted-foreground">
-                Total Bookings
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">{stats.totalBookings}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-muted-foreground">
-                Total Spent
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">
-                NPR {stats.totalSpent.toLocaleString()}
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-muted-foreground">
-                Upcoming Bookings
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">{stats.upcomingBookings}</p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <StatsCard
+          title="Total Bookings"
+          value={stats?.totalBookings ?? 0}
+          icon={<CalendarCheck className="h-4 w-4 text-muted-foreground" />}
+          isLoading={statsLoading}
+        />
+        <StatsCard
+          title="Total Spent"
+          value={`NPR ${(stats?.totalSpent ?? 0).toLocaleString()}`}
+          icon={<Wallet className="h-4 w-4 text-muted-foreground" />}
+          isLoading={statsLoading}
+        />
+        <StatsCard
+          title="Upcoming Bookings"
+          value={stats?.upcomingBookings ?? 0}
+          icon={<Clock className="h-4 w-4 text-muted-foreground" />}
+          isLoading={statsLoading}
+        />
+      </div>
 
       {/* Upcoming Bookings */}
       <Card>
@@ -487,7 +573,9 @@ export function UserDashboard() {
           <CardTitle>Upcoming Bookings</CardTitle>
         </CardHeader>
         <CardContent>
-          {upcoming.length === 0 ? (
+          {upcomingLoading ? (
+            <p className="text-muted-foreground">Loading...</p>
+          ) : upcoming.length === 0 ? (
             <p className="text-muted-foreground">No upcoming bookings.</p>
           ) : (
             <div className="space-y-3">
@@ -505,7 +593,9 @@ export function UserDashboard() {
           <CardTitle>Past Bookings</CardTitle>
         </CardHeader>
         <CardContent>
-          {past.length === 0 ? (
+          {pastLoading ? (
+            <p className="text-muted-foreground">Loading...</p>
+          ) : past.length === 0 ? (
             <p className="text-muted-foreground">No past bookings.</p>
           ) : (
             <div className="space-y-3">
@@ -520,7 +610,7 @@ export function UserDashboard() {
   );
 }
 
-function BookingCard({ booking }: { booking: UserBooking }) {
+function BookingCard({ booking }: { booking: Booking }) {
   return (
     <div className="flex items-center justify-between border rounded-lg p-4">
       <div>
@@ -532,7 +622,7 @@ function BookingCard({ booking }: { booking: UserBooking }) {
         </p>
       </div>
       <div className="text-right space-y-1">
-        <p className="font-bold">NPR {booking.totalPrice}</p>
+        <p className="font-bold">NPR {booking.totalPrice.toLocaleString()}</p>
         <Badge
           variant={
             booking.paymentStatus === 'paid'
@@ -541,6 +631,7 @@ function BookingCard({ booking }: { booking: UserBooking }) {
                 ? 'secondary'
                 : 'destructive'
           }
+          className="capitalize"
         >
           {booking.paymentStatus}
         </Badge>
@@ -550,92 +641,72 @@ function BookingCard({ booking }: { booking: UserBooking }) {
 }
 ```
 
+The component is now under 100 lines because:
+- No `useState`/`useEffect` for data -- React Query handles all of it
+- No raw `fetch` -- everything flows through Axios + the service layer
+- Stats cards reuse the `<StatsCard>` we built once for the owner dashboard
+
 ---
 
 ## 27.6 Toast Notifications with Sonner
 
-Currently, when a user performs an action (creates a booking, deletes a room), they get no feedback apart from the page changing. Toast notifications are small messages that appear briefly to confirm an action.
+We introduced Sonner back in Lesson 17 as part of the React Query setup. Every mutation hook in the app (`useCreateBooking`, `useDeleteRoom`, `useInitiateEsewaPayment`, `useMarkBookingPaid`, ...) already shows a success or error toast inside its `onSuccess` / `onError` callbacks. This section is a quick recap of the pattern -- you should not be adding ad-hoc toasts in components anymore.
 
-### Install Sonner
+### The Pattern (Already Wired)
 
-shadcn/ui includes a Sonner component. Add it to your project:
-
-```bash
-npx shadcn@latest add sonner
-```
-
-### Set Up the Toaster
-
-Add the `<Toaster />` component to your app layout so toasts can appear anywhere:
+The `<Toaster />` is mounted once at the root next to `QueryClientProvider`:
 
 ```tsx
-// webapp/src/App.tsx
-import { Toaster } from '@/components/ui/sonner';
+// webapp/src/main.tsx (from Lesson 17)
+<QueryClientProvider client={queryClient}>
+  <App />
+  <Toaster richColors position="top-right" />
+</QueryClientProvider>
+```
 
-function App() {
-  return (
-    <>
-      {/* Your existing routes and layout */}
-      <Toaster position="top-right" />
-    </>
-  );
+Mutation hooks own their feedback -- the component just calls `mutate()`:
+
+```typescript
+// Example -- from useBookings.ts
+export function useCreateBooking() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: CreateBookingData) => bookingApi.create(data),
+    onSuccess: () => {
+      toast.success('Booking created successfully');
+      queryClient.invalidateQueries({ queryKey: bookingKeys.all });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to create booking');
+    },
+  });
 }
 ```
 
-### Using Toasts
-
-Import the `toast` function and call it after successful actions:
+Components consume the hook and never touch toasts directly:
 
 ```tsx
-import { toast } from 'sonner';
-
-// After creating a booking
-const handleBooking = async () => {
-  try {
-    const response = await fetch('/api/bookings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(bookingData),
-    });
-
-    if (!response.ok) throw new Error('Booking failed');
-
-    const booking = await response.json();
-    toast.success('Booking created successfully!');
-    navigate('/dashboard');
-  } catch (error) {
-    toast.error('Failed to create booking. Please try again.');
-  }
-};
-
-// After deleting a room
-const handleDelete = async (roomId: string) => {
-  try {
-    await fetch(`/api/rooms/${roomId}`, { method: 'DELETE' });
-    toast.success('Room deleted.');
-    refreshRooms();
-  } catch (error) {
-    toast.error('Could not delete room.');
-  }
-};
-
-// After marking payment as received
-const handleMarkPaid = async (bookingId: string) => {
-  try {
-    await fetch(`/api/bookings/${bookingId}/mark-paid`, { method: 'PATCH' });
-    toast.success('Payment marked as received.');
-  } catch (error) {
-    toast.error('Failed to update payment status.');
-  }
-};
+const { mutate: createBooking, isPending } = useCreateBooking();
+// onClick: createBooking(formData)
+// toasts and cache invalidation happen automatically
 ```
 
-Toast types available:
+### Toast Types Available
+
 - `toast.success('...')` -- green, for successful actions
 - `toast.error('...')` -- red, for failures
 - `toast.warning('...')` -- yellow, for warnings
 - `toast.info('...')` -- blue, for informational messages
 - `toast.loading('...')` -- shows a spinner
+
+### When to Call `toast` Directly
+
+The only places you would call `toast` outside a mutation hook are:
+- A pure UI affordance (e.g. "Copied to clipboard")
+- A client-side validation message that does not involve the API
+
+For anything involving the API, put the toast inside the hook so every caller gets the same feedback.
 
 ---
 
@@ -652,44 +723,53 @@ We already built a reusable `ConfirmDialog` component in Lesson 11 and used it f
 
 ### Usage Examples Across the App
 
+The mutation hooks already handle toasts and cache invalidation, so the `onConfirm` is just `mutate(id)`.
+
 **Delete a room (owner portal):**
 
 ```tsx
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Button } from '@/components/ui/button';
-import { toast } from 'sonner';
+import { useDeleteRoom } from '@/hooks/useRooms';
 
-<ConfirmDialog
-  trigger={
-    <Button variant="destructive" size="sm">Delete Room</Button>
-  }
-  title="Delete Room"
-  description={`Are you sure you want to delete "${room.title}"? All bookings for this room will also be affected.`}
-  confirmLabel="Delete"
-  variant="destructive"
-  onConfirm={async () => {
-    await deleteRoom(room._id);
-    toast.success('Room deleted.');
-  }}
-/>
+function DeleteRoomButton({ room }: { room: Room }) {
+  const { mutate: deleteRoom } = useDeleteRoom();
+
+  return (
+    <ConfirmDialog
+      trigger={<Button variant="destructive" size="sm">Delete Room</Button>}
+      title="Delete Room"
+      description={`Are you sure you want to delete "${room.title}"? All bookings for this room will also be affected.`}
+      confirmLabel="Delete"
+      variant="destructive"
+      onConfirm={() => deleteRoom(room._id)}
+    />
+  );
+}
 ```
 
 **Cancel a booking (user portal):**
 
 ```tsx
-<ConfirmDialog
-  trigger={
-    <Button variant="outline" size="sm">Cancel Booking</Button>
-  }
-  title="Cancel Booking"
-  description="Are you sure you want to cancel this booking? If you paid via eSewa, a refund will be processed."
-  confirmLabel="Cancel Booking"
-  variant="destructive"
-  onConfirm={() => cancelBooking(booking._id)}
-/>
+import { useCancelBooking } from '@/hooks/useBookings';
+
+function CancelBookingButton({ booking }: { booking: Booking }) {
+  const { mutate: cancelBooking } = useCancelBooking();
+
+  return (
+    <ConfirmDialog
+      trigger={<Button variant="outline" size="sm">Cancel Booking</Button>}
+      title="Cancel Booking"
+      description="Are you sure you want to cancel this booking? If you paid via eSewa, a refund will be processed."
+      confirmLabel="Cancel Booking"
+      variant="destructive"
+      onConfirm={() => cancelBooking(booking._id)}
+    />
+  );
+}
 ```
 
-**This is the benefit of building reusable components early** -- one `ConfirmDialog` built in Lesson 11 is now used across the entire application with zero duplication.
+**This is the benefit of building reusable components and hooks early** -- one `ConfirmDialog` (from Lesson 11) plus one mutation hook (from Lesson 17) gives you a confirm-and-delete flow with toasts and cache invalidation in a handful of lines.
 
 ---
 
@@ -746,89 +826,72 @@ export function SubmitButton({
 }
 ```
 
-Usage:
+Usage with a React Query mutation hook -- `isPending` drives the button state:
 
 ```tsx
-function CreateRoomForm() {
-  const [loading, setLoading] = useState(false);
+import { useCreateRoom } from '@/hooks/useRooms';
 
-  const onSubmit = async (data: RoomFormData) => {
-    setLoading(true);
-    try {
-      await fetch('/api/rooms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      toast.success('Room created!');
-    } catch (error) {
-      toast.error('Failed to create room.');
-    } finally {
-      setLoading(false);
-    }
+function CreateRoomForm() {
+  const { mutate: createRoom, isPending } = useCreateRoom();
+
+  const onSubmit = (data: RoomFormData) => {
+    createRoom(data, {
+      onSuccess: () => form.reset(),
+    });
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)}>
+    <form onSubmit={form.handleSubmit(onSubmit)}>
       {/* ... form fields ... */}
-      <SubmitButton loading={loading} label="Create Room" loadingLabel="Creating..." />
+      <SubmitButton
+        loading={isPending}
+        label="Create Room"
+        loadingLabel="Creating..."
+      />
     </form>
   );
 }
 ```
 
+No manual `useState` for loading, no try/catch -- the hook owns the loading state and toast feedback. The component only orchestrates the form.
+
 ---
 
 ## 27.9 Proper Error Messages from the API
 
-Instead of showing generic "Something went wrong" messages, display the actual error from the API:
+Instead of showing generic "Something went wrong" messages, we want the user to see the actual error from the API (e.g. "Title must be between 3 and 100 characters"). Because all our requests go through the **shared Axios instance** from Lesson 17, we handle this in one place using an Axios response interceptor.
+
+### Centralised Error Extraction
+
+Update the Axios instance to extract `error` from the standard response envelope and re-throw a clean `Error` with the meaningful message:
 
 ```typescript
-// webapp/src/utils/api.ts
+// webapp/src/services/api.ts
+import axios, { AxiosError } from 'axios';
 
-/**
- * A helper that fetches from the API and throws a meaningful error
- * if the response is not OK.
- */
-export async function apiFetch<T>(
-  url: string,
-  options?: RequestInit
-): Promise<T> {
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  });
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3001/api',
+  headers: { 'Content-Type': 'application/json' },
+  timeout: 10000,
+});
 
-  const data = await response.json();
-
-  if (!response.ok) {
-    // Use the error message from the API if available
-    throw new Error(data.error || data.message || 'An unexpected error occurred');
+// Extract the API's `error` message so every caller sees something useful
+api.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError<{ error?: string; details?: { field: string; message: string }[] }>) => {
+    const apiError = error.response?.data;
+    const firstDetail = apiError?.details?.[0]?.message;
+    const message = firstDetail || apiError?.error || error.message || 'An unexpected error occurred';
+    return Promise.reject(new Error(message));
   }
+);
 
-  return data as T;
-}
+export default api;
 ```
 
-Now use this everywhere instead of raw `fetch`:
+Now every mutation hook's `onError: (error: Error) => toast.error(error.message)` automatically shows the real API message -- e.g. "Title must be between 3 and 100 characters" rather than "Request failed with status code 400".
 
-```tsx
-import { apiFetch } from '@/utils/api';
-import { toast } from 'sonner';
-
-const handleDelete = async (roomId: string) => {
-  try {
-    await apiFetch(`/api/rooms/${roomId}`, { method: 'DELETE' });
-    toast.success('Room deleted.');
-  } catch (error) {
-    // The error message comes from the API, so it is specific and helpful
-    toast.error(error instanceof Error ? error.message : 'Failed to delete room.');
-  }
-};
-```
+This single change improves error quality across the entire app, including all the mutation hooks from previous lessons.
 
 ---
 
@@ -848,6 +911,7 @@ npx shadcn@latest add sheet
 // webapp/src/components/Navbar.tsx
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Sheet,
@@ -894,24 +958,12 @@ export function Navbar() {
         {/* Mobile Hamburger -- visible only on mobile */}
         <div className="md:hidden">
           <Sheet open={open} onOpenChange={setOpen}>
-            <SheetTrigger render={
+            <SheetTrigger asChild>
               <Button variant="ghost" size="sm">
                 {/* Hamburger icon (three lines) */}
-                <svg
-                  className="h-6 w-6"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 6h16M4 12h16M4 18h16"
-                  />
-                </svg>
+                <Menu className="h-6 w-6" />
               </Button>
-            } />
+            </SheetTrigger>
             <SheetContent side="right">
               <SheetHeader>
                 <SheetTitle>Menu</SheetTitle>
@@ -948,167 +1000,81 @@ Key points:
 
 ---
 
-## 27.11 Code Cleanup: Extract Reusable Hooks
+## 27.11 The Hooks Pattern Recap
 
-As your application grows, you will notice repeated patterns. Extract these into custom hooks:
+Looking back at our application, every piece of data has the same shape:
 
-### useFetch Hook
+| Layer | Responsibility |
+|-------|----------------|
+| `types/*.ts` | TypeScript shapes for the entity (e.g. `Booking`, `OwnerStats`) |
+| `services/*Api.ts` | Axios calls that unwrap the `{ data: ... }` envelope |
+| `hooks/use*.ts` | Query keys factory + `useQuery`/`useMutation` hooks with toasts |
+| `components/*` | Pure UI that consumes the hooks |
 
-```typescript
-// webapp/src/hooks/useFetch.ts
-import { useEffect, useState } from 'react';
-import { apiFetch } from '@/utils/api';
+This is **the** pattern. We use it for todos, bookings, rooms, payments, and dashboard data alike.
 
-interface UseFetchResult<T> {
-  data: T | null;
-  loading: boolean;
-  error: string | null;
-  refetch: () => void;
-}
+### Why No Generic `useFetch`?
 
-export function useFetch<T>(url: string): UseFetchResult<T> {
-  const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+You might be tempted to write a generic `useFetch(url)` helper. Resist it -- React Query *is* that helper, and it does much more (caching, refetch on focus, query key invalidation, `placeholderData`, optimistic updates, ...). Writing your own `useFetch` on top of `useState` + `useEffect` throws all of that away.
 
-  const fetchData = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await apiFetch<T>(url);
-      setData(result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
-    } finally {
-      setLoading(false);
-    }
-  };
+### Why No `handleAction` Helper?
 
-  useEffect(() => {
-    fetchData();
-  }, [url]);
+The same logic applies to a generic `handleAction(setLoading, successMessage, ...)` wrapper. A React Query mutation hook already gives you:
+- `isPending` (loading state)
+- `onSuccess` / `onError` callbacks (toasts and cache invalidation)
+- Centralised error extraction via the Axios interceptor
+- Cache invalidation that updates every component using the same query keys
 
-  return { data, loading, error, refetch: fetchData };
-}
-```
-
-### Usage
-
-Before (repetitive code in every component):
+So instead of:
 
 ```tsx
-// Before -- this pattern is repeated everywhere
-const [stats, setStats] = useState(null);
-const [loading, setLoading] = useState(true);
-
-useEffect(() => {
-  fetch('/api/dashboard/owner/stats')
-    .then((res) => res.json())
-    .then(setStats)
-    .finally(() => setLoading(false));
-}, []);
-```
-
-After (clean and reusable):
-
-```tsx
-// After -- one line
-const { data: stats, loading, error, refetch } = useFetch<DashboardStats>(
-  '/api/dashboard/owner/stats'
-);
-```
-
-This hook handles loading state, error state, and provides a `refetch` function to reload the data.
-
----
-
-## 27.12 Consistent Error Handling Pattern
-
-Establish a consistent pattern for error handling across all API calls:
-
-```typescript
-// webapp/src/utils/handleAction.ts
-import { toast } from 'sonner';
-
-/**
- * Wraps an async action with loading state, success toast, and error toast.
- * Use for mutations (create, update, delete).
- */
-export async function handleAction(
-  action: () => Promise<void>,
-  options: {
-    setLoading?: (loading: boolean) => void;
-    successMessage?: string;
-    errorMessage?: string;
-    onSuccess?: () => void;
-  }
-) {
-  const {
-    setLoading,
-    successMessage = 'Done!',
-    errorMessage = 'Something went wrong.',
-    onSuccess,
-  } = options;
-
-  setLoading?.(true);
-  try {
-    await action();
-    toast.success(successMessage);
-    onSuccess?.();
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : errorMessage;
-    toast.error(message);
-  } finally {
-    setLoading?.(false);
-  }
-}
-```
-
-Usage:
-
-```tsx
+// Don't do this -- reinventing what React Query already does
 const [loading, setLoading] = useState(false);
-
-const deleteRoom = (roomId: string) => {
-  handleAction(
-    () => apiFetch(`/api/rooms/${roomId}`, { method: 'DELETE' }),
-    {
-      setLoading,
-      successMessage: 'Room deleted.',
-      errorMessage: 'Could not delete room.',
-      onSuccess: () => refetchRooms(),
-    }
-  );
-};
+const deleteRoom = (id) => handleAction(() => apiFetch(...), { setLoading, ... });
 ```
+
+Do this:
+
+```tsx
+// The project pattern -- a mutation hook owns everything
+const { mutate: deleteRoom, isPending } = useDeleteRoom();
+```
+
+Every component in the app follows this shape, which is why each component stays under 100 lines and is easy to read.
 
 ---
 
 ## Practice Exercises
 
-1. **Owner dashboard:** Implement the owner stats endpoint and the dashboard page with four stats cards. Verify the aggregation pipeline returns correct values by creating test bookings.
+1. **Owner dashboard backend:** Implement `getOwnerStats` and `getOwnerRecentBookings` using `asyncHandler` and the `{ data: ... }` envelope. Verify the aggregation pipeline returns correct values by creating test bookings.
 
-2. **User dashboard:** Build the user dashboard showing upcoming and past bookings. Format dates using `en-GB` locale (DD/MM/YYYY).
+2. **Dashboard service + hooks:** Build `services/dashboardApi.ts` and `hooks/useDashboard.ts` with the `dashboardKeys` factory and the `useOwnerStats`, `useOwnerRecentBookings`, `useUserStats` hooks.
 
-3. **Toast notifications:** Install Sonner and add success/error toasts to at least three different actions in your application (e.g. creating a booking, deleting a room, marking as paid).
+3. **Owner dashboard frontend:** Build the dashboard page using `<StatsCard>` (with `Skeleton` loading) and the reusable `<DataTable>` from Lesson 17.1 for Recent Bookings. Confirm no raw `fetch` appears anywhere in the component.
 
-4. **Confirmation dialogs:** Add a confirmation dialog to every destructive action (delete room, cancel booking). The dialog should clearly explain what will happen.
+4. **User dashboard:** Build the user dashboard using `useUserStats()` and the existing `useBookings()` hook with filters. Format dates with `en-GB` (DD/MM/YYYY).
 
-5. **Mobile navigation:** Implement the responsive navbar with a hamburger menu. Test it by resizing your browser window to a mobile width (below 768px).
+5. **Confirmation dialogs:** Wire the `<ConfirmDialog>` from Lesson 11 around the destructive mutations (`useDeleteRoom`, `useCancelBooking`). Verify the toast and cache invalidation happen automatically from the hook.
 
-6. **Refactor:** Replace at least two components that use raw `fetch` with the `useFetch` hook. Compare the before and after code -- which is easier to read?
+6. **Mobile navigation:** Implement the responsive navbar with a hamburger menu using shadcn `Sheet`. Test it by resizing your browser window to a mobile width (below 768px).
 
-7. **Challenge:** Add a line chart to the owner dashboard showing revenue per month. You may use a charting library like `recharts` (install with `npm install recharts`).
+7. **Axios error interceptor:** Add the response interceptor to `services/api.ts` so every mutation hook surfaces the API's `error` (or first `details[0].message`) in its toast. Trigger a validation error and confirm the toast shows the real message rather than "Request failed with status code 400".
+
+8. **Challenge:** Add a line chart to the owner dashboard showing revenue per month. Add a new endpoint that returns aggregated monthly revenue (still using `asyncHandler` + `{ data: ... }`), then a `useMonthlyRevenue()` hook and a chart component. You may use a library like `recharts` (`npm install recharts`).
 
 ---
 
 ## Key Takeaways
 
-- **MongoDB aggregation pipelines** are powerful for computing statistics directly in the database without fetching all records into your application.
-- **Toast notifications** (Sonner) provide immediate, non-intrusive feedback when users perform actions.
-- **Confirmation dialogs** (AlertDialog) prevent accidental destructive actions like deletions.
-- **Loading states** on buttons tell the user that something is happening and prevent double submissions.
-- **Responsive navigation** with a Sheet/hamburger menu ensures your application works well on mobile devices.
-- **Custom hooks** like `useFetch` reduce code repetition and make components cleaner.
-- **Consistent error handling** with utility functions ensures every API call displays appropriate feedback.
+- **MongoDB aggregation pipelines** compute statistics directly in the database -- no need to fetch all records into JavaScript.
+- **Backend dashboard endpoints follow the project pattern** -- `asyncHandler` + the `{ data: ... }` envelope, just like Lesson 16. There are no ad-hoc response shapes.
+- **No raw `fetch` on the frontend.** Every dashboard call goes through the typed `dashboardApi` service over the shared Axios instance, and unwraps the `{ data: ... }` envelope at the service layer.
+- **React Query hooks (`useOwnerStats`, `useOwnerRecentBookings`, `useUserStats`)** handle loading, caching, error states and refetching for free.
+- **A `dashboardKeys` query key factory** mirrors the `todoKeys` pattern from Lesson 17 -- centralised, type-safe, easy to invalidate.
+- **Reuse `<DataTable>` from Lesson 17.1** for the Recent Bookings list (with `pageCount={1}` for a snapshot view).
+- **Stats cards** use shadcn `Card` + `Skeleton` for a proper loading state rather than a global "Loading..." flash.
+- **Toast notifications** already live inside every mutation hook from Lesson 17 -- components do not call `toast` directly for API actions.
+- **An Axios response interceptor** extracts the API's real error message (or first `details[0]`) so every mutation hook's toast is meaningful.
+- **Confirmation dialogs** (Lesson 11 `<ConfirmDialog>`) combine with mutation hooks for a one-line destructive flow.
+- **Responsive navigation** with shadcn `Sheet` + a Tailwind `md:hidden` / `hidden md:flex` split.
+- **Resist generic helpers** (`useFetch`, `handleAction`) -- React Query mutation/query hooks already do everything they would, with better caching and invalidation.

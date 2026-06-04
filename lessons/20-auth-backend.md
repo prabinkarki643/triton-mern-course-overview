@@ -3,12 +3,15 @@
 ## What You Will Learn
 - Why authentication is essential for multi-user applications
 - Hashing passwords securely with bcrypt
-- Building user registration with validation
+- Building user registration with **`express-validator`** chains (same pattern as Lesson 16)
 - Building user login with credential verification
 - How JSON Web Tokens (JWT) work and why we use them
+- Wrapping controllers in an **`asyncHandler`** to remove `try/catch` boilerplate
+- Returning a consistent **`{ data: ... }`** response envelope
 - Creating authentication middleware to protect routes
 - Role-based access control (owner vs user)
 - Building a "get current user" endpoint
+- A global error handler as the safety net for unhandled errors
 
 ---
 
@@ -169,87 +172,154 @@ try {
 
 ---
 
-## 20.5 Zod Validation Schemas
+## 20.5 Request Validation with express-validator
 
-Before processing any request, validate the input data with Zod:
+Before processing any request, validate the input data. We follow the same pattern used in Lesson 16 for the Todo API -- `express-validator` chains plus a shared `validateResult` middleware. This keeps controllers clean (no manual `if (!email)` checks) and returns structured 400 responses the frontend can use.
+
+### Install express-validator
+
+```bash
+npm install express-validator
+```
+
+No `@types` package needed -- `express-validator` ships with its own TypeScript types.
+
+### Step 1: The Shared validateResult Middleware
+
+This middleware runs after every validator chain. If any rule failed, it returns a 400 with structured errors. Otherwise, it calls `next()` and the controller runs.
 
 ```ts
 // src/middleware/validate.ts
 import { Request, Response, NextFunction } from "express";
-import { ZodSchema, ZodError } from "zod";
+import { validationResult } from "express-validator";
 
-const validate = (schema: ZodSchema) => {
-  return (req: Request, res: Response, next: NextFunction): void => {
-    try {
-      schema.parse(req.body);
-      next();
-    } catch (error: unknown) {
-      if (error instanceof ZodError) {
-        const errors: string[] = error.errors.map(
-          (err) => `${err.path.join(".")}: ${err.message}`
-        );
-        res.status(400).json({
-          message: "Validation failed",
-          errors,
-        });
-        return;
-      }
-      next(error);
-    }
-  };
+export const validateResult = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  const errors = validationResult(req);
+
+  if (!errors.isEmpty()) {
+    res.status(400).json({
+      message: "Validation failed",
+      errors: errors.array().map((err) => ({
+        field: "path" in err ? err.path : "unknown",
+        message: err.msg,
+      })),
+    });
+    return;
+  }
+
+  next();
 };
-
-export default validate;
 ```
 
-Now create the auth validation schemas:
+### Step 2: The Auth Validators
+
+Each validator is an array of `express-validator` chains. We export one chain per endpoint:
 
 ```ts
-// src/schemas/authSchemas.ts
-import { z } from "zod";
+// src/validators/auth.validator.ts
+import { body } from "express-validator";
 
-export const registerSchema = z.object({
-  name: z
-    .string()
-    .min(2, "Name must be at least 2 characters")
-    .max(50, "Name must be under 50 characters")
-    .trim(),
-  email: z
-    .string()
-    .email("Please provide a valid email")
-    .toLowerCase()
-    .trim(),
-  password: z
-    .string()
-    .min(6, "Password must be at least 6 characters")
-    .max(100, "Password must be under 100 characters"),
-  phone: z
-    .string()
-    .min(7, "Phone number must be at least 7 digits")
-    .trim(),
-  role: z.enum(["owner", "user"]).default("user"),
-});
+// POST /api/auth/register
+export const registerValidator = [
+  body("name")
+    .exists({ checkFalsy: true })
+    .withMessage("Name is required")
+    .bail()
+    .isString()
+    .trim()
+    .isLength({ min: 2, max: 50 })
+    .withMessage("Name must be 2-50 characters"),
 
-export const loginSchema = z.object({
-  email: z
-    .string()
-    .email("Please provide a valid email")
-    .toLowerCase()
-    .trim(),
-  password: z
-    .string()
-    .min(1, "Password is required"),
-});
+  body("email")
+    .exists({ checkFalsy: true })
+    .withMessage("Email is required")
+    .bail()
+    .isEmail()
+    .withMessage("Please provide a valid email")
+    .normalizeEmail(),
 
-export type RegisterInput = z.infer<typeof registerSchema>;
-export type LoginInput = z.infer<typeof loginSchema>;
+  body("password")
+    .exists({ checkFalsy: true })
+    .withMessage("Password is required")
+    .bail()
+    .isLength({ min: 6, max: 100 })
+    .withMessage("Password must be at least 6 characters"),
+
+  body("phone")
+    .exists({ checkFalsy: true })
+    .withMessage("Phone number is required")
+    .bail()
+    .isString()
+    .trim()
+    .isLength({ min: 7 })
+    .withMessage("Phone number must be at least 7 digits"),
+
+  body("role")
+    .optional()
+    .isIn(["user", "owner"])
+    .withMessage("Role must be user or owner"),
+];
+
+// POST /api/auth/login
+export const loginValidator = [
+  body("email")
+    .exists({ checkFalsy: true })
+    .withMessage("Email is required")
+    .bail()
+    .isEmail()
+    .withMessage("Please provide a valid email")
+    .normalizeEmail(),
+
+  body("password")
+    .exists({ checkFalsy: true })
+    .withMessage("Password is required"),
+];
 ```
+
+**Key validators explained:**
+
+| Validator | What it does |
+|-----------|-------------|
+| `body("field")` | Validate a field in `req.body` |
+| `.exists({ checkFalsy: true })` | Field must be present and not empty |
+| `.bail()` | Stop checking this field if the previous rule failed |
+| `.optional()` | Skip validation if the field is missing |
+| `.trim()` | Sanitiser -- removes leading/trailing whitespace |
+| `.normalizeEmail()` | Sanitiser -- lowercases and standardises email format |
+| `.isIn([...])` | Must be one of the allowed values |
+| `.isEmail()` | Must be a valid email format |
+| `.withMessage("...")` | Custom error message if the previous rule fails |
+
+> **Important:** Sanitisers like `.trim()` and `.normalizeEmail()` actually *modify* `req.body`. The cleaned value is what your controller receives.
+
+### Step 3: The asyncHandler Helper
+
+To avoid repeating `try/catch` in every controller, we use a small `asyncHandler` wrapper. It catches any thrown error and passes it to the global error handler (section 20.11).
+
+```ts
+// src/middleware/asyncHandler.ts
+import { Request, Response, NextFunction, RequestHandler } from "express";
+
+export const asyncHandler = (fn: RequestHandler): RequestHandler =>
+  (req, res, next) =>
+    Promise.resolve(fn(req, res, next)).catch(next);
+```
+
+Now controllers can throw errors freely, and the global handler will respond with the right status.
 
 ---
 
 ## 20.6 The Auth Controller
 
-The controller handles the actual registration and login logic:
+The controller handles the actual registration and login logic. Because validation runs in the middleware **before** the controller, the controller code stays focused on business logic -- no manual `if (!email)` checks.
+
+We also wrap every handler in `asyncHandler` so errors are forwarded to the global error handler instead of needing `try/catch` blocks everywhere.
+
+Notice the response envelope -- we return `{ data: { user, token } }`. The same shape is used across every endpoint in the project (matching Lesson 16).
 
 ```ts
 // src/controllers/authController.ts
@@ -257,7 +327,7 @@ import { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import User, { IUser } from "../models/User";
-import type { RegisterInput, LoginInput } from "../schemas/authSchemas";
+import { asyncHandler } from "../middleware/asyncHandler";
 
 const JWT_SECRET: string = process.env.JWT_SECRET || "fallback-secret";
 const JWT_EXPIRES_IN: string = "7d";
@@ -275,121 +345,99 @@ const generateToken = (user: IUser): string => {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 };
 
+// Helper -- shape the user safely (no password leaks)
+const toPublicUser = (user: IUser) => ({
+  _id: user._id,
+  name: user.name,
+  email: user.email,
+  phone: user.phone,
+  role: user.role,
+  avatar: user.avatar,
+  createdAt: user.createdAt,
+  updatedAt: user.updatedAt,
+});
+
 // POST /api/auth/register
-export const register = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { name, email, password, phone, role }: RegisterInput = req.body;
+// Validation is handled by registerValidator + validateResult middleware
+export const register = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const { name, email, password, phone, role } = req.body;
 
-    // Check if user already exists
-    const existingUser: IUser | null = await User.findOne({ email });
-    if (existingUser) {
-      res.status(400).json({ message: "A user with this email already exists" });
-      return;
-    }
-
-    // Hash the password
-    const saltRounds: number = 10;
-    const hashedPassword: string = await bcrypt.hash(password, saltRounds);
-
-    // Create the user
-    const user: IUser = await User.create({
-      name,
-      email,
-      password: hashedPassword,
-      phone,
-      role,
-    });
-
-    // Generate JWT
-    const token: string = generateToken(user);
-
-    // Send response (without password)
-    res.status(201).json({
-      token,
-      user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-      },
-    });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Registration failed";
-    res.status(500).json({ message });
+  // Check if user already exists
+  const existingUser: IUser | null = await User.findOne({ email });
+  if (existingUser) {
+    res.status(400).json({ message: "A user with this email already exists" });
+    return;
   }
-};
+
+  // Hash the password
+  const saltRounds: number = 10;
+  const hashedPassword: string = await bcrypt.hash(password, saltRounds);
+
+  // Create the user
+  const user: IUser = await User.create({
+    name,
+    email,
+    password: hashedPassword,
+    phone,
+    role: role || "user",
+  });
+
+  // Generate JWT
+  const token: string = generateToken(user);
+
+  res.status(201).json({
+    data: {
+      user: toPublicUser(user),
+      token,
+    },
+  });
+});
 
 // POST /api/auth/login
-export const login = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { email, password }: LoginInput = req.body;
+// Validation is handled by loginValidator + validateResult middleware
+export const login = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  const { email, password } = req.body;
 
-    // Find user and explicitly include the password field
-    const user: IUser | null = await User.findOne({ email }).select("+password");
-    if (!user) {
-      res.status(401).json({ message: "Invalid email or password" });
-      return;
-    }
-
-    // Compare passwords
-    const isPasswordValid: boolean = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
-      res.status(401).json({ message: "Invalid email or password" });
-      return;
-    }
-
-    // Generate JWT
-    const token: string = generateToken(user);
-
-    // Send response (without password)
-    res.status(200).json({
-      token,
-      user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-      },
-    });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Login failed";
-    res.status(500).json({ message });
+  // Find user and explicitly include the password field
+  const user: IUser | null = await User.findOne({ email }).select("+password");
+  if (!user) {
+    res.status(401).json({ message: "Invalid email or password" });
+    return;
   }
-};
+
+  // Compare passwords
+  const isPasswordValid: boolean = await bcrypt.compare(password, user.password);
+  if (!isPasswordValid) {
+    res.status(401).json({ message: "Invalid email or password" });
+    return;
+  }
+
+  // Generate JWT
+  const token: string = generateToken(user);
+
+  res.status(200).json({
+    data: {
+      user: toPublicUser(user),
+      token,
+    },
+  });
+});
 
 // GET /api/auth/me
-export const getMe = async (req: Request, res: Response): Promise<void> => {
-  try {
-    // req.user is set by the auth middleware (see section 20.7)
-    const userId: string = (req as any).user.userId;
+export const getMe = asyncHandler(async (req: Request, res: Response): Promise<void> => {
+  // req.user is set by the auth middleware (see section 20.7)
+  const userId: string = req.user!.userId;
 
-    const user: IUser | null = await User.findById(userId);
-    if (!user) {
-      res.status(404).json({ message: "User not found" });
-      return;
-    }
-
-    res.status(200).json({
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      phone: user.phone,
-      role: user.role,
-      avatar: user.avatar,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
-    });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Failed to get user";
-    res.status(500).json({ message });
+  const user: IUser | null = await User.findById(userId);
+  if (!user) {
+    res.status(404).json({ message: "User not found" });
+    return;
   }
-};
+
+  res.status(200).json({
+    data: toPublicUser(user),
+  });
+});
 ```
 
 ### Security Notes
@@ -528,21 +576,21 @@ Step 5: next() → controller runs with req.user available
 
 ## 20.8 Auth Routes
 
-Connect the controller functions to URL endpoints:
+Connect the controller functions to URL endpoints. Each request flows through the validator chain, then `validateResult`, then the controller -- exactly the same pattern used for the Todo API in Lesson 16.
 
 ```ts
 // src/routes/authRoutes.ts
 import { Router } from "express";
 import { register, login, getMe } from "../controllers/authController";
 import { requireAuth } from "../middleware/auth";
-import validate from "../middleware/validate";
-import { registerSchema, loginSchema } from "../schemas/authSchemas";
+import { validateResult } from "../middleware/validate";
+import { registerValidator, loginValidator } from "../validators/auth.validator";
 
 const router: Router = Router();
 
 // Public routes (no authentication needed)
-router.post("/register", validate(registerSchema), register);
-router.post("/login", validate(loginSchema), login);
+router.post("/register", registerValidator, validateResult, register);
+router.post("/login", loginValidator, validateResult, login);
 
 // Protected route (must be logged in)
 router.get("/me", requireAuth, getMe);
@@ -550,11 +598,20 @@ router.get("/me", requireAuth, getMe);
 export default router;
 ```
 
+**How the middleware chain works:**
+
+```
+Request → [validator chain] → [validateResult] → [controller]
+                                      ↓
+                              If validation failed:
+                              respond 400 and stop
+```
+
 ### Register the Routes in the App
 
 ```ts
 // src/index.ts
-import express, { type Express, type Request, type Response } from "express";
+import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import connectDB from "./config/database";
@@ -577,6 +634,23 @@ app.get("/api/health", (_req: Request, res: Response) => {
   res.json({ status: "ok", message: "BookMyRoom API is running" });
 });
 
+// Global error handler -- catches anything forwarded by asyncHandler
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction): void => {
+  console.error(err);
+
+  if (err.name === "ValidationError") {
+    res.status(400).json({ message: err.message });
+    return;
+  }
+
+  if (err.name === "CastError") {
+    res.status(400).json({ message: "Invalid ID format" });
+    return;
+  }
+
+  res.status(500).json({ message: err.message || "Server error" });
+});
+
 // Connect to database, then start server
 connectDB().then(() => {
   app.listen(PORT, () => {
@@ -584,6 +658,11 @@ connectDB().then(() => {
   });
 });
 ```
+
+**The error-handling pattern in this project:**
+- **`express-validator`** catches bad input (400) before the controller runs
+- **`asyncHandler`** forwards any thrown error from a controller to the global handler
+- **Global error handler** decides the response (400 for Mongoose validation/cast errors, 500 otherwise)
 
 ---
 
@@ -608,15 +687,17 @@ curl -X POST http://localhost:3001/api/auth/register \
 **Expected response (201):**
 ```json
 {
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "user": {
-    "_id": "650abc123def456789012345",
-    "name": "John Smith",
-    "email": "john@example.com",
-    "phone": "07700900001",
-    "role": "user",
-    "createdAt": "2026-04-05T10:00:00.000Z",
-    "updatedAt": "2026-04-05T10:00:00.000Z"
+  "data": {
+    "user": {
+      "_id": "650abc123def456789012345",
+      "name": "John Smith",
+      "email": "john@example.com",
+      "phone": "07700900001",
+      "role": "user",
+      "createdAt": "2026-04-05T10:00:00.000Z",
+      "updatedAt": "2026-04-05T10:00:00.000Z"
+    },
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
   }
 }
 ```
@@ -649,13 +730,15 @@ curl -X POST http://localhost:3001/api/auth/login \
 **Expected response (200):**
 ```json
 {
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "user": {
-    "_id": "650abc123def456789012345",
-    "name": "John Smith",
-    "email": "john@example.com",
-    "phone": "07700900001",
-    "role": "user"
+  "data": {
+    "user": {
+      "_id": "650abc123def456789012345",
+      "name": "John Smith",
+      "email": "john@example.com",
+      "phone": "07700900001",
+      "role": "user"
+    },
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
   }
 }
 ```
@@ -685,6 +768,19 @@ curl -X POST http://localhost:3001/api/auth/login \
 # No token -- should return 401
 curl http://localhost:3001/api/auth/me
 ```
+
+**Example validation error response (400):**
+```json
+{
+  "message": "Validation failed",
+  "errors": [
+    { "field": "email", "message": "Please provide a valid email" },
+    { "field": "password", "message": "Password must be at least 6 characters" }
+  ]
+}
+```
+
+The frontend can read this structure and show errors next to the relevant fields.
 
 ---
 
@@ -744,21 +840,22 @@ booking-backend/
 │   ├── config/
 │   │   └── database.ts            # MongoDB connection
 │   ├── controllers/
-│   │   └── authController.ts      # register, login, getMe
+│   │   └── authController.ts      # register, login, getMe (asyncHandler)
 │   ├── middleware/
 │   │   ├── auth.ts                # requireAuth, requireRole
-│   │   └── validate.ts            # Zod validation middleware
+│   │   ├── asyncHandler.ts        # Forwards async errors to global handler
+│   │   └── validate.ts            # validateResult (express-validator)
 │   ├── models/
 │   │   ├── User.ts                # User schema + IUser interface
 │   │   ├── Room.ts                # Room schema + IRoom interface
 │   │   └── Booking.ts             # Booking schema + IBooking interface
 │   ├── routes/
 │   │   └── authRoutes.ts          # /api/auth/* endpoints
-│   ├── schemas/
-│   │   └── authSchemas.ts         # Zod schemas for register/login
+│   ├── validators/
+│   │   └── auth.validator.ts      # registerValidator, loginValidator
 │   ├── types/
 │   │   └── express.d.ts           # Extended Request type
-│   └── index.ts                   # Express app entry point
+│   └── index.ts                   # Express app + global error handler
 ├── .env
 ├── .gitignore
 ├── package.json
@@ -770,28 +867,30 @@ booking-backend/
 ## Practice Exercises
 
 ### Exercise 1: Build the Complete Auth API
-1. Create the Zod validation schemas (`registerSchema` and `loginSchema`)
-2. Create the validation middleware (`validate.ts`)
-3. Create the auth controller with `register`, `login`, and `getMe`
-4. Create the auth middleware with `requireAuth` and `requireRole`
-5. Create the auth routes and register them in `index.ts`
-6. Run the server and verify it compiles without errors
+1. Install `express-validator` and create the validators (`registerValidator`, `loginValidator`) in `validators/auth.validator.ts`
+2. Create the shared `validateResult` middleware in `middleware/validate.ts`
+3. Create the `asyncHandler` helper in `middleware/asyncHandler.ts`
+4. Create the auth controller with `register`, `login`, and `getMe` (all wrapped in `asyncHandler`)
+5. Create the auth middleware with `requireAuth` and `requireRole`
+6. Wire validators into the auth routes (`validator → validateResult → controller`)
+7. Register the routes and the global error handler in `index.ts`
+8. Run the server and verify it compiles without errors
 
 ### Exercise 2: Test Every Endpoint
-1. Register a user with role "user" -- verify you get a token and user object
-2. Register an owner with role "owner" -- verify different role in response
+1. Register a user with role "user" -- verify the response shape is `{ data: { user, token } }`
+2. Register an owner with role "owner" -- verify different role in `data.user.role`
 3. Try registering with the same email -- verify you get a 400 error
-4. Login with correct credentials -- verify you get a token
+4. Login with correct credentials -- verify you get `{ data: { user, token } }`
 5. Login with wrong password -- verify you get 401 with "Invalid email or password"
-6. Call GET /api/auth/me with a valid token -- verify you get your user data
+6. Call GET /api/auth/me with a valid token -- verify you get `{ data: { ...user } }`
 7. Call GET /api/auth/me without a token -- verify you get 401
 
 ### Exercise 3: Test Validation
-1. Try registering with an empty name -- check the validation error message
-2. Try registering with an invalid email format -- check the error
+1. Try registering with an empty name -- check the structured `errors` array
+2. Try registering with an invalid email format -- check the `field`/`message` pair
 3. Try registering with a password shorter than 6 characters -- check the error
 4. Try logging in with an empty password -- check the error
-5. Verify all error messages are clear and helpful
+5. Verify every 400 response follows the shape `{ message: "Validation failed", errors: [{ field, message }] }`
 
 ### Exercise 4: Understand the Security
 Answer these questions to check your understanding:
@@ -811,6 +910,9 @@ Answer these questions to check your understanding:
 5. **`select: false`** on the password field prevents it from being returned in normal queries
 6. **Use the same error message** for invalid email and invalid password to prevent user enumeration
 7. **401 means "who are you?"** (not authenticated); **403 means "you cannot do this"** (not authorised)
-8. **Zod validation** on the server protects against malformed requests regardless of frontend validation
-9. **`requireRole()`** provides role-based access control -- owners and users have different permissions
-10. **Declaration files** (`.d.ts`) extend existing TypeScript types like Express's Request object
+8. **`express-validator` chains** declare rules per endpoint and run before the controller -- the same pattern used in Lesson 16
+9. **`validateResult` middleware** turns validation failures into structured 400 responses (`{ message, errors: [{ field, message }] }`)
+10. **`asyncHandler`** removes boilerplate `try/catch` blocks and forwards errors to the global handler
+11. **Response envelope** -- every endpoint returns `{ data: ... }` so the frontend can rely on one consistent shape
+12. **`requireRole()`** provides role-based access control -- owners and users have different permissions
+13. **Declaration files** (`.d.ts`) extend existing TypeScript types like Express's Request object
