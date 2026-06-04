@@ -274,30 +274,26 @@ Think of it like a restaurant:
 
 From inside `bookmyroom_app/` (the same root folder, alongside `booking-backend`):
 
-We will use the **shadcn preset** -- the same one-shot setup we used for the Todo app in Lesson 13. It scaffolds Vite + React + TypeScript + Tailwind CSS + shadcn/ui all configured for you, with whichever theme/font/icon library you pick.
+We will use the **shadcn CLI** -- the same one-shot setup we used for the Todo app in Lesson 13. It scaffolds Vite + React + TypeScript + Tailwind CSS + shadcn/ui in a single command.
 
-### Step 1: Build Your Preset
-
-1. Open [https://ui.shadcn.com/create](https://ui.shadcn.com/create) in your browser
-2. Pick your style, base colour, font and icon library (the booking app uses the rose/pink palette in the mockup -- feel free to match)
-3. Click **"Create Project"** -- the site gives you a unique preset code
-
-### Step 2: Run the Preset
+### Step 1: Scaffold the Project
 
 ```bash
-npx shadcn@latest init --preset <YOUR_PRESET_CODE> --template vite
+npx shadcn@latest init --template vite --name booking-frontend
 ```
 
-When prompted, name the project **`booking-frontend`**. Then move into it:
+The CLI will ask you a few questions -- pick the defaults (style: New York, base colour: Neutral, etc.). When it finishes, move into the project:
 
 ```bash
 cd booking-frontend
 npm install
 ```
 
-> What does this single command set up? Vite, React, TypeScript, Tailwind CSS, shadcn/ui (with the theme you chose), the `@/` path alias and `components.json` -- exactly the same starting point as the Todo app.
+> What does this single command set up? Vite, React, TypeScript, Tailwind CSS, shadcn/ui, the `@/` path alias and `components.json` -- exactly the same starting point as the Todo app.
+>
+> Want a custom theme? You can build one at [ui.shadcn.com/create](https://ui.shadcn.com/create) and pass the generated code with `--preset <CODE>`. For this course we will use the defaults.
 
-### Step 3: Set the Dev Server Port to 3001
+### Step 2: Set the Dev Server Port to 3001
 
 By default Vite runs on `5173`. We want the booking app on **port 3001** so it does not clash with anything else (and so it matches the `CLIENT_URL` the backend allows in its CORS config). Open `vite.config.ts` and add a `server` block:
 
@@ -323,13 +319,13 @@ export default defineConfig({
 
 > The `plugins`, `resolve.alias` lines are already there from the preset -- you are just adding the `server.port` line.
 
-### Step 4: Add the shadcn Components We Will Use
+### Step 3: Add the shadcn Components We Will Use
 
 ```bash
 npx shadcn@latest add button input card label badge dialog alert-dialog select tabs avatar form table skeleton dropdown-menu sonner
 ```
 
-### Step 5: Install the Rest of the Libraries
+### Step 4: Install the Rest of the Libraries
 
 ```bash
 npm install react-router-dom axios react-hook-form zod @hookform/resolvers @tanstack/react-query @tanstack/react-table lucide-react
@@ -1009,14 +1005,13 @@ Thumbs.db
 5. Check that TypeScript reports no errors: `npx tsc --noEmit`
 
 ### Exercise 5: Set Up the Frontend
-1. Build a preset at [ui.shadcn.com/create](https://ui.shadcn.com/create) (style, colour, font, icons of your choice)
-2. From `bookmyroom_app/`, run `npx shadcn@latest init --preset <YOUR_PRESET_CODE> --template vite` and name it `booking-frontend`
-3. Add `server.port = 3001` to `vite.config.ts`
-4. Add the shadcn components and the rest of the libraries from section 19.6
-5. Create the folder structure from section 19.7 (note `services/`, not `api/`)
-6. Create all three type files (`user.ts`, `room.ts`, `booking.ts`)
-7. Create the `.env` file with `VITE_API_URL=http://localhost:4001/api`
-8. Run `npm run dev` and confirm the frontend loads on `http://localhost:3001`
+1. From `bookmyroom_app/`, run `npx shadcn@latest init --template vite --name booking-frontend` (accept the defaults when prompted)
+2. Add `server.port = 3001` to `vite.config.ts`
+3. Add the shadcn components and the rest of the libraries from section 19.6
+4. Create the folder structure from section 19.7 (note `services/`, not `api/`)
+5. Create all three type files (`user.ts`, `room.ts`, `booking.ts`)
+6. Create the `.env` file with `VITE_API_URL=http://localhost:4001/api`
+7. Run `npm run dev` and confirm the frontend loads on `http://localhost:3001`
 
 ### Exercise 6: Run Both Together
 1. Open two terminals
