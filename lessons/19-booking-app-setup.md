@@ -2,9 +2,11 @@
 
 ## What You Will Learn
 - Planning a real-world application with multiple user roles
-- Setting up separate frontend and backend projects
-- Structuring a professional backend with controllers, routes, and services
-- Structuring a scalable React frontend
+- Organising backend + frontend inside a single `bookmyroom_app/` root folder
+- Setting up the **same tooling as the Todo app**: nodemon + ts-node for backend, Vite + shadcn for frontend
+- Running the backend on port **4001** and the frontend on port **3001**
+- Structuring a professional backend with controllers, routes, validators, and services
+- Structuring a scalable React frontend with `services/`, `hooks/`, `pages/`, and `layouts/`
 - Defining Mongoose models with full TypeScript interfaces
 - Connecting to MongoDB
 - Understanding document references between collections
@@ -75,16 +77,40 @@ TypeScript                  TypeScript                 (via Atlas)
 Tailwind CSS                Mongoose (ODM)
 shadcn/ui                   JWT Authentication
 React Hook Form             bcrypt (passwords)
-Zod                         Zod (server validation)
-React Router v6             RESTful API
-Axios                       CORS
+Zod (frontend forms)        express-validator (server)
+React Query                 RESTful API
+React Router v6             CORS
+Axios                       Multer (file uploads)
 ```
+
+> **Why split this way?** We use **Zod on the frontend** to type and validate forms (paired with React Hook Form). On the backend, we use **express-validator** -- exactly the same pattern as our Todo API. Students should not have to relearn validation.
 
 ---
 
-## 19.3 Setting Up the Backend Project
+## 19.3 Project Folder Layout
 
-Create the backend project from scratch:
+To keep both projects together, create a single root folder `bookmyroom_app` and place `booking-backend` and `booking-frontend` inside it:
+
+```bash
+mkdir bookmyroom_app
+cd bookmyroom_app
+```
+
+The final structure will look like:
+
+```
+bookmyroom_app/
+├── booking-backend/      # Express + Mongoose API
+└── booking-frontend/     # React + shadcn UI
+```
+
+Run every backend command in `booking-backend/` and every frontend command in `booking-frontend/`.
+
+---
+
+## 19.4 Setting Up the Backend Project
+
+From inside `bookmyroom_app/`:
 
 ```bash
 mkdir booking-backend
@@ -96,15 +122,19 @@ npm init -y
 
 ```bash
 # Core dependencies
-npm install express mongoose cors dotenv zod
+npm install express mongoose cors dotenv express-validator
 
 # TypeScript and types
-npm install -D typescript ts-node-dev @types/express @types/cors @types/node
+npm install -D typescript ts-node @types/express @types/cors @types/node nodemon
 
 # Auth dependencies (we will use these in Lesson 20)
 npm install bcrypt jsonwebtoken
 npm install -D @types/bcrypt @types/jsonwebtoken
 ```
+
+> **No Zod here** -- this is the backend. Server-side validation uses **express-validator** chains, exactly like the Todo API in Lesson 16.
+>
+> **`nodemon` + `ts-node`** -- same setup as the Todo backend. `nodemon` watches the `src` folder and restarts the server via `ts-node` whenever you save a `.ts` file.
 
 ### TypeScript Configuration
 
@@ -136,32 +166,47 @@ Update `tsconfig.json`:
 }
 ```
 
+### Nodemon Configuration
+
+Create a `nodemon.json` in the project root -- same pattern as the Todo backend:
+
+```json
+{
+  "watch": ["src"],
+  "ext": "ts",
+  "exec": "ts-node src/index.ts"
+}
+```
+
 ### Package.json Scripts
 
-Add these scripts to `package.json`:
+Update `package.json` so `npm run dev` runs nodemon:
 
 ```json
 {
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "start": "ts-node src/index.ts",
+    "dev": "nodemon",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "serve": "node dist/index.js"
   }
 }
 ```
 
-- `dev` -- runs the server with hot-reload (restarts when you save a file)
-- `build` -- compiles TypeScript to JavaScript
-- `start` -- runs the compiled JavaScript in production
+- `dev` -- nodemon watches `src/` and restarts via `ts-node` on any `.ts` save
+- `start` -- one-off run with `ts-node` (no auto-restart)
+- `build` -- compiles TypeScript to JavaScript in `dist/`
+- `serve` -- runs the compiled JavaScript in production
 
 ---
 
-## 19.4 Backend Project Structure
+## 19.5 Backend Project Structure
 
-Create this folder structure:
+Create this folder structure (mirrors the Todo backend, plus a `validators/` folder and `uploads/` for Lesson 22's file uploads):
 
 ```bash
-mkdir -p src/{models,routes,controllers,middleware,services,config,types}
+mkdir -p src/{models,routes,controllers,middleware,validators,services,config,types}
+mkdir uploads
 touch src/index.ts src/config/database.ts
 ```
 
@@ -172,11 +217,13 @@ booking-backend/
 │   │   └── database.ts        # MongoDB connection
 │   ├── controllers/
 │   │   ├── authController.ts  # Auth logic (Lesson 20)
-│   │   ├── roomController.ts  # Room CRUD
+│   │   ├── roomController.ts  # Room CRUD (Lesson 22)
 │   │   └── bookingController.ts
 │   ├── middleware/
+│   │   ├── asyncHandler.ts    # Wraps async route handlers
 │   │   ├── auth.ts            # JWT verification (Lesson 20)
-│   │   └── validate.ts        # Zod validation middleware
+│   │   ├── upload.ts          # Multer config (Lesson 22)
+│   │   └── validate.ts        # express-validator runner
 │   ├── models/
 │   │   ├── User.ts            # User Mongoose model
 │   │   ├── Room.ts            # Room Mongoose model
@@ -185,12 +232,18 @@ booking-backend/
 │   │   ├── authRoutes.ts      # /api/auth/*
 │   │   ├── roomRoutes.ts      # /api/rooms/*
 │   │   └── bookingRoutes.ts   # /api/bookings/*
+│   ├── validators/
+│   │   ├── auth.validator.ts  # express-validator chains
+│   │   ├── room.validator.ts
+│   │   └── booking.validator.ts
 │   ├── services/              # Business logic (optional layer)
 │   ├── types/
-│   │   └── express.d.ts       # Extended Request type
+│   │   └── express.d.ts       # Extended Request type (req.user)
 │   └── index.ts               # Express app entry point
+├── uploads/                   # Multer destination for room images (gitignored)
 ├── .env                       # Environment variables
 ├── .gitignore
+├── nodemon.json
 ├── package.json
 └── tsconfig.json
 ```
@@ -202,10 +255,12 @@ booking-backend/
 | `models/` | Database schema definitions | "A Room has a title, price, and owner" |
 | `routes/` | URL endpoint definitions | "POST /api/rooms goes to createRoom" |
 | `controllers/` | Request handling logic | "Read the body, create a room, send response" |
+| `validators/` | express-validator chains per endpoint | "title must be 3-100 chars" |
 | `middleware/` | Functions that run before controllers | "Check if the user is logged in" |
 | `services/` | Reusable business logic | "Calculate total price for a booking" |
 | `config/` | Configuration and connections | "Connect to MongoDB" |
 | `types/` | TypeScript type definitions | "Add `user` property to Express Request" |
+| `uploads/` | Saved room images (filled by Multer) | `1736294423-cosy-apartment.jpg` |
 
 Think of it like a restaurant:
 - **Routes** are the menu (what the customer can order)
@@ -216,87 +271,170 @@ Think of it like a restaurant:
 
 ---
 
-## 19.5 Setting Up the Frontend Project
+## 19.6 Setting Up the Frontend Project
 
-Create the frontend using the shadcn preset:
+From inside `bookmyroom_app/` (the same root folder, alongside `booking-backend`):
 
-```bash
-npx shadcn@latest init --preset new-york --template vite
-```
-
-When prompted, name it `booking-frontend`. Then install the dependencies:
+We will use the same approach as the Todo frontend in Lesson 6: create a Vite + React + TypeScript project, then add Tailwind and shadcn/ui on top.
 
 ```bash
+npm create vite@latest booking-frontend -- --template react-ts
 cd booking-frontend
-npm install react-router-dom axios react-hook-form zod @hookform/resolvers
-npx shadcn@latest add button input card label badge dialog select tabs avatar
+npm install
 ```
+
+### Configure the Dev Server Port
+
+By default, Vite runs on port 5173. We want the booking app to run on **port 3001** so it does not clash with anything else. Update `vite.config.ts`:
+
+```ts
+// booking-frontend/vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import path from "path";
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
+  server: {
+    port: 3001,
+  },
+});
+```
+
+> Tailwind and the `@` alias come next -- the snippet above is the final config so you can paste it once.
+
+### Add Tailwind CSS
+
+```bash
+npm install tailwindcss @tailwindcss/vite
+```
+
+Replace `src/index.css` with:
+
+```css
+@import "tailwindcss";
+```
+
+### Add the `@` Path Alias
+
+Update `tsconfig.json` and `tsconfig.app.json` so the `@/` alias resolves to `src/`:
+
+```json
+// tsconfig.json -- add a compilerOptions block
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] }
+  }
+}
+```
+
+Add the same `baseUrl` + `paths` block to `tsconfig.app.json` under `compilerOptions`.
+
+### Initialise shadcn/ui and Add Components
+
+```bash
+npx shadcn@latest init --defaults
+npx shadcn@latest add button input card label badge dialog alert-dialog select tabs avatar form table skeleton dropdown-menu sonner
+```
+
+### Install the Rest
+
+```bash
+npm install react-router-dom axios react-hook-form zod @hookform/resolvers @tanstack/react-query @tanstack/react-table lucide-react
+```
+
+Same libraries as the Todo app, plus `@tanstack/react-table` for the owner DataTables we built in Lesson 17.1.
 
 ---
 
-## 19.6 Frontend Project Structure
+## 19.7 Frontend Project Structure
 
-Organise the frontend for a larger application:
+Use the same folder layout as the Todo app frontend, just with more files:
 
 ```
 booking-frontend/
 ├── src/
-│   ├── api/
-│   │   └── axios.ts             # Axios instance with interceptors
 │   ├── components/
-│   │   ├── ui/                  # shadcn/ui components (auto-generated)
+│   │   ├── ui/                  # shadcn/ui components
 │   │   ├── Navbar.tsx
-│   │   ├── RoomCard.tsx
-│   │   ├── BookingForm.tsx
-│   │   └── ProtectedRoute.tsx
+│   │   ├── ProtectedRoute.tsx
+│   │   ├── rooms/               # Room-related components
+│   │   └── bookings/            # Booking-related components
 │   ├── context/
-│   │   └── AuthContext.tsx      # Authentication state
+│   │   └── (auth lives in a hook now -- see Lesson 21)
 │   ├── hooks/
-│   │   ├── useAuth.ts           # Auth convenience hook
-│   │   └── useRooms.ts          # Room data hook
+│   │   ├── useAuth.ts           # useCurrentUser / useLogin / useRegister / useLogout
+│   │   ├── useRooms.ts          # React Query hooks for rooms
+│   │   ├── useBookings.ts       # React Query hooks for bookings
+│   │   └── useRoomFilters.ts    # URL search params filter hook (Lesson 24)
 │   ├── layouts/
 │   │   ├── MainLayout.tsx       # Public layout (Navbar + Outlet + Footer)
-│   │   └── AuthLayout.tsx       # Auth layout (centred card)
+│   │   ├── OwnerLayout.tsx      # Owner sidebar layout
+│   │   └── AuthLayout.tsx       # Centred card for login/register
 │   ├── pages/
 │   │   ├── HomePage.tsx
 │   │   ├── LoginPage.tsx
 │   │   ├── RegisterPage.tsx
 │   │   ├── RoomListPage.tsx
 │   │   ├── RoomDetailPage.tsx
-│   │   ├── BookingPage.tsx
-│   │   ├── DashboardPage.tsx    # Owner dashboard
-│   │   ├── MyBookingsPage.tsx   # User's bookings
+│   │   ├── MyBookingsPage.tsx
+│   │   ├── owner/
+│   │   │   ├── OwnerDashboard.tsx
+│   │   │   ├── OwnerRoomsPage.tsx
+│   │   │   └── OwnerBookingsPage.tsx
 │   │   └── NotFoundPage.tsx
 │   ├── schemas/
-│   │   ├── authSchemas.ts       # Login/register Zod schemas
-│   │   ├── roomSchemas.ts       # Room form schemas
-│   │   └── bookingSchemas.ts    # Booking form schemas
+│   │   ├── authSchema.ts        # Zod schemas for login/register forms
+│   │   ├── roomSchema.ts        # Zod schema for room form
+│   │   └── bookingSchema.ts     # Zod schema for booking form
+│   ├── services/                # Same name and purpose as the Todo app
+│   │   ├── api.ts               # Axios instance (with auth interceptor)
+│   │   ├── authApi.ts           # login / register / getMe
+│   │   ├── roomApi.ts           # Room CRUD
+│   │   └── bookingApi.ts        # Booking CRUD
 │   ├── types/
 │   │   ├── user.ts
 │   │   ├── room.ts
 │   │   └── booking.ts
 │   ├── App.tsx
-│   ├── main.tsx
+│   ├── main.tsx                 # BrowserRouter + QueryClientProvider + Toaster
 │   └── index.css
-├── .env
+├── .env                         # VITE_API_URL=http://localhost:4001/api
 ├── package.json
-└── tsconfig.json
+├── tsconfig.json
+└── vite.config.ts               # server.port = 3001
 ```
 
-### Why More Folders Than the Todo App?
+### Why Not `api/` Like Many Tutorials?
 
-| Folder | Todo App | Booking App |
-|--------|----------|-------------|
-| `api/` | Used fetch directly | Axios instance with auth headers |
-| `hooks/` | Not needed | Custom hooks for data fetching |
-| `layouts/` | Not needed | Multiple layouts (public vs auth) |
-| `pages/` | Single page | Multiple pages with routing |
-| `schemas/` | One schema | Multiple form schemas |
-| `types/` | One type file | Types per domain (user, room, booking) |
+In the Todo app we used `services/` -- so we keep the same name here. Every Axios call lives in `services/`:
+
+- `services/api.ts` -- the **Axios instance** (base URL, interceptors)
+- `services/authApi.ts`, `services/roomApi.ts`, etc. -- typed **API service layers** built on top of that instance
+
+Then `hooks/useRooms.ts` wraps those services in React Query hooks, exactly like `hooks/useTodos.ts` did.
+
+### How It Maps to the Todo App
+
+| Todo App | Booking App | What changed |
+|----------|-------------|--------------|
+| `services/api.ts` | `services/api.ts` | Same Axios instance pattern |
+| `services/todoApi.ts` | `services/roomApi.ts`, `services/bookingApi.ts`, `services/authApi.ts` | One service file per domain |
+| `hooks/useTodos.ts` | `hooks/useRooms.ts`, `hooks/useBookings.ts`, `hooks/useAuth.ts` | One hooks file per domain |
+| `context/TodoContext.tsx` | (removed -- React Query owns server state) | Auth covered in Lesson 21 |
+| Single `App.tsx` | `pages/` + `layouts/` | Multi-page app needs routing |
+| `schemas/todoSchema.ts` | `schemas/authSchema.ts`, `roomSchema.ts`, `bookingSchema.ts` | One schema per form |
 
 ---
 
-## 19.7 MongoDB Connection
+## 19.8 MongoDB Connection
 
 ### Getting a MongoDB Database
 
@@ -315,15 +453,26 @@ mongodb+srv://youruser:yourpassword@cluster0.xxxxx.mongodb.net/bookmyroom?retryW
 
 ### Environment Variables
 
-Create a `.env` file in the backend root:
+Create a `.env` file in `booking-backend/`:
 
 ```env
-PORT=3001
+PORT=4001
 MONGODB_URI=mongodb+srv://youruser:yourpassword@cluster0.xxxxx.mongodb.net/bookmyroom?retryWrites=true&w=majority
 JWT_SECRET=your-super-secret-key-change-this-in-production
+CLIENT_URL=http://localhost:3001
 ```
 
-**Important:** Add `.env` to `.gitignore` so your credentials are never committed to git.
+> **Why these ports?**
+> - **Backend on `4001`** -- one off the Todo backend's `3001` so you can run both at the same time during teaching
+> - **Frontend on `3001`** -- set in `vite.config.ts` above; this is what `CLIENT_URL` points at for CORS
+>
+> **Important:** Add `.env` to `.gitignore` so your credentials are never committed to git.
+
+Create a matching `.env` in `booking-frontend/`:
+
+```env
+VITE_API_URL=http://localhost:4001/api
+```
 
 ### Database Connection File
 
@@ -364,10 +513,15 @@ import connectDB from "./config/database";
 dotenv.config();
 
 const app: Express = express();
-const PORT: number = Number(process.env.PORT) || 3001;
+const PORT: number = Number(process.env.PORT) || 4001;
 
 // Middleware
-app.use(cors());
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL || "http://localhost:3001",
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 // Health check route
@@ -392,12 +546,12 @@ npm run dev
 You should see:
 ```
 MongoDB connected successfully
-Server running on port 3001
+Server running on port 4001
 ```
 
 ---
 
-## 19.8 The User Model
+## 19.9 The User Model
 
 The User model represents anyone who uses the application -- both room owners and regular users.
 
@@ -476,7 +630,7 @@ export default User;
 
 ---
 
-## 19.9 The Room Model
+## 19.10 The Room Model
 
 The Room model represents a bookable room or venue.
 
@@ -594,7 +748,7 @@ This is one of MongoDB's strengths -- data that belongs together stays together.
 
 ---
 
-## 19.10 The Booking Model
+## 19.11 The Booking Model
 
 The Booking model connects a User to a Room for specific dates.
 
@@ -708,7 +862,7 @@ The `?` in the TypeScript interface (`esewaRefId?: string`) and `default: undefi
 
 ---
 
-## 19.11 Frontend Type Definitions
+## 19.12 Frontend Type Definitions
 
 Create matching TypeScript types for the frontend:
 
@@ -805,9 +959,9 @@ export interface CreateBookingData {
 
 ---
 
-## 19.12 The .gitignore File
+## 19.13 The .gitignore File
 
-Create a `.gitignore` in both projects:
+Create a `.gitignore` in both projects (and a top-level one in `bookmyroom_app/` if you like):
 
 ```gitignore
 # Dependencies
@@ -820,6 +974,9 @@ dist/
 .env
 .env.local
 .env.production
+
+# Uploaded files (backend only)
+uploads/
 
 # IDE
 .vscode/
@@ -834,22 +991,27 @@ Thumbs.db
 
 ## Practice Exercises
 
-### Exercise 1: Set Up the Backend
-1. Create the `booking-backend` folder and initialise it with `npm init -y`
-2. Install all dependencies listed in section 19.3
-3. Create the folder structure from section 19.4
-4. Set up `tsconfig.json` and `package.json` scripts
-5. Run `npm run dev` and verify it compiles without errors
+### Exercise 1: Create the Root Folder
+1. Create `bookmyroom_app/` somewhere on disk
+2. Open it in VS Code -- this is your working folder for the rest of the course
+3. Confirm both projects will live as siblings: `bookmyroom_app/booking-backend/` and `bookmyroom_app/booking-frontend/`
 
-### Exercise 2: Connect to MongoDB
-1. Create a free MongoDB Atlas account and cluster
+### Exercise 2: Set Up the Backend
+1. From `bookmyroom_app/`, create `booking-backend` and initialise it with `npm init -y`
+2. Install all dependencies listed in section 19.4 (including `express-validator`, `nodemon`, `ts-node`)
+3. Create the folder structure from section 19.5 (including the `validators/` and `uploads/` folders)
+4. Set up `tsconfig.json`, `nodemon.json`, and the `package.json` scripts
+5. Confirm `npm run dev` boots without errors
+
+### Exercise 3: Connect to MongoDB
+1. Create a free MongoDB Atlas account and cluster (skip if you already have one)
 2. Get your connection string
-3. Create the `.env` file with your `MONGODB_URI`
+3. Create the `.env` file in `booking-backend/` with `PORT=4001`, `MONGODB_URI`, `JWT_SECRET`, and `CLIENT_URL=http://localhost:3001`
 4. Write the `database.ts` connection file
-5. Write the `index.ts` entry point
-6. Run the server and verify you see "MongoDB connected successfully"
+5. Write the `index.ts` entry point with CORS pointing at the frontend URL
+6. Run the server and verify you see "MongoDB connected successfully" and "Server running on port 4001"
 
-### Exercise 3: Create All Three Models
+### Exercise 4: Create All Three Models
 1. Create `User.ts` with the complete schema and interface
 2. Create `Room.ts` with the owner reference
 3. Create `Booking.ts` with both room and user references
@@ -861,24 +1023,36 @@ Thumbs.db
    ```
 5. Check that TypeScript reports no errors: `npx tsc --noEmit`
 
-### Exercise 4: Set Up the Frontend
-1. Create the `booking-frontend` project using the shadcn preset
-2. Install React Router, Axios, and form libraries
-3. Create the folder structure from section 19.6
-4. Create all three type files (`user.ts`, `room.ts`, `booking.ts`)
-5. Set up basic routing with Home, About, Login, and Register pages (from Lesson 18)
-6. Run the frontend and verify it loads with navigation
+### Exercise 5: Set Up the Frontend
+1. From `bookmyroom_app/`, create the frontend with `npm create vite@latest booking-frontend -- --template react-ts`
+2. Configure Vite to run on **port 3001** in `vite.config.ts`
+3. Add Tailwind CSS, set up the `@/` path alias, and initialise shadcn/ui
+4. Add the shadcn components and the rest of the libraries from section 19.6
+5. Create the folder structure from section 19.7 (note `services/`, not `api/`)
+6. Create all three type files (`user.ts`, `room.ts`, `booking.ts`)
+7. Create the `.env` file with `VITE_API_URL=http://localhost:4001/api`
+8. Run `npm run dev` and confirm the frontend loads on `http://localhost:3001`
+
+### Exercise 6: Run Both Together
+1. Open two terminals
+2. Terminal 1: `cd bookmyroom_app/booking-backend && npm run dev` (boots on `:4001`)
+3. Terminal 2: `cd bookmyroom_app/booking-frontend && npm run dev` (boots on `:3001`)
+4. Visit `http://localhost:4001/api/health` -- you should see the JSON health response
+5. Visit `http://localhost:3001` -- you should see the React app
 
 ---
 
 ## Key Takeaways
 1. **Plan before you code** -- know your features, user roles, and data models before writing any code
-2. **Separate projects** for frontend and backend keep concerns isolated and deployable independently
-3. **Structured folders** (models, routes, controllers, middleware) make large codebases manageable
-4. **Mongoose models** combine schema definition, validation, and TypeScript interfaces in one file
-5. **`extends Document`** is how TypeScript interfaces work with Mongoose models
-6. **References** (`Schema.Types.ObjectId` with `ref`) link documents across collections without duplicating data
-7. **`.populate()`** expands references into full objects when you need the related data
-8. **`timestamps: true`** automatically manages `createdAt` and `updatedAt` fields
-9. **`select: false`** on sensitive fields like passwords prevents accidental data leaks
-10. **Environment variables** (`.env`) keep credentials out of your code and out of git
+2. **One root folder, two sibling projects** -- `bookmyroom_app/` contains `booking-backend/` and `booking-frontend/`
+3. **Reuse Todo-app tooling** -- nodemon + ts-node for the backend, services/ + hooks/ + Vite + shadcn for the frontend
+4. **Backend = express-validator** for request validation (same pattern as Lesson 16). **Frontend = Zod** for forms (same pattern as Lesson 12).
+5. **Ports**: backend on `4001`, frontend on `3001`, with CORS pointing at `CLIENT_URL`
+6. **Structured folders** (models, routes, controllers, validators, middleware) make large codebases manageable
+7. **Mongoose models** combine schema definition, validation, and TypeScript interfaces in one file
+8. **`extends Document`** is how TypeScript interfaces work with Mongoose models
+9. **References** (`Schema.Types.ObjectId` with `ref`) link documents across collections without duplicating data
+10. **`.populate()`** expands references into full objects when you need the related data
+11. **`timestamps: true`** automatically manages `createdAt` and `updatedAt` fields
+12. **`select: false`** on sensitive fields like passwords prevents accidental data leaks
+13. **Environment variables** (`.env`) keep credentials out of your code and out of git
