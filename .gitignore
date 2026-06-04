@@ -9,3 +9,5 @@ dist/
 *.pem
 *.key
 .claude/
+
+.playwright-mcp/
