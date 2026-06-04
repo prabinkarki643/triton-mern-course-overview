@@ -4,7 +4,7 @@
 - Understanding different payment methods: online (eSewa) and offline (Cash on Delivery)
 - Building a COD payment flow with status tracking
 - Integrating eSewa using HMAC-SHA256 signed payloads
-- Creating backend endpoints to initiate and verify payments using **express-validator** and **asyncHandler**
+- Creating backend endpoints to initiate and verify payments using **express-validator** with explicit **try/catch** blocks
 - Returning a consistent **`{ data: ... }` response envelope** from every endpoint
 - Building a payment selector inside a shadcn **Form** with React Hook Form + Zod
 - Wrapping payment calls in an Axios **service layer** (`paymentApi`)
@@ -107,7 +107,7 @@ Backend updates paymentStatus to "paid"
 
 When the user selects COD during checkout, the booking is created with `paymentMethod: 'cod'` and `paymentStatus: 'pending'`.
 
-Following the patterns from Lesson 16, we split this into a **validator**, a **controller** (wrapped in `asyncHandler`), and a **route** that wires them together. Every response uses the `{ data: ... }` envelope.
+Following the patterns from Lesson 16, we split this into a **validator**, a **controller** (with an explicit `try/catch`), and a **route** that wires them together. Every response uses the `{ data: ... }` envelope.
 
 ```typescript
 // backend/src/validators/booking.validator.ts
@@ -129,52 +129,67 @@ export const bookingIdValidator = [
 ```typescript
 // backend/src/controllers/bookingController.ts
 import { Response } from 'express';
-import { asyncHandler } from '../middleware/asyncHandler';
 import { Booking } from '../models/Booking';
 import type { AuthRequest } from '../types/auth';
 
 // POST /api/bookings
-export const createBooking = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const { roomId, checkIn, checkOut, totalPrice, paymentMethod } = req.body;
+export const createBooking = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const { roomId, checkIn, checkOut, totalPrice, paymentMethod } = req.body;
 
-  const booking = await Booking.create({
-    user: req.userId,
-    room: roomId,
-    checkIn: new Date(checkIn),
-    checkOut: new Date(checkOut),
-    totalPrice,
-    paymentMethod,
-    paymentStatus: 'pending',
-    status: paymentMethod === 'cod' ? 'confirmed' : 'pending',
-  });
+    const booking = await Booking.create({
+      user: req.userId,
+      room: roomId,
+      checkIn: new Date(checkIn),
+      checkOut: new Date(checkOut),
+      totalPrice,
+      paymentMethod,
+      paymentStatus: 'pending',
+      status: paymentMethod === 'cod' ? 'confirmed' : 'pending',
+    });
 
-  res.status(201).json({ data: booking });
-});
+    res.status(201).json({ data: booking });
+  } catch (error: unknown) {
+    console.error('createBooking error:', error);
+    res.status(500).json({ error: 'Failed to create booking' });
+  }
+};
 
 // PATCH /api/bookings/:id/mark-paid (owner only)
-export const markBookingPaid = asyncHandler(async (req: AuthRequest, res: Response) => {
-  const booking = await Booking.findById(req.params.id).populate('room');
+export const markBookingPaid = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
+    const booking = await Booking.findById(req.params.id).populate('room');
 
-  if (!booking) {
-    res.status(404).json({ error: 'Booking not found' });
-    return;
+    if (!booking) {
+      res.status(404).json({ error: 'Booking not found' });
+      return;
+    }
+
+    if (booking.paymentMethod !== 'cod') {
+      res.status(400).json({ error: 'Only COD bookings can be manually marked as paid' });
+      return;
+    }
+
+    if (booking.paymentStatus === 'paid') {
+      res.status(400).json({ error: 'Booking is already marked as paid' });
+      return;
+    }
+
+    booking.paymentStatus = 'paid';
+    await booking.save();
+
+    res.json({ data: booking });
+  } catch (error: unknown) {
+    console.error('markBookingPaid error:', error);
+    res.status(500).json({ error: 'Failed to mark booking as paid' });
   }
-
-  if (booking.paymentMethod !== 'cod') {
-    res.status(400).json({ error: 'Only COD bookings can be manually marked as paid' });
-    return;
-  }
-
-  if (booking.paymentStatus === 'paid') {
-    res.status(400).json({ error: 'Booking is already marked as paid' });
-    return;
-  }
-
-  booking.paymentStatus = 'paid';
-  await booking.save();
-
-  res.json({ data: booking });
-});
+};
 ```
 
 ```typescript
@@ -193,7 +208,7 @@ router.patch('/:id/mark-paid', authMiddleware, bookingIdValidator, validateResul
 export default router;
 ```
 
-Notice that COD bookings are immediately set to `status: 'confirmed'` because no online payment step is needed. eSewa bookings stay `pending` until payment is verified. The controller stays clean -- input validation lives in the validator chain, and unhandled errors are caught by `asyncHandler` and forwarded to the global error handler.
+Notice that COD bookings are immediately set to `status: 'confirmed'` because no online payment step is needed. eSewa bookings stay `pending` until payment is verified. The controller stays clean -- input validation lives in the validator chain, and the `try/catch` block catches any database errors and returns a clean 500 response. The global error handler in `index.ts` is the final safety net for anything else.
 
 ---
 
@@ -344,7 +359,6 @@ export const verifyPaymentValidator = [
 ```typescript
 // backend/src/controllers/paymentController.ts
 import { Response } from 'express';
-import { asyncHandler } from '../middleware/asyncHandler';
 import { Booking } from '../models/Booking';
 import { buildPayload, verifyPayment } from '../services/esewa.service';
 import type { AuthRequest } from '../types/auth';
@@ -352,8 +366,11 @@ import type { AuthRequest } from '../types/auth';
 // POST /api/payments/initiate
 // Returns the eSewa form action URL and the signed payload the frontend
 // will auto-submit. Wrapped in { data: { ... } }.
-export const initiateEsewaPayment = asyncHandler(
-  async (req: AuthRequest, res: Response) => {
+export const initiateEsewaPayment = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
     const { bookingId } = req.body;
 
     const booking = await Booking.findById(bookingId);
@@ -391,14 +408,20 @@ export const initiateEsewaPayment = asyncHandler(
         : 'https://rc-epay.esewa.com.np/api/epay/main/v2/form';
 
     res.json({ data: { paymentUrl, payload } });
+  } catch (error: unknown) {
+    console.error('initiateEsewaPayment error:', error);
+    res.status(500).json({ error: 'Failed to initiate eSewa payment' });
   }
-);
+};
 
 // POST /api/payments/verify
 // Calls eSewa's status check API. Returns the updated booking so the
 // frontend can read `paymentStatus` to decide what to show.
-export const verifyEsewaPayment = asyncHandler(
-  async (req: AuthRequest, res: Response) => {
+export const verifyEsewaPayment = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
     const { bookingId } = req.body;
 
     const booking = await Booking.findById(bookingId);
@@ -422,8 +445,11 @@ export const verifyEsewaPayment = asyncHandler(
     await booking.save();
 
     res.json({ data: booking });
+  } catch (error: unknown) {
+    console.error('verifyEsewaPayment error:', error);
+    res.status(500).json({ error: 'Failed to verify eSewa payment' });
   }
-);
+};
 ```
 
 ### Step 3: Route Wiring
@@ -1004,7 +1030,7 @@ The component is tiny because all the work -- the API call, loading state, toast
 - **eSewa uses a form-based redirect flow:** your backend generates a signed payload, the frontend submits it as a hidden form, the user pays on eSewa's site, and eSewa redirects back.
 - **HMAC-SHA256 signatures** prove that the payment request came from your application and has not been tampered with.
 - **Always verify payments server-side.** Never trust a redirect URL alone -- call eSewa's status check API to confirm the payment is genuinely complete.
-- **Backend endpoints follow the project pattern:** `validator + validateResult + asyncHandler` keeps controllers clean and consistent with Lesson 16.
+- **Backend endpoints follow the project pattern:** `validator + validateResult + controller (with explicit try/catch)` keeps controllers clean and consistent with Lesson 16.
 - **Every response uses the `{ data: ... }` envelope** -- no ad-hoc `success` booleans. The HTTP status and the booking's `paymentStatus` carry the meaning.
 - **The frontend never calls `fetch` directly for payments** -- a typed `paymentApi` service layer wraps every call, and React Query mutation hooks (`useInitiateEsewaPayment`, `useVerifyEsewaPayment`, `useMarkBookingPaid`) handle loading state, toasts, and cache invalidation.
 - **The Payment Method selector lives inside a shadcn `Form`** with React Hook Form + Zod, matching the form patterns from Lesson 12.

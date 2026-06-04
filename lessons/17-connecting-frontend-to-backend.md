@@ -915,8 +915,10 @@ project/
 │   │   │   └── todoRoutes.ts
 │   │   ├── controllers/
 │   │   │   └── todoController.ts
+│   │   ├── validators/
+│   │   │   └── todo.validator.ts # express-validator chains
 │   │   ├── middleware/
-│   │   │   └── asyncHandler.ts
+│   │   │   └── validate.ts       # express-validator runner
 │   │   ├── types/
 │   │   │   └── todo.ts           # Backend request/response types
 │   │   ├── database.ts

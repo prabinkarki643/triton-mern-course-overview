@@ -3,7 +3,7 @@
 ## What You Will Learn
 - Building an owner dashboard with statistics cards and revenue data
 - Using MongoDB aggregation pipelines to calculate stats on the server
-- Wrapping backend endpoints with **asyncHandler** and returning the `{ data: ... }` envelope
+- Writing backend endpoints with explicit **try/catch** and returning the `{ data: ... }` envelope
 - Building a user dashboard with booking history
 - **Fetching dashboard data the right way** -- typed `dashboardApi` service over Axios, with React Query hooks (`useOwnerStats`, `useOwnerRecentBookings`, `useUserStats`)
 - Defining a **`dashboardKeys` query factory** for clean cache invalidation
@@ -30,20 +30,22 @@ We will build both dashboards, then polish the entire application with proper no
 
 MongoDB's aggregation pipeline lets us calculate statistics directly in the database, which is far more efficient than fetching all records and counting in JavaScript.
 
-We follow the standard project pattern from Lesson 16: a controller wrapped in `asyncHandler`, and every response returned in the `{ data: ... }` envelope.
+We follow the standard project pattern from Lesson 16: a controller with an explicit `try/catch`, and every response returned in the `{ data: ... }` envelope.
 
 ```typescript
 // backend/src/controllers/dashboardController.ts
 import { Response } from 'express';
 import mongoose from 'mongoose';
-import { asyncHandler } from '../middleware/asyncHandler';
 import { Booking } from '../models/Booking';
 import { Room } from '../models/Room';
 import type { AuthRequest } from '../types/auth';
 
 // GET /api/dashboard/owner/stats
-export const getOwnerStats = asyncHandler(
-  async (req: AuthRequest, res: Response) => {
+export const getOwnerStats = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
     const ownerId = new mongoose.Types.ObjectId(req.userId);
 
     // Get all room IDs belonging to this owner
@@ -87,8 +89,11 @@ export const getOwnerStats = asyncHandler(
         ...bookingStats,
       },
     });
+  } catch (error: unknown) {
+    console.error('getOwnerStats error:', error);
+    res.status(500).json({ error: 'Failed to load owner stats' });
   }
-);
+};
 ```
 
 ```typescript
@@ -125,14 +130,17 @@ app.use('/api/dashboard', dashboardRoutes);
 
 ## 27.3 Owner Dashboard: Recent Bookings Endpoint
 
-The dashboard should also show the most recent bookings. Same pattern -- `asyncHandler` and `{ data: ... }`.
+The dashboard should also show the most recent bookings. Same pattern -- explicit `try/catch` and `{ data: ... }`.
 
 ```typescript
 // Add to backend/src/controllers/dashboardController.ts
 
 // GET /api/dashboard/owner/recent-bookings
-export const getOwnerRecentBookings = asyncHandler(
-  async (req: AuthRequest, res: Response) => {
+export const getOwnerRecentBookings = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
     const ownerId = new mongoose.Types.ObjectId(req.userId);
 
     const ownerRooms = await Room.find({ owner: ownerId }).select('_id');
@@ -145,8 +153,11 @@ export const getOwnerRecentBookings = asyncHandler(
       .limit(10);
 
     res.json({ data: recentBookings });
+  } catch (error: unknown) {
+    console.error('getOwnerRecentBookings error:', error);
+    res.status(500).json({ error: 'Failed to load recent bookings' });
   }
-);
+};
 ```
 
 ```typescript
@@ -463,7 +474,7 @@ export function OwnerDashboard() {
 
 ## 27.5 User Dashboard
 
-The user dashboard shows the user's own bookings and spending. Same backend pattern as the owner endpoints -- `asyncHandler` and the `{ data: ... }` envelope.
+The user dashboard shows the user's own bookings and spending. Same backend pattern as the owner endpoints -- explicit `try/catch` and the `{ data: ... }` envelope.
 
 ### Backend
 
@@ -471,8 +482,11 @@ The user dashboard shows the user's own bookings and spending. Same backend patt
 // Add to backend/src/controllers/dashboardController.ts
 
 // GET /api/dashboard/user/stats
-export const getUserStats = asyncHandler(
-  async (req: AuthRequest, res: Response) => {
+export const getUserStats = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
     const userId = new mongoose.Types.ObjectId(req.userId);
 
     const stats = await Booking.aggregate([
@@ -496,8 +510,11 @@ export const getUserStats = asyncHandler(
     };
 
     res.json({ data: userStats });
+  } catch (error: unknown) {
+    console.error('getUserStats error:', error);
+    res.status(500).json({ error: 'Failed to load user stats' });
   }
-);
+};
 ```
 
 Wire it into the router:
@@ -1046,7 +1063,7 @@ Every component in the app follows this shape, which is why each component stays
 
 ## Practice Exercises
 
-1. **Owner dashboard backend:** Implement `getOwnerStats` and `getOwnerRecentBookings` using `asyncHandler` and the `{ data: ... }` envelope. Verify the aggregation pipeline returns correct values by creating test bookings.
+1. **Owner dashboard backend:** Implement `getOwnerStats` and `getOwnerRecentBookings` using an explicit `try/catch` and the `{ data: ... }` envelope. Verify the aggregation pipeline returns correct values by creating test bookings.
 
 2. **Dashboard service + hooks:** Build `services/dashboardApi.ts` and `hooks/useDashboard.ts` with the `dashboardKeys` factory and the `useOwnerStats`, `useOwnerRecentBookings`, `useUserStats` hooks.
 
@@ -1060,14 +1077,14 @@ Every component in the app follows this shape, which is why each component stays
 
 7. **Axios error interceptor:** Add the response interceptor to `services/api.ts` so every mutation hook surfaces the API's `error` (or first `details[0].message`) in its toast. Trigger a validation error and confirm the toast shows the real message rather than "Request failed with status code 400".
 
-8. **Challenge:** Add a line chart to the owner dashboard showing revenue per month. Add a new endpoint that returns aggregated monthly revenue (still using `asyncHandler` + `{ data: ... }`), then a `useMonthlyRevenue()` hook and a chart component. You may use a library like `recharts` (`npm install recharts`).
+8. **Challenge:** Add a line chart to the owner dashboard showing revenue per month. Add a new endpoint that returns aggregated monthly revenue (still using explicit `try/catch` + `{ data: ... }`), then a `useMonthlyRevenue()` hook and a chart component. You may use a library like `recharts` (`npm install recharts`).
 
 ---
 
 ## Key Takeaways
 
 - **MongoDB aggregation pipelines** compute statistics directly in the database -- no need to fetch all records into JavaScript.
-- **Backend dashboard endpoints follow the project pattern** -- `asyncHandler` + the `{ data: ... }` envelope, just like Lesson 16. There are no ad-hoc response shapes.
+- **Backend dashboard endpoints follow the project pattern** -- explicit `try/catch` + the `{ data: ... }` envelope, just like Lesson 16. There are no ad-hoc response shapes.
 - **No raw `fetch` on the frontend.** Every dashboard call goes through the typed `dashboardApi` service over the shared Axios instance, and unwraps the `{ data: ... }` envelope at the service layer.
 - **React Query hooks (`useOwnerStats`, `useOwnerRecentBookings`, `useUserStats`)** handle loading, caching, error states and refetching for free.
 - **A `dashboardKeys` query key factory** mirrors the `todoKeys` pattern from Lesson 17 -- centralised, type-safe, easy to invalidate.

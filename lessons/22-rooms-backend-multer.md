@@ -7,7 +7,7 @@
 - Handling multipart form data with multiple file uploads
 - Serving static files (uploaded images) from Express
 - Validating multipart requests with **`express-validator`** (the same pattern used in Lessons 16 and 20)
-- Wrapping controllers in **`asyncHandler`** to remove `try/catch` boilerplate
+- Handling errors in controllers with **explicit `try/catch`** blocks (matching Lessons 16 and 20)
 - Building paginated, filterable, and searchable GET endpoints with a `{ data, meta }` envelope
 - Deleting files from disk when a room is removed
 
@@ -415,7 +415,7 @@ export const listRoomsValidator = [
 
 ## 22.10 POST /api/rooms -- Create a Room with Images
 
-This is the most complex endpoint -- it handles both text fields and file uploads in a single request. We wrap it in `asyncHandler` (created in Lesson 20) so any thrown error is forwarded to the global error handler.
+This is the most complex endpoint -- it handles both text fields and file uploads in a single request. We use an explicit `try/catch` block (matching Lessons 16 and 20) so any database error returns a clean 500 response with a descriptive message.
 
 The response follows the project-wide envelope: **`{ data: room }`**.
 
@@ -423,7 +423,6 @@ The response follows the project-wide envelope: **`{ data: room }`**.
 // backend/src/controllers/roomController.ts
 import { Request, Response } from "express";
 import Room, { IRoom } from "../models/Room";
-import { asyncHandler } from "../middleware/asyncHandler";
 
 // Helper -- amenities arrive as a JSON string or comma-separated list (multipart is strings only)
 const parseAmenities = (raw: unknown): string[] => {
@@ -439,26 +438,31 @@ const parseAmenities = (raw: unknown): string[] => {
   return [];
 };
 
-export const createRoom = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const { title, description, location, price, capacity, amenities } = req.body;
+export const createRoom = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { title, description, location, price, capacity, amenities } = req.body;
 
-  // Get uploaded file names from Multer
-  const files = (req.files as Express.Multer.File[]) || [];
-  const imageFilenames: string[] = files.map((file) => file.filename);
+    // Get uploaded file names from Multer
+    const files = (req.files as Express.Multer.File[]) || [];
+    const imageFilenames: string[] = files.map((file) => file.filename);
 
-  const room: IRoom = await Room.create({
-    title,
-    description,
-    location,
-    price, // already converted to a number by the validator's .toFloat()
-    capacity, // already converted by .toInt()
-    amenities: parseAmenities(amenities),
-    images: imageFilenames,
-    owner: req.user!.userId,
-  });
+    const room: IRoom = await Room.create({
+      title,
+      description,
+      location,
+      price, // already converted to a number by the validator's .toFloat()
+      capacity, // already converted by .toInt()
+      amenities: parseAmenities(amenities),
+      images: imageFilenames,
+      owner: req.user!.userId,
+    });
 
-  res.status(201).json({ data: room });
-});
+    res.status(201).json({ data: room });
+  } catch (error: unknown) {
+    console.error("createRoom error:", error);
+    res.status(500).json({ message: "Failed to create room" });
+  }
+};
 ```
 
 **Why no manual `Number(price)`?** The `createRoomValidator` runs `.toFloat()` on `price` and `.toInt()` on `capacity`, so the values are already real numbers by the time the controller receives them.
@@ -548,82 +552,87 @@ interface RoomQuery {
   $or?: Array<{ [key: string]: { $regex: string; $options: string } }>;
 }
 
-export const getRooms = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  // Query params have been validated AND coerced to numbers by listRoomsValidator
-  const { location, minPrice, maxPrice, capacity, search, sort, page, limit } = req.query as {
-    location?: string;
-    minPrice?: number;
-    maxPrice?: number;
-    capacity?: number;
-    search?: string;
-    sort?: "price_asc" | "price_desc" | "newest" | "oldest";
-    page?: number;
-    limit?: number;
-  };
+export const getRooms = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // Query params have been validated AND coerced to numbers by listRoomsValidator
+    const { location, minPrice, maxPrice, capacity, search, sort, page, limit } = req.query as {
+      location?: string;
+      minPrice?: number;
+      maxPrice?: number;
+      capacity?: number;
+      search?: string;
+      sort?: "price_asc" | "price_desc" | "newest" | "oldest";
+      page?: number;
+      limit?: number;
+    };
 
-  // Build filter object
-  const filter: RoomQuery = {};
+    // Build filter object
+    const filter: RoomQuery = {};
 
-  // Filter by location (case-insensitive partial match)
-  if (location) {
-    filter.location = { $regex: location, $options: "i" };
+    // Filter by location (case-insensitive partial match)
+    if (location) {
+      filter.location = { $regex: location, $options: "i" };
+    }
+
+    // Filter by price range
+    if (minPrice !== undefined || maxPrice !== undefined) {
+      filter.price = {};
+      if (minPrice !== undefined) filter.price.$gte = minPrice;
+      if (maxPrice !== undefined) filter.price.$lte = maxPrice;
+    }
+
+    // Filter by minimum capacity
+    if (capacity !== undefined) {
+      filter.capacity = { $gte: capacity };
+    }
+
+    // Search by title or description
+    if (search) {
+      filter.$or = [
+        { title: { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    // Sort options
+    let sortOption: Record<string, 1 | -1> = { createdAt: -1 }; // default: newest first
+    if (sort === "price_asc") sortOption = { price: 1 };
+    if (sort === "price_desc") sortOption = { price: -1 };
+    if (sort === "oldest") sortOption = { createdAt: 1 };
+
+    // Pagination -- defaults: page 1, 10 items per page
+    const pageNum: number = page ? Number(page) : 1;
+    const limitNum: number = limit ? Number(limit) : 10;
+    const skip: number = (pageNum - 1) * limitNum;
+
+    // Run the query and a count in parallel for performance
+    const [rooms, total]: [IRoom[], number] = await Promise.all([
+      Room.find(filter)
+        .populate("owner", "name email")
+        .sort(sortOption)
+        .skip(skip)
+        .limit(limitNum),
+      Room.countDocuments(filter),
+    ]);
+
+    const totalPages: number = Math.ceil(total / limitNum);
+
+    res.json({
+      data: rooms,
+      meta: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages,
+        hasNextPage: pageNum < totalPages,
+        hasPrevPage: pageNum > 1,
+      },
+    });
+  } catch (error: unknown) {
+    console.error("getRooms error:", error);
+    res.status(500).json({ message: "Failed to fetch rooms" });
   }
-
-  // Filter by price range
-  if (minPrice !== undefined || maxPrice !== undefined) {
-    filter.price = {};
-    if (minPrice !== undefined) filter.price.$gte = minPrice;
-    if (maxPrice !== undefined) filter.price.$lte = maxPrice;
-  }
-
-  // Filter by minimum capacity
-  if (capacity !== undefined) {
-    filter.capacity = { $gte: capacity };
-  }
-
-  // Search by title or description
-  if (search) {
-    filter.$or = [
-      { title: { $regex: search, $options: "i" } },
-      { description: { $regex: search, $options: "i" } },
-    ];
-  }
-
-  // Sort options
-  let sortOption: Record<string, 1 | -1> = { createdAt: -1 }; // default: newest first
-  if (sort === "price_asc") sortOption = { price: 1 };
-  if (sort === "price_desc") sortOption = { price: -1 };
-  if (sort === "oldest") sortOption = { createdAt: 1 };
-
-  // Pagination -- defaults: page 1, 10 items per page
-  const pageNum: number = page ? Number(page) : 1;
-  const limitNum: number = limit ? Number(limit) : 10;
-  const skip: number = (pageNum - 1) * limitNum;
-
-  // Run the query and a count in parallel for performance
-  const [rooms, total]: [IRoom[], number] = await Promise.all([
-    Room.find(filter)
-      .populate("owner", "name email")
-      .sort(sortOption)
-      .skip(skip)
-      .limit(limitNum),
-    Room.countDocuments(filter),
-  ]);
-
-  const totalPages: number = Math.ceil(total / limitNum);
-
-  res.json({
-    data: rooms,
-    meta: {
-      page: pageNum,
-      limit: limitNum,
-      total,
-      totalPages,
-      hasNextPage: pageNum < totalPages,
-      hasPrevPage: pageNum > 1,
-    },
-  });
-});
+};
 ```
 
 ### How Pagination Works
@@ -687,17 +696,22 @@ A simple endpoint that returns a single room with full owner details:
 ```typescript
 // backend/src/controllers/roomController.ts (continued)
 
-export const getRoomById = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const room: IRoom | null = await Room.findById(req.params.id)
-    .populate("owner", "name email");
+export const getRoomById = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const room: IRoom | null = await Room.findById(req.params.id)
+      .populate("owner", "name email");
 
-  if (!room) {
-    res.status(404).json({ message: "Room not found" });
-    return;
+    if (!room) {
+      res.status(404).json({ message: "Room not found" });
+      return;
+    }
+
+    res.json({ data: room });
+  } catch (error: unknown) {
+    console.error("getRoomById error:", error);
+    res.status(500).json({ message: "Failed to fetch room" });
   }
-
-  res.json({ data: room });
-});
+};
 ```
 
 ---
@@ -711,49 +725,54 @@ Only the room owner should be able to edit their listing. We also handle optiona
 import fs from "fs";
 import path from "path";
 
-export const updateRoom = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const room: IRoom | null = await Room.findById(req.params.id);
+export const updateRoom = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const room: IRoom | null = await Room.findById(req.params.id);
 
-  if (!room) {
-    res.status(404).json({ message: "Room not found" });
-    return;
-  }
-
-  // Check ownership
-  if (room.owner.toString() !== req.user!.userId) {
-    res.status(403).json({ message: "You can only edit your own rooms" });
-    return;
-  }
-
-  // Update text fields (values are already typed by the validator)
-  const { title, description, location, price, capacity, amenities } = req.body;
-
-  if (title !== undefined) room.title = title;
-  if (description !== undefined) room.description = description;
-  if (location !== undefined) room.location = location;
-  if (price !== undefined) room.price = price; // already a number via .toFloat()
-  if (capacity !== undefined) room.capacity = capacity; // already a number via .toInt()
-  if (amenities !== undefined) room.amenities = parseAmenities(amenities);
-
-  // Handle new images (if uploaded)
-  const files = (req.files as Express.Multer.File[]) || [];
-  if (files.length > 0) {
-    // Delete old images from disk
-    for (const oldImage of room.images) {
-      const oldPath: string = path.join(__dirname, "..", "..", "uploads", "rooms", oldImage);
-      if (fs.existsSync(oldPath)) {
-        fs.unlinkSync(oldPath);
-      }
+    if (!room) {
+      res.status(404).json({ message: "Room not found" });
+      return;
     }
 
-    // Replace with new image filenames
-    room.images = files.map((file) => file.filename);
+    // Check ownership
+    if (room.owner.toString() !== req.user!.userId) {
+      res.status(403).json({ message: "You can only edit your own rooms" });
+      return;
+    }
+
+    // Update text fields (values are already typed by the validator)
+    const { title, description, location, price, capacity, amenities } = req.body;
+
+    if (title !== undefined) room.title = title;
+    if (description !== undefined) room.description = description;
+    if (location !== undefined) room.location = location;
+    if (price !== undefined) room.price = price; // already a number via .toFloat()
+    if (capacity !== undefined) room.capacity = capacity; // already a number via .toInt()
+    if (amenities !== undefined) room.amenities = parseAmenities(amenities);
+
+    // Handle new images (if uploaded)
+    const files = (req.files as Express.Multer.File[]) || [];
+    if (files.length > 0) {
+      // Delete old images from disk
+      for (const oldImage of room.images) {
+        const oldPath: string = path.join(__dirname, "..", "..", "uploads", "rooms", oldImage);
+        if (fs.existsSync(oldPath)) {
+          fs.unlinkSync(oldPath);
+        }
+      }
+
+      // Replace with new image filenames
+      room.images = files.map((file) => file.filename);
+    }
+
+    const updatedRoom: IRoom = await room.save();
+
+    res.json({ data: updatedRoom });
+  } catch (error: unknown) {
+    console.error("updateRoom error:", error);
+    res.status(500).json({ message: "Failed to update room" });
   }
-
-  const updatedRoom: IRoom = await room.save();
-
-  res.json({ data: updatedRoom });
-});
+};
 ```
 
 **Key detail:** When new images are uploaded, we delete the old files from disk first. Otherwise, orphaned files would pile up in the `uploads/rooms` directory forever.
@@ -767,33 +786,38 @@ When a room is deleted, we must also delete its image files from disk. The respo
 ```typescript
 // backend/src/controllers/roomController.ts (continued)
 
-export const deleteRoom = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const room: IRoom | null = await Room.findById(req.params.id);
+export const deleteRoom = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const room: IRoom | null = await Room.findById(req.params.id);
 
-  if (!room) {
-    res.status(404).json({ message: "Room not found" });
-    return;
-  }
-
-  // Check ownership
-  if (room.owner.toString() !== req.user!.userId) {
-    res.status(403).json({ message: "You can only delete your own rooms" });
-    return;
-  }
-
-  // Delete image files from disk
-  for (const image of room.images) {
-    const imagePath: string = path.join(__dirname, "..", "..", "uploads", "rooms", image);
-    if (fs.existsSync(imagePath)) {
-      fs.unlinkSync(imagePath);
+    if (!room) {
+      res.status(404).json({ message: "Room not found" });
+      return;
     }
+
+    // Check ownership
+    if (room.owner.toString() !== req.user!.userId) {
+      res.status(403).json({ message: "You can only delete your own rooms" });
+      return;
+    }
+
+    // Delete image files from disk
+    for (const image of room.images) {
+      const imagePath: string = path.join(__dirname, "..", "..", "uploads", "rooms", image);
+      if (fs.existsSync(imagePath)) {
+        fs.unlinkSync(imagePath);
+      }
+    }
+
+    // Delete room from database
+    await Room.findByIdAndDelete(req.params.id);
+
+    res.status(204).send();
+  } catch (error: unknown) {
+    console.error("deleteRoom error:", error);
+    res.status(500).json({ message: "Failed to delete room" });
   }
-
-  // Delete room from database
-  await Room.findByIdAndDelete(req.params.id);
-
-  res.status(204).send();
-});
+};
 ```
 
 ---
@@ -862,9 +886,9 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction): void =>
 
 **The full error-handling pattern in this project:**
 - **`express-validator`** catches bad input (400) before the controller runs
-- **Multer** rejects oversized files and disallowed types
-- **`asyncHandler`** forwards any controller error to this global handler
-- **Global error handler** decides the response based on the error type
+- **Multer** rejects oversized files and disallowed types (Multer itself calls `next(err)`, so these errors reach the global handler below)
+- **`try/catch`** in each controller catches Mongoose/file-system errors and returns a clean 500 with a descriptive message
+- **Global error handler** is the safety net for Multer errors and anything else that slips through (Mongoose `ValidationError`, `CastError`, etc.)
 
 ---
 
@@ -960,9 +984,8 @@ You should see the uploaded image displayed directly.
 backend/
 ├── src/
 │   ├── controllers/
-│   │   └── roomController.ts      # CRUD logic wrapped in asyncHandler
+│   │   └── roomController.ts      # CRUD logic with explicit try/catch in each handler
 │   ├── middleware/
-│   │   ├── asyncHandler.ts        # (from Lesson 20) forwards errors
 │   │   ├── auth.ts                # (from Lesson 20) requireAuth, requireRole
 │   │   ├── validate.ts            # (from Lesson 20) validateResult
 │   │   └── upload.ts              # Multer storage, filter, limits
@@ -986,7 +1009,7 @@ backend/
 1. Create the `upload.ts` middleware with storage, filter, and size limit
 2. Create the `Room` model with all fields and validation
 3. Create `validators/room.validator.ts` with all four validator arrays
-4. Implement all five endpoints (each wrapped in `asyncHandler`): POST, GET (list), GET (single), PUT, DELETE
+4. Implement all five endpoints (each with its own `try/catch`): POST, GET (list), GET (single), PUT, DELETE
 5. Wire each route as `[upload?] → [validator] → validateResult → controller`
 6. Ensure the `uploads/rooms` directory is created on server start
 7. Test creating a room with images using Postman or Thunder Client
@@ -1033,7 +1056,7 @@ if (files.length === 0) {
 5. **Middleware order matters** -- run Multer **before** the validators so `req.body` is populated when the validators check it
 6. **`express-validator`** is used for every endpoint in the project -- same pattern as Lessons 16 and 20
 7. **`.toFloat()` / `.toInt()`** sanitisers convert multipart strings into real numbers, so the controller skips manual `Number()` conversions
-8. **`asyncHandler`** wraps each controller so any thrown error flows to the global handler -- no `try/catch` noise
+8. **Explicit `try/catch`** in every controller catches Mongoose and file-system errors and returns a clean 500 with a descriptive message -- the same pattern used in Lessons 16 and 20
 9. **Response envelope** -- `{ data: room }` for single items and `{ data: [...], meta: {...} }` for paginated lists, identical to the Todo API
 10. **`express.static`** serves files from a directory, making uploads accessible via URL
 11. **Ownership checks** (`room.owner.toString() === req.user!.userId`) ensure only the creator can edit or delete

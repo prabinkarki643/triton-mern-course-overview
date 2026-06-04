@@ -3,7 +3,7 @@
 ## What You Will Learn
 - Designing a booking model with date ranges, status flow and a chosen payment method
 - Validating booking input with **`express-validator`** (route layer) and Mongoose schema rules
-- Wrapping controllers in **`asyncHandler`** to drop the `try/catch` boilerplate
+- Writing controllers with explicit **`try/catch`** blocks (same pattern as Lesson 16) so the error path is obvious
 - Returning a consistent **`{ data }` / `{ data, meta }` envelope** -- never `{ success: true, ... }`
 - Detecting overlapping date ranges with a single MongoDB query
 - Calculating total price on the server using check-in / check-out dates
@@ -26,7 +26,7 @@ Guest                              Express API                       MongoDB
   |                                     |                                |
   |-- POST /api/bookings -------------> |                                |
   |   { room, checkIn, checkOut,        |-- express-validator ---------> |
-  |     guests, paymentMethod }         |   asyncHandler                 |
+  |     guests, paymentMethod }         |   try/catch                    |
   |                                     |   Check date conflicts -->     |
   |                                     |   Calculate total price        |
   |                                     |   Save booking (pending) ----> |
@@ -229,24 +229,26 @@ The `validateResult` middleware from Lesson 16 turns any failures into a 400 wit
 
 ---
 
-## 25.4 The Booking Controller (asyncHandler + `{ data }`)
+## 25.4 The Booking Controller (try/catch + `{ data }`)
 
-Controllers stay tight and focused: the validators have already done the input checking and `asyncHandler` forwards thrown errors to the global handler. Every successful response uses the **`{ data }`** envelope, and list endpoints add **`{ data, meta }`** for pagination -- exactly matching the rest of the API.
+Controllers stay tight and focused: the validators have already done the input checking and each handler wraps its database work in **`try/catch`** -- exactly the same pattern we used for the Todo API in Lesson 16. Every successful response uses the **`{ data }`** envelope, and list endpoints add **`{ data, meta }`** for pagination -- exactly matching the rest of the API.
 
 ```ts
 // backend/src/controllers/bookingController.ts
-import { Request, Response } from "express";
+import { Response } from "express";
 import mongoose from "mongoose";
 import Booking, { IBooking } from "../models/Booking";
 import Room, { IRoom } from "../models/Room";
 import { AuthRequest } from "../middleware/auth";
-import { asyncHandler } from "../middleware/asyncHandler";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
 // POST /api/bookings  -- guest creates a booking request
-export const createBooking = asyncHandler(
-  async (req: AuthRequest, res: Response): Promise<void> => {
+export const createBooking = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
     const { room: roomId, checkIn, checkOut, guests, paymentMethod } = req.body;
 
     // Validation chain already guarantees these exist + correct types.
@@ -315,12 +317,18 @@ export const createBooking = asyncHandler(
       .populate("user", "name email");
 
     res.status(201).json({ data: populated });
+  } catch (error: unknown) {
+    console.error("createBooking error:", error);
+    res.status(500).json({ error: "Failed to create booking" });
   }
-);
+};
 
 // GET /api/bookings/my  -- paginated list of the current user's bookings
-export const getMyBookings = asyncHandler(
-  async (req: AuthRequest, res: Response): Promise<void> => {
+export const getMyBookings = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
     const { status, page, limit } = req.query as {
       status?: string;
       page?: number;
@@ -356,12 +364,18 @@ export const getMyBookings = asyncHandler(
         hasPrevPage: pageNum > 1,
       },
     });
+  } catch (error: unknown) {
+    console.error("getMyBookings error:", error);
+    res.status(500).json({ error: "Failed to fetch bookings" });
   }
-);
+};
 
 // GET /api/bookings/owner  -- paginated list of incoming bookings for the owner's rooms
-export const getOwnerBookings = asyncHandler(
-  async (req: AuthRequest, res: Response): Promise<void> => {
+export const getOwnerBookings = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
     const { status, page, limit } = req.query as {
       status?: string;
       page?: number;
@@ -405,12 +419,18 @@ export const getOwnerBookings = asyncHandler(
         hasPrevPage: pageNum > 1,
       },
     });
+  } catch (error: unknown) {
+    console.error("getOwnerBookings error:", error);
+    res.status(500).json({ error: "Failed to fetch booking requests" });
   }
-);
+};
 
 // PATCH /api/bookings/:id/status  -- owner confirms/cancels, guest cancels own pending
-export const updateBookingStatus = asyncHandler(
-  async (req: AuthRequest, res: Response): Promise<void> => {
+export const updateBookingStatus = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
+  try {
     const { status } = req.body as { status: "confirmed" | "cancelled" };
 
     const booking = await Booking.findById(req.params.id).populate("room");
@@ -458,13 +478,18 @@ export const updateBookingStatus = asyncHandler(
       .populate("user", "name email");
 
     res.json({ data: updated });
+  } catch (error: unknown) {
+    console.error("updateBookingStatus error:", error);
+    res.status(500).json({ error: "Failed to update booking status" });
   }
-);
+};
 ```
 
 **Things worth pointing out to students:**
 
-- There is **no `try/catch`** anywhere -- `asyncHandler` catches thrown errors and forwards them to the global handler from Lesson 20.
+- Every handler uses an explicit **`try/catch`** -- the same pattern as the Todo controller in Lesson 16. You can see exactly where errors are caught and what response goes back.
+- Each `catch` logs the error and returns a clear 500 message (`"Failed to create booking"`, `"Failed to fetch bookings"`, etc.). The **global error handler** in `index.ts` (see Lesson 16.8) is the safety net for anything that still slips through.
+- Early exits inside the `try` use `res.status(...).json(...); return;` so the rest of the block does not run.
 - Every success response uses `{ data }` (single resource) or `{ data, meta }` (paginated list). No `{ success: true }` flag is ever returned -- the HTTP status code already signals success or failure.
 - Validation has already run. We never write `if (!checkIn)` checks in the controller.
 - We populate room and user so the frontend can render rich rows without a second request.
@@ -1720,9 +1745,8 @@ import BookingForm from "@/components/booking/BookingForm";
 ```
 Backend (booking-backend/src/):
 ├── controllers/
-│   └── bookingController.ts     # asyncHandler-wrapped, returns { data } / { data, meta }
+│   └── bookingController.ts     # try/catch handlers, returns { data } / { data, meta }
 ├── middleware/
-│   ├── asyncHandler.ts          # from Lesson 20
 │   ├── auth.ts                  # from Lesson 20
 │   └── validate-result.middleware.ts   # from Lesson 16
 ├── validators/
@@ -1761,10 +1785,10 @@ Frontend (booking-frontend/src/):
 
 ## Practice Exercises
 
-### Exercise 1: Backend with express-validator and asyncHandler
+### Exercise 1: Backend with express-validator and try/catch controllers
 1. Create the Booking model including the `paymentMethod` enum
 2. Build the validator file with `createBookingValidator`, `updateBookingStatusValidator`, `listBookingsValidator`
-3. Implement `createBooking`, `getMyBookings`, `getOwnerBookings`, `updateBookingStatus` -- all wrapped in `asyncHandler`, all returning `{ data }` or `{ data, meta }`
+3. Implement `createBooking`, `getMyBookings`, `getOwnerBookings`, `updateBookingStatus` -- each wrapped in its own `try/catch`, all returning `{ data }` or `{ data, meta }`
 4. Wire each route as `validator -> validateResult -> controller`
 5. Test that:
    - Missing fields return a 400 with a structured `details` array (not a generic message)
@@ -1809,7 +1833,7 @@ Frontend (booking-frontend/src/):
 
 ## Key Takeaways
 1. **`express-validator`** enforces input shape and types *before* the controller -- no manual `if (!field)` checks
-2. **`asyncHandler`** wraps every controller so errors bubble to the global handler -- no `try/catch` boilerplate
+2. Each controller uses an explicit **`try/catch`** (same pattern as Lesson 16) and the **global error handler** in `index.ts` is the safety net for anything that slips through
 3. The API uses a **single response envelope**: `{ data }` for single resources, `{ data, meta }` for paginated lists -- never `{ success: true, ... }`
 4. **`Promise.all([find, countDocuments])`** runs the page query and the total count in parallel for fewer round trips
 5. **Date conflict detection** uses one elegant query: `checkIn < newCheckOut AND checkOut > newCheckIn`, excluding `cancelled`

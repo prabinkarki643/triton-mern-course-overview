@@ -6,7 +6,7 @@
 - Building user registration with **`express-validator`** chains (same pattern as Lesson 16)
 - Building user login with credential verification
 - How JSON Web Tokens (JWT) work and why we use them
-- Wrapping controllers in an **`asyncHandler`** to remove `try/catch` boilerplate
+- Handling errors in controllers with **explicit `try/catch`** blocks (same pattern as Lesson 16)
 - Returning a consistent **`{ data: ... }`** response envelope
 - Creating authentication middleware to protect routes
 - Role-based access control (owner vs user)
@@ -296,28 +296,13 @@ export const loginValidator = [
 
 > **Important:** Sanitisers like `.trim()` and `.normalizeEmail()` actually *modify* `req.body`. The cleaned value is what your controller receives.
 
-### Step 3: The asyncHandler Helper
-
-To avoid repeating `try/catch` in every controller, we use a small `asyncHandler` wrapper. It catches any thrown error and passes it to the global error handler (section 20.11).
-
-```ts
-// src/middleware/asyncHandler.ts
-import { Request, Response, NextFunction, RequestHandler } from "express";
-
-export const asyncHandler = (fn: RequestHandler): RequestHandler =>
-  (req, res, next) =>
-    Promise.resolve(fn(req, res, next)).catch(next);
-```
-
-Now controllers can throw errors freely, and the global handler will respond with the right status.
-
 ---
 
 ## 20.6 The Auth Controller
 
 The controller handles the actual registration and login logic. Because validation runs in the middleware **before** the controller, the controller code stays focused on business logic -- no manual `if (!email)` checks.
 
-We also wrap every handler in `asyncHandler` so errors are forwarded to the global error handler instead of needing `try/catch` blocks everywhere.
+Every handler uses an explicit **`try/catch`** block -- the exact same pattern used in the Todo API (Lesson 16). The `try` block runs the happy path; the `catch` logs the error and returns a clean 500 response with a clear, endpoint-specific message.
 
 Notice the response envelope -- we return `{ data: { user, token } }`. The same shape is used across every endpoint in the project (matching Lesson 16).
 
@@ -327,7 +312,6 @@ import { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import User, { IUser } from "../models/User";
-import { asyncHandler } from "../middleware/asyncHandler";
 
 const JWT_SECRET: string = process.env.JWT_SECRET || "fallback-secret";
 const JWT_EXPIRES_IN: string = "7d";
@@ -359,85 +343,100 @@ const toPublicUser = (user: IUser) => ({
 
 // POST /api/auth/register
 // Validation is handled by registerValidator + validateResult middleware
-export const register = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const { name, email, password, phone, role } = req.body;
+export const register = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { name, email, password, phone, role } = req.body;
 
-  // Check if user already exists
-  const existingUser: IUser | null = await User.findOne({ email });
-  if (existingUser) {
-    res.status(400).json({ message: "A user with this email already exists" });
-    return;
+    // Check if user already exists
+    const existingUser: IUser | null = await User.findOne({ email });
+    if (existingUser) {
+      res.status(400).json({ message: "A user with this email already exists" });
+      return;
+    }
+
+    // Hash the password
+    const saltRounds: number = 10;
+    const hashedPassword: string = await bcrypt.hash(password, saltRounds);
+
+    // Create the user
+    const user: IUser = await User.create({
+      name,
+      email,
+      password: hashedPassword,
+      phone,
+      role: role || "user",
+    });
+
+    // Generate JWT
+    const token: string = generateToken(user);
+
+    res.status(201).json({
+      data: {
+        user: toPublicUser(user),
+        token,
+      },
+    });
+  } catch (error: unknown) {
+    console.error("register error:", error);
+    res.status(500).json({ message: "Failed to register user" });
   }
-
-  // Hash the password
-  const saltRounds: number = 10;
-  const hashedPassword: string = await bcrypt.hash(password, saltRounds);
-
-  // Create the user
-  const user: IUser = await User.create({
-    name,
-    email,
-    password: hashedPassword,
-    phone,
-    role: role || "user",
-  });
-
-  // Generate JWT
-  const token: string = generateToken(user);
-
-  res.status(201).json({
-    data: {
-      user: toPublicUser(user),
-      token,
-    },
-  });
-});
+};
 
 // POST /api/auth/login
 // Validation is handled by loginValidator + validateResult middleware
-export const login = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  const { email, password } = req.body;
+export const login = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, password } = req.body;
 
-  // Find user and explicitly include the password field
-  const user: IUser | null = await User.findOne({ email }).select("+password");
-  if (!user) {
-    res.status(401).json({ message: "Invalid email or password" });
-    return;
+    // Find user and explicitly include the password field
+    const user: IUser | null = await User.findOne({ email }).select("+password");
+    if (!user) {
+      res.status(401).json({ message: "Invalid email or password" });
+      return;
+    }
+
+    // Compare passwords
+    const isPasswordValid: boolean = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      res.status(401).json({ message: "Invalid email or password" });
+      return;
+    }
+
+    // Generate JWT
+    const token: string = generateToken(user);
+
+    res.status(200).json({
+      data: {
+        user: toPublicUser(user),
+        token,
+      },
+    });
+  } catch (error: unknown) {
+    console.error("login error:", error);
+    res.status(500).json({ message: "Failed to log in" });
   }
-
-  // Compare passwords
-  const isPasswordValid: boolean = await bcrypt.compare(password, user.password);
-  if (!isPasswordValid) {
-    res.status(401).json({ message: "Invalid email or password" });
-    return;
-  }
-
-  // Generate JWT
-  const token: string = generateToken(user);
-
-  res.status(200).json({
-    data: {
-      user: toPublicUser(user),
-      token,
-    },
-  });
-});
+};
 
 // GET /api/auth/me
-export const getMe = asyncHandler(async (req: Request, res: Response): Promise<void> => {
-  // req.user is set by the auth middleware (see section 20.7)
-  const userId: string = req.user!.userId;
+export const getMe = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // req.user is set by the auth middleware (see section 20.7)
+    const userId: string = req.user!.userId;
 
-  const user: IUser | null = await User.findById(userId);
-  if (!user) {
-    res.status(404).json({ message: "User not found" });
-    return;
+    const user: IUser | null = await User.findById(userId);
+    if (!user) {
+      res.status(404).json({ message: "User not found" });
+      return;
+    }
+
+    res.status(200).json({
+      data: toPublicUser(user),
+    });
+  } catch (error: unknown) {
+    console.error("getMe error:", error);
+    res.status(500).json({ message: "Failed to fetch current user" });
   }
-
-  res.status(200).json({
-    data: toPublicUser(user),
-  });
-});
+};
 ```
 
 ### Security Notes
@@ -634,9 +633,9 @@ app.get("/api/health", (_req: Request, res: Response) => {
   res.json({ status: "ok", message: "BookMyRoom API is running" });
 });
 
-// Global error handler -- catches anything forwarded by asyncHandler
+// Global error handler -- safety net for anything thrown outside a controller's try/catch
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction): void => {
-  console.error(err);
+  console.error("Unhandled error:", err);
 
   if (err.name === "ValidationError") {
     res.status(400).json({ message: err.message });
@@ -661,8 +660,8 @@ connectDB().then(() => {
 
 **The error-handling pattern in this project:**
 - **`express-validator`** catches bad input (400) before the controller runs
-- **`asyncHandler`** forwards any thrown error from a controller to the global handler
-- **Global error handler** decides the response (400 for Mongoose validation/cast errors, 500 otherwise)
+- **`try/catch`** in each controller catches database/bcrypt errors and returns a clean 500 response with a descriptive message
+- **Global error handler** is the safety net for anything that slips through (Mongoose validation/cast errors, unexpected throws)
 
 ---
 
@@ -840,10 +839,9 @@ booking-backend/
 │   ├── config/
 │   │   └── database.ts            # MongoDB connection
 │   ├── controllers/
-│   │   └── authController.ts      # register, login, getMe (asyncHandler)
+│   │   └── authController.ts      # register, login, getMe (each uses try/catch)
 │   ├── middleware/
 │   │   ├── auth.ts                # requireAuth, requireRole
-│   │   ├── asyncHandler.ts        # Forwards async errors to global handler
 │   │   └── validate.ts            # validateResult (express-validator)
 │   ├── models/
 │   │   ├── User.ts                # User schema + IUser interface
@@ -869,12 +867,11 @@ booking-backend/
 ### Exercise 1: Build the Complete Auth API
 1. Install `express-validator` and create the validators (`registerValidator`, `loginValidator`) in `validators/auth.validator.ts`
 2. Create the shared `validateResult` middleware in `middleware/validate.ts`
-3. Create the `asyncHandler` helper in `middleware/asyncHandler.ts`
-4. Create the auth controller with `register`, `login`, and `getMe` (all wrapped in `asyncHandler`)
-5. Create the auth middleware with `requireAuth` and `requireRole`
-6. Wire validators into the auth routes (`validator → validateResult → controller`)
-7. Register the routes and the global error handler in `index.ts`
-8. Run the server and verify it compiles without errors
+3. Create the auth controller with `register`, `login`, and `getMe` (each wrapped in its own `try/catch`)
+4. Create the auth middleware with `requireAuth` and `requireRole`
+5. Wire validators into the auth routes (`validator → validateResult → controller`)
+6. Register the routes and the global error handler in `index.ts`
+7. Run the server and verify it compiles without errors
 
 ### Exercise 2: Test Every Endpoint
 1. Register a user with role "user" -- verify the response shape is `{ data: { user, token } }`
@@ -912,7 +909,7 @@ Answer these questions to check your understanding:
 7. **401 means "who are you?"** (not authenticated); **403 means "you cannot do this"** (not authorised)
 8. **`express-validator` chains** declare rules per endpoint and run before the controller -- the same pattern used in Lesson 16
 9. **`validateResult` middleware** turns validation failures into structured 400 responses (`{ message, errors: [{ field, message }] }`)
-10. **`asyncHandler`** removes boilerplate `try/catch` blocks and forwards errors to the global handler
+10. **Explicit `try/catch`** in every controller catches database/bcrypt errors and returns a clean 500 with a descriptive message -- the same pattern used in Lesson 16
 11. **Response envelope** -- every endpoint returns `{ data: ... }` so the frontend can rely on one consistent shape
 12. **`requireRole()`** provides role-based access control -- owners and users have different permissions
 13. **Declaration files** (`.d.ts`) extend existing TypeScript types like Express's Request object

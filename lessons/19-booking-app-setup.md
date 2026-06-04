@@ -220,7 +220,6 @@ booking-backend/
 │   │   ├── roomController.ts  # Room CRUD (Lesson 22)
 │   │   └── bookingController.ts
 │   ├── middleware/
-│   │   ├── asyncHandler.ts    # Wraps async route handlers
 │   │   ├── auth.ts            # JWT verification (Lesson 20)
 │   │   ├── upload.ts          # Multer config (Lesson 22)
 │   │   └── validate.ts        # express-validator runner
