@@ -274,17 +274,32 @@ Think of it like a restaurant:
 
 From inside `bookmyroom_app/` (the same root folder, alongside `booking-backend`):
 
-We will use the same approach as the Todo frontend in Lesson 6: create a Vite + React + TypeScript project, then add Tailwind and shadcn/ui on top.
+We will use the **shadcn preset** -- the same one-shot setup we used for the Todo app in Lesson 13. It scaffolds Vite + React + TypeScript + Tailwind CSS + shadcn/ui all configured for you, with whichever theme/font/icon library you pick.
+
+### Step 1: Build Your Preset
+
+1. Open [https://ui.shadcn.com/create](https://ui.shadcn.com/create) in your browser
+2. Pick your style, base colour, font and icon library (the booking app uses the rose/pink palette in the mockup -- feel free to match)
+3. Click **"Create Project"** -- the site gives you a unique preset code
+
+### Step 2: Run the Preset
 
 ```bash
-npm create vite@latest booking-frontend -- --template react-ts
+npx shadcn@latest init --preset <YOUR_PRESET_CODE> --template vite
+```
+
+When prompted, name the project **`booking-frontend`**. Then move into it:
+
+```bash
 cd booking-frontend
 npm install
 ```
 
-### Configure the Dev Server Port
+> What does this single command set up? Vite, React, TypeScript, Tailwind CSS, shadcn/ui (with the theme you chose), the `@/` path alias and `components.json` -- exactly the same starting point as the Todo app.
 
-By default, Vite runs on port 5173. We want the booking app to run on **port 3001** so it does not clash with anything else. Update `vite.config.ts`:
+### Step 3: Set the Dev Server Port to 3001
+
+By default Vite runs on `5173`. We want the booking app on **port 3001** so it does not clash with anything else (and so it matches the `CLIENT_URL` the backend allows in its CORS config). Open `vite.config.ts` and add a `server` block:
 
 ```ts
 // booking-frontend/vite.config.ts
@@ -306,44 +321,15 @@ export default defineConfig({
 });
 ```
 
-> Tailwind and the `@` alias come next -- the snippet above is the final config so you can paste it once.
+> The `plugins`, `resolve.alias` lines are already there from the preset -- you are just adding the `server.port` line.
 
-### Add Tailwind CSS
-
-```bash
-npm install tailwindcss @tailwindcss/vite
-```
-
-Replace `src/index.css` with:
-
-```css
-@import "tailwindcss";
-```
-
-### Add the `@` Path Alias
-
-Update `tsconfig.json` and `tsconfig.app.json` so the `@/` alias resolves to `src/`:
-
-```json
-// tsconfig.json -- add a compilerOptions block
-{
-  "compilerOptions": {
-    "baseUrl": ".",
-    "paths": { "@/*": ["./src/*"] }
-  }
-}
-```
-
-Add the same `baseUrl` + `paths` block to `tsconfig.app.json` under `compilerOptions`.
-
-### Initialise shadcn/ui and Add Components
+### Step 4: Add the shadcn Components We Will Use
 
 ```bash
-npx shadcn@latest init --defaults
 npx shadcn@latest add button input card label badge dialog alert-dialog select tabs avatar form table skeleton dropdown-menu sonner
 ```
 
-### Install the Rest
+### Step 5: Install the Rest of the Libraries
 
 ```bash
 npm install react-router-dom axios react-hook-form zod @hookform/resolvers @tanstack/react-query @tanstack/react-table lucide-react
@@ -1023,9 +1009,9 @@ Thumbs.db
 5. Check that TypeScript reports no errors: `npx tsc --noEmit`
 
 ### Exercise 5: Set Up the Frontend
-1. From `bookmyroom_app/`, create the frontend with `npm create vite@latest booking-frontend -- --template react-ts`
-2. Configure Vite to run on **port 3001** in `vite.config.ts`
-3. Add Tailwind CSS, set up the `@/` path alias, and initialise shadcn/ui
+1. Build a preset at [ui.shadcn.com/create](https://ui.shadcn.com/create) (style, colour, font, icons of your choice)
+2. From `bookmyroom_app/`, run `npx shadcn@latest init --preset <YOUR_PRESET_CODE> --template vite` and name it `booking-frontend`
+3. Add `server.port = 3001` to `vite.config.ts`
 4. Add the shadcn components and the rest of the libraries from section 19.6
 5. Create the folder structure from section 19.7 (note `services/`, not `api/`)
 6. Create all three type files (`user.ts`, `room.ts`, `booking.ts`)
