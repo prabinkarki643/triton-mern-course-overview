@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Hotel, Mail, Lock, User, Phone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,8 +10,18 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
+import { useAuth } from "@/lib/auth";
 
 function RegisterPage() {
+  const { login } = useAuth();
+  const navigate = useNavigate();
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    login(); // mock — log in with default user
+    navigate("/");
+  };
+
   return (
     <div className="relative flex min-h-[calc(100vh-4rem)] items-center justify-center overflow-hidden bg-gradient-to-br from-rose-50 via-orange-50 to-amber-50 px-4 py-12 dark:from-rose-950/30 dark:via-orange-950/20 dark:to-amber-950/20">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-rose-200/30 via-transparent to-transparent" />
@@ -30,7 +40,7 @@ function RegisterPage() {
             </p>
           </div>
 
-          <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
+          <form className="space-y-4" onSubmit={handleSubmit}>
             <div className="space-y-1.5">
               <Label htmlFor="name">Full name</Label>
               <div className="relative">

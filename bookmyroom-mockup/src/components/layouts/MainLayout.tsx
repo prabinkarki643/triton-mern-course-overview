@@ -1,10 +1,11 @@
-import { Link, NavLink, Outlet } from "react-router-dom";
+import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
   Hotel,
   LogOut,
   Calendar,
   LayoutDashboard,
   User,
+  ChevronDown,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -12,12 +13,22 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuGroup,
   DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { mockUser } from "@/lib/mock-data";
+import { Button } from "@/components/ui/button";
+import { useAuth } from "@/lib/auth";
 
 function MainLayout() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    logout();
+    navigate("/");
+  };
+
   const navItemClass = ({ isActive }: { isActive: boolean }) =>
     `text-sm font-medium transition-colors hover:text-foreground ${
       isActive ? "text-foreground" : "text-muted-foreground"
@@ -49,56 +60,78 @@ function MainLayout() {
           </nav>
 
           <div className="flex items-center gap-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <button className="flex items-center gap-2 rounded-full border border-border bg-background py-1 pl-1 pr-3 transition-colors hover:bg-muted">
-                    <Avatar size="sm">
-                      <AvatarFallback className="bg-gradient-to-br from-rose-500 to-pink-600 text-xs font-medium text-white">
-                        RB
-                      </AvatarFallback>
-                    </Avatar>
-                    <span className="hidden text-sm font-medium sm:inline">
-                      {mockUser.name}
-                    </span>
-                  </button>
-                }
-              />
-              <DropdownMenuContent align="end" className="w-52">
-                <DropdownMenuLabel>My Account</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem>
-                  <User className="mr-2 size-4" />
-                  Profile
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  render={
-                    <Link to="/my-bookings">
-                      <Calendar className="mr-2 size-4" />
-                      My Bookings
-                    </Link>
-                  }
+            {user ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger className="flex items-center gap-2 rounded-full border border-border bg-background py-1 pl-1 pr-3 outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-rose-500">
+                  <Avatar size="sm">
+                    <AvatarFallback className="bg-gradient-to-br from-rose-500 to-pink-600 text-xs font-medium text-white">
+                      {user.initials}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="hidden text-sm font-medium sm:inline">
+                    {user.name}
+                  </span>
+                  <ChevronDown className="hidden size-4 text-muted-foreground sm:inline" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52">
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel className="font-normal">
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium">{user.name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {user.email}
+                        </span>
+                      </div>
+                    </DropdownMenuLabel>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem>
+                    <User className="mr-2 size-4" />
+                    Profile
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    render={
+                      <Link to="/my-bookings">
+                        <Calendar className="mr-2 size-4" />
+                        My Bookings
+                      </Link>
+                    }
+                  />
+                  <DropdownMenuItem
+                    render={
+                      <Link to="/owner/dashboard">
+                        <LayoutDashboard className="mr-2 size-4" />
+                        Owner Portal
+                      </Link>
+                    }
+                  />
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onClick={handleLogout}
+                  >
+                    <LogOut className="mr-2 size-4" />
+                    Log out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  nativeButton={false}
+                  className="hidden sm:inline-flex"
+                  render={<Link to="/login">Log in</Link>}
                 />
-                <DropdownMenuItem
-                  render={
-                    <Link to="/owner/dashboard">
-                      <LayoutDashboard className="mr-2 size-4" />
-                      Owner Portal
-                    </Link>
-                  }
+                <Button
+                  size="sm"
+                  nativeButton={false}
+                  className="bg-gradient-to-r from-rose-500 to-pink-600 text-white hover:from-rose-600 hover:to-pink-700"
+                  render={<Link to="/register">Sign up</Link>}
                 />
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  variant="destructive"
-                  render={
-                    <Link to="/login">
-                      <LogOut className="mr-2 size-4" />
-                      Log out
-                    </Link>
-                  }
-                />
-              </DropdownMenuContent>
-            </DropdownMenu>
+              </>
+            )}
           </div>
         </div>
       </header>
