@@ -13,6 +13,8 @@ Bachelor in Computer Science and Engineering
 ### 1. Todo App (Lessons 04-17)
 A complete full-stack Todo application to learn React fundamentals and backend basics.
 
+![Todo App Mockup](assets/Todo_App_MockUp.png)
+
 ### 2. BookMyRoom (Lessons 18-28)
 A room/venue booking platform with:
 - Owner portal (create/manage room listings with images)
@@ -21,6 +23,28 @@ A room/venue booking platform with:
 - File uploads (room images, profile avatars)
 - Payment integration (eSewa + Cash on Delivery)
 - Dashboard with booking stats and revenue
+
+#### User Portal
+
+| | |
+|---|---|
+| **Home Page** — Browse all rooms with search and filters | **Home Page (logged in)** — User dropdown with profile, bookings, owner portal, logout |
+| ![BookMyRoom Home](assets/bookmyroom_mockup/BookMyRoom_HOME.png) | ![BookMyRoom Home with User Profile](assets/bookmyroom_mockup/BookMyRoom_HOME_USER_PROFILE.png) |
+| **Room Details** — Image gallery, amenities, booking sidebar with eSewa/COD | **My Bookings** — Track your bookings with status badges |
+| ![BookMyRoom Room Details](assets/bookmyroom_mockup/BookMyRoom_ROOM_DETAILS.png) | ![BookMyRoom My Bookings](assets/bookmyroom_mockup/BookMyRoom_MY_BOOKINGS.png) |
+| **Login** — JWT authentication | **Register** — Choose Guest or Owner role |
+| ![BookMyRoom Login](assets/bookmyroom_mockup/BookMyRoom_LOGIN.png) | ![BookMyRoom Register](assets/bookmyroom_mockup/BookMyRoom_REGISTER.png) |
+
+#### Owner Portal
+
+| | |
+|---|---|
+| **Owner Dashboard** — Stats cards + recent bookings | **My Rooms** — DataTable with search, filter, edit, delete |
+| ![BookMyRoom Owner Dashboard](assets/bookmyroom_mockup/BookMyRoom_OWNER_DASHBOARD.png) | ![BookMyRoom Owner My Rooms](assets/bookmyroom_mockup/BookMyRoom_OWNER_MY_ROOMS.png) |
+| **Booking Requests** — Confirm or cancel guest bookings | |
+| ![BookMyRoom Owner Booking Requests](assets/bookmyroom_mockup/BookMyRoom_OWNER_BOOKING_REQUEST.png) | |
+
+> Want to see the live clickable mockup? See [bookmyroom-mockup/](bookmyroom-mockup/) — run `npm install && npm run dev`.
 
 ## Tech Stack
 
@@ -54,6 +78,8 @@ triton-mern-course-overview/
 ├── REACT-NODE-Course.MD       # Detailed instructor teaching guide
 ├── SUMMARY.md                 # Step-by-step curriculum checklist
 ├── CLAUDE.md                  # Project configuration
+├── assets/                    # Mockup screenshots for the README
+├── bookmyroom-mockup/         # Live clickable demo of the final app
 └── lessons/                   # 28 individual lesson files
     ├── 01-html-basics.md
     ├── 02-css-basics.md
