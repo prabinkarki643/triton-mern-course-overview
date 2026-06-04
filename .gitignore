@@ -12,5 +12,3 @@ dist/
 
 .playwright-mcp/
 
-# Student working folder - lives outside the course repo
-bookmyroom_app/
