@@ -470,8 +470,9 @@ First, tell TypeScript that the Request object can have a `user` property:
 
 ```ts
 // src/types/express.d.ts
+import "express";
 
-declare namespace Express {
+declare module "express" {
   interface Request {
     user?: {
       userId: string;
@@ -481,7 +482,41 @@ declare namespace Express {
 }
 ```
 
-This is a **declaration file** (`.d.ts`). It extends the existing Express types without modifying the Express library itself.
+This is a **declaration file** (`.d.ts`). It uses **module augmentation** -- `declare module "express"` reaches into the Express types and adds the `user` property to its `Request` interface, without modifying the Express library itself.
+
+> **Why `import "express"` at the top?** It turns the file into a module (rather than a script). Module augmentation only works inside a module, and Node tooling like `ts-node` only picks up files that participate in the module graph.
+
+### Tell ts-node to Load the Declaration File
+
+`ts-node` only compiles files that are reached by following imports from `src/index.ts`. Our `express.d.ts` is not imported anywhere -- it just patches existing types -- so by default `ts-node` skips it and you would get this error at runtime even though `npx tsc --noEmit` passes:
+
+```
+error TS2339: Property 'user' does not exist on type 'Request'
+```
+
+The fix is one line in `tsconfig.json` -- tell `ts-node` to honour the `include` array:
+
+```json
+// tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"],
+  "ts-node": {
+    "files": true
+  }
+}
+```
+
+The `"ts-node": { "files": true }` block makes `ts-node` load every file in `include` -- not just the ones imported from the entry point. This is what makes the `Request.user` augmentation visible everywhere.
 
 ### The Auth Middleware
 
@@ -912,4 +947,5 @@ Answer these questions to check your understanding:
 10. **Explicit `try/catch`** in every controller catches database/bcrypt errors and returns a clean 500 with a descriptive message -- the same pattern used in Lesson 16
 11. **Response envelope** -- every endpoint returns `{ data: ... }` so the frontend can rely on one consistent shape
 12. **`requireRole()`** provides role-based access control -- owners and users have different permissions
-13. **Declaration files** (`.d.ts`) extend existing TypeScript types like Express's Request object
+13. **Declaration files** (`.d.ts`) extend existing TypeScript types like Express's Request object via **module augmentation** (`declare module "express"`)
+14. **`"ts-node": { "files": true }`** in `tsconfig.json` is required so `ts-node` loads the `.d.ts` augmentation file at runtime (otherwise you get `Property 'user' does not exist on type 'Request'`)
