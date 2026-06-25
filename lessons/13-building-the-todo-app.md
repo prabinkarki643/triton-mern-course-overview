@@ -39,8 +39,10 @@ cd todo-app
 Add the required shadcn/ui components:
 
 ```bash
-npx shadcn@latest add button input card checkbox badge dialog label
+npx shadcn@latest add button input card checkbox badge dialog label field select
 ```
+
+> **Note:** We use the new `field` component (not the deprecated `form` component) for wiring React Hook Form into shadcn/ui. `Field`, `FieldLabel`, `FieldError`, and `FieldGroup` give us accessible form layouts that play nicely with React Hook Form's `Controller`.
 
 Install form libraries:
 
@@ -262,24 +264,30 @@ export default Header
 
 ```tsx
 // src/components/AddTodoForm.tsx
-import { useForm } from 'react-hook-form'
+import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { todoSchema, type TodoFormData } from '../schemas/todoSchema'
 import { useTodo } from '../context/TodoContext'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { cn } from "@/lib/utils"
+import {
+  Field,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 function AddTodoForm(): JSX.Element {
   const { addTask } = useTodo();
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-    reset,
-  } = useForm<TodoFormData>({
+  const form = useForm<TodoFormData>({
     resolver: zodResolver(todoSchema),
     defaultValues: {
       title: "",
@@ -289,47 +297,77 @@ function AddTodoForm(): JSX.Element {
 
   const onSubmit = (data: TodoFormData): void => {
     addTask(data.title, data.priority);
-    reset();
+    form.reset();
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-      <div className="space-y-2">
-        <Label htmlFor="title">Task Title</Label>
-        <Input
-          id="title"
-          {...register("title")}
-          placeholder="What needs to be done?"
-          className={cn(
-            errors.title && "border-destructive focus-visible:ring-destructive"
+    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+      <FieldGroup>
+        <Controller
+          name="title"
+          control={form.control}
+          render={({ field, fieldState }) => (
+            <Field data-invalid={fieldState.invalid}>
+              <FieldLabel htmlFor={field.name}>Task Title</FieldLabel>
+              <Input
+                {...field}
+                id={field.name}
+                placeholder="What needs to be done?"
+                aria-invalid={fieldState.invalid}
+              />
+              {fieldState.invalid && (
+                <FieldError errors={[fieldState.error]} />
+              )}
+            </Field>
           )}
         />
-        {errors.title && (
-          <p className="text-sm text-destructive">{errors.title.message}</p>
-        )}
-      </div>
 
-      <div className="flex gap-3 items-end">
-        <div className="space-y-2 flex-1">
-          <Label htmlFor="priority">Priority</Label>
-          <select
-            id="priority"
-            {...register("priority")}
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
+        <div className="flex gap-3 items-end">
+          <Controller
+            name="priority"
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <Field data-invalid={fieldState.invalid} className="flex-1">
+                <FieldLabel htmlFor={field.name}>Priority</FieldLabel>
+                <Select
+                  value={field.value}
+                  onValueChange={field.onChange}
+                >
+                  <SelectTrigger
+                    id={field.name}
+                    aria-invalid={fieldState.invalid}
+                  >
+                    <SelectValue placeholder="Select priority" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                  </SelectContent>
+                </Select>
+                {fieldState.invalid && (
+                  <FieldError errors={[fieldState.error]} />
+                )}
+              </Field>
+            )}
+          />
+          <Button type="submit">Add Task</Button>
         </div>
-        <Button type="submit">Add Task</Button>
-      </div>
+      </FieldGroup>
     </form>
   )
 }
 
 export default AddTodoForm
 ```
+
+> **How the new pattern works:**
+> - There's no `<Form>` wrapper — we use a plain `<form>` and pass `form.handleSubmit(onSubmit)` to `onSubmit`.
+> - `Controller` from React Hook Form connects each input to the form state.
+> - `Field` wraps each input. Setting `data-invalid={fieldState.invalid}` lets shadcn style the field when validation fails.
+> - `FieldLabel htmlFor={field.name}` links the label to the input for accessibility.
+> - `FieldError errors={[fieldState.error]} />` displays the Zod error message.
+> - `FieldGroup` provides consistent spacing between multiple fields.
 
 ### Filter Buttons
 
@@ -452,13 +490,25 @@ export default TodoItem
 ```tsx
 // src/components/EditTaskDialog.tsx
 import { useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { todoSchema, type TodoFormData } from '../schemas/todoSchema'
 import { useTodo } from '../context/TodoContext'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import {
+  Field,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Dialog,
   DialogContent,
@@ -477,11 +527,7 @@ function EditTaskDialog({ task }: EditTaskDialogProps): JSX.Element {
   const [open, setOpen] = useState<boolean>(false);
   const { editTask } = useTodo();
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<TodoFormData>({
+  const form = useForm<TodoFormData>({
     resolver: zodResolver(todoSchema),
     defaultValues: {
       title: task.title,
@@ -505,26 +551,55 @@ function EditTaskDialog({ task }: EditTaskDialogProps): JSX.Element {
         <DialogHeader>
           <DialogTitle>Edit Task</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="edit-title">Title</Label>
-            <Input id="edit-title" {...register("title")} />
-            {errors.title && (
-              <p className="text-sm text-destructive">{errors.title.message}</p>
-            )}
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="edit-priority">Priority</Label>
-            <select
-              id="edit-priority"
-              {...register("priority")}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-            >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
-          </div>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <FieldGroup>
+            <Controller
+              name="title"
+              control={form.control}
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>Title</FieldLabel>
+                  <Input
+                    {...field}
+                    id={field.name}
+                    aria-invalid={fieldState.invalid}
+                  />
+                  {fieldState.invalid && (
+                    <FieldError errors={[fieldState.error]} />
+                  )}
+                </Field>
+              )}
+            />
+
+            <Controller
+              name="priority"
+              control={form.control}
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>Priority</FieldLabel>
+                  <Select
+                    value={field.value}
+                    onValueChange={field.onChange}
+                  >
+                    <SelectTrigger
+                      id={field.name}
+                      aria-invalid={fieldState.invalid}
+                    >
+                      <SelectValue placeholder="Select priority" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="low">Low</SelectItem>
+                      <SelectItem value="medium">Medium</SelectItem>
+                      <SelectItem value="high">High</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {fieldState.invalid && (
+                    <FieldError errors={[fieldState.error]} />
+                  )}
+                </Field>
+              )}
+            />
+          </FieldGroup>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
               Cancel
@@ -695,8 +770,8 @@ npm run preview
 | Props | FilterButtons, TodoItem, EditTaskDialog (all with typed interfaces) |
 | useState | TodoContext, EditTaskDialog, AddTodoForm (all with type parameters) |
 | Context API | TodoContext - fully typed shared state across all components |
-| shadcn/ui | Button, Input, Card, Checkbox, Badge, Dialog |
-| React Hook Form | AddTodoForm, EditTaskDialog (with `TodoFormData` type) |
+| shadcn/ui | Button, Input, Card, Checkbox, Badge, Dialog, Field, Select |
+| React Hook Form | AddTodoForm, EditTaskDialog (`Controller` wired into shadcn `Field`) |
 | Zod | todoSchema for form validation, `z.infer` for form types |
 
 ---

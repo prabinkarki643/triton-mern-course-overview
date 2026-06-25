@@ -6,7 +6,7 @@
 - Integrating eSewa using HMAC-SHA256 signed payloads
 - Creating backend endpoints to initiate and verify payments using **express-validator** with explicit **try/catch** blocks
 - Returning a consistent **`{ data: ... }` response envelope** from every endpoint
-- Building a payment selector inside a shadcn **Form** with React Hook Form + Zod
+- Building a payment selector inside a shadcn **`Field`** with React Hook Form's `Controller` + Zod
 - Wrapping payment calls in an Axios **service layer** (`paymentApi`)
 - Using **React Query mutation hooks** (`useInitiateEsewaPayment`, `useVerifyEsewaPayment`) for loading state, cache invalidation, and toast feedback
 - Using eSewa sandbox credentials for safe development testing
@@ -652,25 +652,33 @@ export function useVerifyEsewaPayment() {
 
 ---
 
-## 26.9 Frontend: Payment Method Selection with shadcn Form
+## 26.9 Frontend: Payment Method Selection with shadcn `Field`
 
-The payment method is part of the booking form. Following Lesson 12, we use React Hook Form + Zod with shadcn's `Form` and `FormField` components, and wire up `useInitiateEsewaPayment` for the eSewa path.
+The payment method is part of the booking form. Following Lesson 12, we use React Hook Form + Zod with shadcn's **new `Field` component family** -- driven by RHF's `Controller` -- and wire up `useInitiateEsewaPayment` for the eSewa path.
+
+First, install the `field` component (note: this is the new pattern -- we no longer use `form`):
+
+```bash
+npx shadcn@latest add field
+npx shadcn@latest add radio-group
+npx shadcn@latest add label
+```
 
 ```tsx
 // webapp/src/components/PaymentMethodSelector.tsx
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field';
+import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useInitiateEsewaPayment } from '@/hooks/usePayments';
 
@@ -715,57 +723,73 @@ export function PaymentMethodSelector({
         <CardTitle>Choose Payment Method</CardTitle>
       </CardHeader>
       <CardContent>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <FormField
-              control={form.control}
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <FieldGroup>
+            <Controller
               name="paymentMethod"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Payment Method</FormLabel>
-                  <FormControl>
-                    <RadioGroup
-                      onValueChange={field.onChange}
-                      value={field.value}
-                      className="space-y-2"
-                    >
-                      <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="esewa" id="esewa" />
-                        <FormLabel htmlFor="esewa" className="font-normal">
-                          Pay with eSewa (Online)
-                        </FormLabel>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="cod" id="cod" />
-                        <FormLabel htmlFor="cod" className="font-normal">
-                          Cash on Delivery
-                        </FormLabel>
-                      </div>
-                    </RadioGroup>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
+              control={form.control}
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel>Payment Method</FieldLabel>
+                  <RadioGroup
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    aria-invalid={fieldState.invalid}
+                    className="gap-3"
+                  >
+                    <div className="flex items-center space-x-3 rounded-lg border p-3 hover:bg-muted/50">
+                      <RadioGroupItem value="esewa" id="payment-esewa" />
+                      <Label htmlFor="payment-esewa" className="flex-1 cursor-pointer">
+                        <div className="font-medium">eSewa</div>
+                        <div className="text-sm text-muted-foreground">
+                          Pay now with eSewa wallet
+                        </div>
+                      </Label>
+                    </div>
+                    <div className="flex items-center space-x-3 rounded-lg border p-3 hover:bg-muted/50">
+                      <RadioGroupItem value="cod" id="payment-cod" />
+                      <Label htmlFor="payment-cod" className="flex-1 cursor-pointer">
+                        <div className="font-medium">Cash on Delivery</div>
+                        <div className="text-sm text-muted-foreground">
+                          Pay at the venue when you check in
+                        </div>
+                      </Label>
+                    </div>
+                  </RadioGroup>
+                  <FieldDescription>
+                    You can change this until the booking is confirmed.
+                  </FieldDescription>
+                  {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+                </Field>
               )}
             />
+          </FieldGroup>
 
-            <p className="text-sm text-muted-foreground">
-              Total: <span className="font-bold">NPR {totalPrice}</span>
-            </p>
+          <p className="text-sm text-muted-foreground">
+            Total: <span className="font-bold">NPR {totalPrice}</span>
+          </p>
 
-            <Button type="submit" disabled={isPending} className="w-full">
-              {isPending
-                ? 'Processing...'
-                : method === 'esewa'
-                  ? 'Pay with eSewa'
-                  : 'Confirm COD Booking'}
-            </Button>
-          </form>
-        </Form>
+          <Button type="submit" disabled={isPending} className="w-full">
+            {isPending
+              ? 'Processing...'
+              : method === 'esewa'
+                ? 'Pay with eSewa'
+                : 'Confirm COD Booking'}
+          </Button>
+        </form>
       </CardContent>
     </Card>
   );
 }
 ```
+
+**What is different from the older `Form`/`FormField` pattern:**
+- We import from `@/components/ui/field`, not `@/components/ui/form`. The new `Field` family (`Field`, `FieldGroup`, `FieldLabel`, `FieldDescription`, `FieldError`) is the modern shadcn approach.
+- There is **no `<Form {...form}>` wrapper** -- we use a plain `<form>` element and let RHF's `Controller` connect each field directly.
+- **`Controller`** from `react-hook-form` gives us both `field` (value/onChange) and `fieldState` (invalid/error) -- no extra context needed.
+- For radio groups, `aria-invalid` is set on the **`RadioGroup`** itself, not on individual items. Each `RadioGroupItem` keeps a regular `<Label htmlFor=...>` for accessibility (we do **not** use `FieldLabel` per item -- `FieldLabel` belongs to the whole `Field`).
+- Errors are rendered with `{fieldState.invalid && <FieldError errors={[fieldState.error]} />}` -- explicit and conditional.
+- `FieldDescription` provides helper text below the control.
 
 **What changed compared to a raw `useState` version:**
 - The radio is part of a typed schema (`z.enum(['esewa', 'cod'])`) -- TypeScript and runtime validation in one place
@@ -1033,6 +1057,7 @@ The component is tiny because all the work -- the API call, loading state, toast
 - **Backend endpoints follow the project pattern:** `validator + validateResult + controller (with explicit try/catch)` keeps controllers clean and consistent with Lesson 16.
 - **Every response uses the `{ data: ... }` envelope** -- no ad-hoc `success` booleans. The HTTP status and the booking's `paymentStatus` carry the meaning.
 - **The frontend never calls `fetch` directly for payments** -- a typed `paymentApi` service layer wraps every call, and React Query mutation hooks (`useInitiateEsewaPayment`, `useVerifyEsewaPayment`, `useMarkBookingPaid`) handle loading state, toasts, and cache invalidation.
-- **The Payment Method selector lives inside a shadcn `Form`** with React Hook Form + Zod, matching the form patterns from Lesson 12.
+- **The Payment Method selector uses the new shadcn `Field` family** (`Field`, `FieldGroup`, `FieldLabel`, `FieldDescription`, `FieldError`) driven by RHF's `Controller` -- no `<Form>` wrapper, no `FormField`/`FormItem`/`FormControl`/`FormMessage`.
+- **For radio groups, `aria-invalid` goes on the `RadioGroup` itself**, and each `RadioGroupItem` keeps a regular `<Label htmlFor=...>` -- `FieldLabel` is reserved for the whole `Field`.
 - **Use sandbox credentials during development.** Switch to production credentials only when you are ready to accept real payments.
 - **Keep your secret key secure.** Store it in environment variables, never commit it to version control.

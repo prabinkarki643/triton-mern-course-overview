@@ -11,7 +11,7 @@
 - Using Mongoose **`populate`** to inline room and user data on the response
 - Building a typed **`bookingApi`** service layer + **React Query hooks** with a query keys factory
 - A real-time price preview powered by `form.watch()`
-- Building the booking creation form with **shadcn `Form` + Zod** (`Form`/`FormField`/`FormItem`/`FormLabel`/`FormControl`/`FormMessage`)
+- Building the booking creation form with the **shadcn `Field` family + Zod** (`Field` / `FieldLabel` / `FieldError` / `FieldDescription` / `FieldGroup`) driven by React Hook Form `Controller`
 - Reusing the generic **`<DataTable>`** from Lesson 17.1 for "My Bookings" and the owner's "Booking Requests" view, complete with status filters, URL-driven pagination and row actions
 - Wiring **Sonner toasts** into every mutation so users always know what happened
 
@@ -861,14 +861,14 @@ export function useBookingFilters() {
 
 ---
 
-## 25.12 The Booking Form (shadcn `Form` + Zod)
+## 25.12 The Booking Form (shadcn `Field` + Zod)
 
-The booking form sits on the room detail page (from Lesson 24). We use the official **shadcn `Form`** component family (`Form` / `FormField` / `FormItem` / `FormLabel` / `FormControl` / `FormMessage`) -- the same accessible pattern from Lesson 12.
+The booking form sits on the room detail page (from Lesson 24). We use the new **shadcn `Field`** component family (`Field` / `FieldLabel` / `FieldError` / `FieldDescription` / `FieldGroup`) driven by React Hook Form's `Controller` -- the same accessible pattern from Lesson 12.
 
-Install the form component if you have not already:
+Install the field component if you have not already:
 
 ```bash
-npx shadcn@latest add form
+npx shadcn@latest add field
 ```
 
 ### The Schema
@@ -907,7 +907,7 @@ export type BookingFormData = z.infer<typeof bookingSchema>;
 ```tsx
 // booking-frontend/src/components/booking/BookingForm.tsx
 import { useMemo } from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -919,13 +919,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import {
   Select,
   SelectContent,
@@ -1001,118 +1000,137 @@ function BookingForm({ room }: BookingFormProps): JSX.Element {
       </CardHeader>
 
       <CardContent>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <FormField
-              control={form.control}
-              name="checkIn"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Check-in</FormLabel>
-                  <FormControl>
-                    <Input type="date" min={today} {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="checkOut"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Check-out</FormLabel>
-                  <FormControl>
-                    <Input type="date" min={checkIn || today} {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="guests"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Guests</FormLabel>
-                  <FormControl>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <FieldGroup>
+            <div className="grid grid-cols-2 gap-3">
+              <Controller
+                name="checkIn"
+                control={form.control}
+                render={({ field, fieldState }) => (
+                  <Field data-invalid={fieldState.invalid}>
+                    <FieldLabel htmlFor={field.name}>Check-in</FieldLabel>
                     <Input
-                      type="number"
-                      min={1}
-                      max={room.capacity}
                       {...field}
+                      id={field.name}
+                      type="date"
+                      min={today}
+                      aria-invalid={fieldState.invalid}
                     />
-                  </FormControl>
-                  <p className="text-xs text-muted-foreground">
-                    Maximum {room.capacity} guests
-                  </p>
-                  <FormMessage />
-                </FormItem>
+                    {fieldState.invalid && (
+                      <FieldError errors={[fieldState.error]} />
+                    )}
+                  </Field>
+                )}
+              />
+
+              <Controller
+                name="checkOut"
+                control={form.control}
+                render={({ field, fieldState }) => (
+                  <Field data-invalid={fieldState.invalid}>
+                    <FieldLabel htmlFor={field.name}>Check-out</FieldLabel>
+                    <Input
+                      {...field}
+                      id={field.name}
+                      type="date"
+                      min={checkIn || today}
+                      aria-invalid={fieldState.invalid}
+                    />
+                    {fieldState.invalid && (
+                      <FieldError errors={[fieldState.error]} />
+                    )}
+                  </Field>
+                )}
+              />
+            </div>
+
+            <Controller
+              name="guests"
+              control={form.control}
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>Guests</FieldLabel>
+                  <Input
+                    {...field}
+                    id={field.name}
+                    type="number"
+                    min={1}
+                    max={room.capacity}
+                    aria-invalid={fieldState.invalid}
+                  />
+                  <FieldDescription>
+                    Maximum {room.capacity} guests.
+                  </FieldDescription>
+                  {fieldState.invalid && (
+                    <FieldError errors={[fieldState.error]} />
+                  )}
+                </Field>
               )}
             />
 
-            <FormField
-              control={form.control}
+            <Controller
               name="paymentMethod"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Payment method</FormLabel>
+              control={form.control}
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>Payment method</FieldLabel>
                   <Select
                     value={field.value}
                     onValueChange={field.onChange}
                   >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Choose a payment method" />
-                      </SelectTrigger>
-                    </FormControl>
+                    <SelectTrigger
+                      id={field.name}
+                      aria-invalid={fieldState.invalid}
+                    >
+                      <SelectValue placeholder="Choose a payment method" />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="esewa">eSewa</SelectItem>
                       <SelectItem value="cod">Cash on arrival</SelectItem>
                     </SelectContent>
                   </Select>
-                  <FormMessage />
-                </FormItem>
+                  {fieldState.invalid && (
+                    <FieldError errors={[fieldState.error]} />
+                  )}
+                </Field>
               )}
             />
+          </FieldGroup>
 
-            {/* Real-time price preview */}
-            {nights > 0 && (
-              <>
-                <Separator />
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span>
-                      &pound;{room.price} &times; {nights} night
-                      {nights !== 1 ? "s" : ""}
-                    </span>
-                    <span>&pound;{totalPrice}</span>
-                  </div>
-                  <Separator />
-                  <div className="flex justify-between font-semibold text-base">
-                    <span>Total</span>
-                    <span>&pound;{totalPrice}</span>
-                  </div>
+          {/* Real-time price preview */}
+          {nights > 0 && (
+            <>
+              <Separator />
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span>
+                    &pound;{room.price} &times; {nights} night
+                    {nights !== 1 ? "s" : ""}
+                  </span>
+                  <span>&pound;{totalPrice}</span>
                 </div>
-              </>
-            )}
+                <Separator />
+                <div className="flex justify-between font-semibold text-base">
+                  <span>Total</span>
+                  <span>&pound;{totalPrice}</span>
+                </div>
+              </div>
+            </>
+          )}
 
-            <Button
-              type="submit"
-              className="w-full"
-              size="lg"
-              disabled={isPending}
-            >
-              {isPending ? "Booking..." : "Book Now"}
-            </Button>
+          <Button
+            type="submit"
+            className="w-full"
+            size="lg"
+            disabled={isPending}
+          >
+            {isPending ? "Booking..." : "Book Now"}
+          </Button>
 
-            <p className="text-xs text-center text-muted-foreground">
-              Your booking will be sent to the owner for confirmation.
-            </p>
-          </form>
-        </Form>
+          <p className="text-xs text-center text-muted-foreground">
+            Your booking will be sent to the owner for confirmation.
+          </p>
+        </form>
       </CardContent>
     </Card>
   );
@@ -1121,17 +1139,20 @@ function BookingForm({ room }: BookingFormProps): JSX.Element {
 export default BookingForm;
 ```
 
-### Why shadcn `Form`?
+### Why shadcn `Field`?
 
-The shadcn `Form` family wraps React Hook Form so that:
+The shadcn `Field` family is a small set of layout primitives that pair perfectly with React Hook Form's `Controller`:
 
-- `FormField` connects each field to `form.control` and supplies `field` (value/onChange) automatically -- no `Controller` boilerplate
-- `FormItem` provides spacing and screen reader landmarks
-- `FormLabel` is the accessible label and is wired up via context (no `htmlFor` to manage)
-- `FormControl` forwards `aria-invalid` and IDs to whatever input you nest inside
-- `FormMessage` renders the validation error from React Hook Form -- one line per field
+- `Controller` (from React Hook Form) connects each input to `form.control` and supplies `field` (value/onChange/name) and `fieldState` (invalid/error)
+- `Field` is the wrapper element. We set `data-invalid={fieldState.invalid}` so styling reacts to errors
+- `FieldLabel` is the accessible label -- pair it with the input via `htmlFor={field.name}` and `id={field.name}`
+- `FieldDescription` renders helper text (e.g. "Maximum 4 guests")
+- `FieldError errors={[fieldState.error]}` renders the validation message coming from Zod via React Hook Form
+- `FieldGroup` groups several `Field`s together and gives them consistent spacing
 
 It is the same pattern we apply to the auth forms in Lesson 21 and the room create/edit forms in Lesson 23 -- consistency makes the codebase predictable for students.
+
+Every input also receives `aria-invalid={fieldState.invalid}` so screen readers announce the error state, matching the visual styling.
 
 ### How the Real-Time Price Preview Works
 
@@ -1760,7 +1781,7 @@ Backend (booking-backend/src/):
 Frontend (booking-frontend/src/):
 ├── components/
 │   └── booking/
-│       ├── BookingForm.tsx                # shadcn Form + Zod + price preview
+│       ├── BookingForm.tsx                # shadcn Field + Controller + Zod + price preview
 │       ├── booking-filters.tsx            # URL-driven status filter
 │       ├── booking-pagination.tsx         # shared pagination bar
 │       ├── my-booking-columns.tsx         # ColumnDef[] for guest view
@@ -1801,9 +1822,9 @@ Frontend (booking-frontend/src/):
 3. Every mutation should show a Sonner toast on success and on failure
 4. Verify `useUpdateBookingStatus` invalidates `bookingKeys.all` so the same booking updates in both the guest and owner views
 
-### Exercise 3: shadcn Form Booking Creation
+### Exercise 3: shadcn Field Booking Creation
 1. Add the schema in `schemas/bookingSchema.ts` with the `refine` rule for check-out > check-in
-2. Build the BookingForm using `Form`/`FormField`/`FormItem`/`FormLabel`/`FormControl`/`FormMessage`
+2. Build the BookingForm using `Controller` + `Field` / `FieldLabel` / `FieldDescription` / `FieldError` / `FieldGroup`
 3. Add the real-time price preview using `form.watch()`
 4. Submit a booking and confirm the toast appears and you are redirected to `/bookings`
 5. Try an invalid range (check-out before check-in) -- the error must appear under `checkOut`
@@ -1840,7 +1861,7 @@ Frontend (booking-frontend/src/):
 6. **`populate`** inlines room and user data so the frontend can render rich rows without extra requests
 7. **`bookingApi` + a query keys factory** keep React Query caches predictable and invalidations type-safe
 8. **One hook per action** (`useCreateBooking`, `useUpdateBookingStatus`, ...) keeps re-renders local and toasts consistent
-9. The booking form uses the **shadcn `Form` family** (`Form` / `FormField` / `FormItem` / `FormLabel` / `FormControl` / `FormMessage`) -- the same accessible pattern as auth and room forms
+9. The booking form uses the **shadcn `Field` family** (`Field` / `FieldLabel` / `FieldDescription` / `FieldError` / `FieldGroup`) driven by React Hook Form `Controller` -- the same accessible pattern as auth and room forms
 10. **`form.watch()` + `useMemo`** drive the real-time price preview without extra state
 11. **Zod `refine`** handles cross-field rules (check-out must be after check-in) that single-field rules cannot
 12. The **generic `<DataTable>`** from Lesson 17.1 is reused for both "My Bookings" and "Booking Requests" -- swap columns and a hook, keep everything else

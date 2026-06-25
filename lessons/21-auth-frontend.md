@@ -5,7 +5,7 @@
 - A **query keys factory** for authentication, just like the `todoKeys` pattern from Lesson 17
 - Storing and retrieving JWT tokens from localStorage
 - Configuring **Axios interceptors** to auto-attach auth headers and handle 401 responses
-- Building login and register forms with the **shadcn `Form` component** + React Hook Form + Zod
+- Building login and register forms with the **shadcn `Field` component** + React Hook Form + Zod
 - **Sonner toast notifications** for success and error feedback (the same pattern as Lesson 17)
 - Programmatic navigation with `useNavigate` from inside mutation `onSuccess` callbacks
 - Creating a `ProtectedRoute` component for route guarding
@@ -396,7 +396,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 
 ## 21.8 Login Page
 
-Build a login form using the **shadcn `Form` component** with React Hook Form + Zod, connected via the `useLogin` mutation hook.
+Build a login form using the **shadcn `Field` component** with React Hook Form + Zod, connected via the `useLogin` mutation hook.
 
 ### Zod Schema
 
@@ -432,21 +432,23 @@ export type LoginFormData = z.infer<typeof loginSchema>;
 export type RegisterFormData = z.infer<typeof registerSchema>;
 ```
 
-### Add the shadcn Form component
+### Add the shadcn Field component
 
-If you have not already added it, install the `Form` component from shadcn (it bundles React Hook Form helpers):
+If you have not already added it, install the `Field` component from shadcn:
 
 ```bash
-npx shadcn@latest add form
+npx shadcn@latest add field
 ```
 
-This gives us `Form`, `FormField`, `FormItem`, `FormLabel`, `FormControl`, and `FormMessage` -- composable wrappers that handle id wiring, accessibility, and error display automatically.
+This gives us `Field`, `FieldLabel`, `FieldError`, `FieldDescription`, and `FieldGroup` -- composable primitives that handle layout, accessibility, and error display. We pair them with React Hook Form's `Controller` to bind each input to the form state.
+
+> Note: the older shadcn `Form`/`FormField`/`FormItem`/`FormControl`/`FormMessage` wrappers are no longer used in this course. The new `Field` primitives are simpler, more flexible, and work with any input component.
 
 ### Login Page Component
 
 ```tsx
 // src/pages/LoginPage.tsx
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link } from 'react-router-dom';
 import { useLogin } from '../hooks/useAuth';
@@ -454,13 +456,11 @@ import { loginSchema, type LoginFormData } from '../schemas/authSchemas';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
+  Field,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field';
 import {
   Card,
   CardContent,
@@ -494,61 +494,65 @@ function LoginPage(): JSX.Element {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Form {...form}>
-            <form
-              onSubmit={form.handleSubmit(onSubmit)}
-              className="space-y-4"
-            >
-              <FormField
-                control={form.control}
+          <form
+            onSubmit={form.handleSubmit(onSubmit)}
+            className="space-y-4"
+          >
+            <FieldGroup>
+              <Controller
                 name="email"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Email</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        type="email"
-                        placeholder="you@example.com"
-                        autoComplete="email"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
                 control={form.control}
-                name="password"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Password</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        type="password"
-                        placeholder="Enter your password"
-                        autoComplete="current-password"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
+                render={({ field, fieldState }) => (
+                  <Field data-invalid={fieldState.invalid}>
+                    <FieldLabel htmlFor={field.name}>Email</FieldLabel>
+                    <Input
+                      {...field}
+                      id={field.name}
+                      type="email"
+                      placeholder="you@example.com"
+                      autoComplete="email"
+                      aria-invalid={fieldState.invalid}
+                    />
+                    {fieldState.invalid && (
+                      <FieldError errors={[fieldState.error]} />
+                    )}
+                  </Field>
                 )}
               />
 
-              <Button type="submit" className="w-full" disabled={isPending}>
-                {isPending ? 'Signing in...' : 'Sign in'}
-              </Button>
+              <Controller
+                name="password"
+                control={form.control}
+                render={({ field, fieldState }) => (
+                  <Field data-invalid={fieldState.invalid}>
+                    <FieldLabel htmlFor={field.name}>Password</FieldLabel>
+                    <Input
+                      {...field}
+                      id={field.name}
+                      type="password"
+                      placeholder="Enter your password"
+                      autoComplete="current-password"
+                      aria-invalid={fieldState.invalid}
+                    />
+                    {fieldState.invalid && (
+                      <FieldError errors={[fieldState.error]} />
+                    )}
+                  </Field>
+                )}
+              />
+            </FieldGroup>
 
-              <p className="text-center text-sm text-muted-foreground">
-                Do not have an account?{' '}
-                <Link to="/register" className="text-primary hover:underline">
-                  Register here
-                </Link>
-              </p>
-            </form>
-          </Form>
+            <Button type="submit" className="w-full" disabled={isPending}>
+              {isPending ? 'Signing in...' : 'Sign in'}
+            </Button>
+
+            <p className="text-center text-sm text-muted-foreground">
+              Do not have an account?{' '}
+              <Link to="/register" className="text-primary hover:underline">
+                Register here
+              </Link>
+            </p>
+          </form>
         </CardContent>
       </Card>
     </div>
@@ -562,7 +566,7 @@ export default LoginPage;
 
 ```
 1. User fills in email and password
-2. Zod validates the form data (client-side, via the shadcn Form component)
+2. Zod validates the form data (client-side, via the resolver)
 3. If valid, onSubmit() runs and calls login(data)
 4. The useLogin mutation hits POST /api/auth/login via Axios
 5. On success: token saved -> cache seeded -> success toast -> navigate
@@ -571,26 +575,30 @@ export default LoginPage;
 
 **No `try/catch`, no `setServerError`, no manual `setIsSubmitting`.** The hook owns all of that.
 
-### Why the shadcn `Form` component?
+### Why the shadcn `Field` component?
 
-| Plain `<Input {...register('email')} />` | shadcn `<FormField ... />` |
-|------------------------------------------|----------------------------|
-| Manual `<Label htmlFor>` linking | `FormLabel` auto-links via context |
-| Manual `errors.email && <p>...</p>` | `FormMessage` reads the error automatically |
-| Manual `aria-invalid` / `aria-describedby` | All a11y attributes wired automatically |
-| Hard to keep styles consistent | All form fields look identical by default |
+| Plain `<Input {...register('email')} />` | shadcn `<Field>` + `Controller` |
+|------------------------------------------|---------------------------------|
+| Manual `<Label htmlFor>` linking | `FieldLabel htmlFor={field.name}` -- explicit and obvious |
+| Manual `errors.email && <p>...</p>` | `<FieldError errors={[fieldState.error]} />` -- styled and accessible |
+| Manual `aria-invalid` plumbing | `data-invalid` on `Field` + `aria-invalid` on the input |
+| Hard to keep styles consistent | `FieldGroup` provides consistent vertical spacing |
 
-We use this **same `Form` + `FormField` pattern in every form across the app** from this lesson onwards.
+We use this **same `Field` + `Controller` pattern in every form across the app** from this lesson onwards.
 
 ---
 
 ## 21.9 Register Page
 
-The register page uses the same `Form` pattern plus a role-selection control:
+The register page uses the same `Field` + `Controller` pattern plus a shadcn `Select` for choosing the role. If you have not added the `Select` component yet, install it now:
+
+```bash
+npx shadcn@latest add select
+```
 
 ```tsx
 // src/pages/RegisterPage.tsx
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link } from 'react-router-dom';
 import { useRegister } from '../hooks/useAuth';
@@ -598,13 +606,19 @@ import { registerSchema, type RegisterFormData } from '../schemas/authSchemas';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Card,
   CardContent,
@@ -612,7 +626,6 @@ import {
   CardTitle,
   CardDescription,
 } from '@/components/ui/card';
-import { cn } from '@/lib/utils';
 
 function RegisterPage(): JSX.Element {
   const { mutate: registerUser, isPending } = useRegister();
@@ -642,144 +655,142 @@ function RegisterPage(): JSX.Element {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Form {...form}>
-            <form
-              onSubmit={form.handleSubmit(onSubmit)}
-              className="space-y-4"
-            >
+          <form
+            onSubmit={form.handleSubmit(onSubmit)}
+            className="space-y-4"
+          >
+            <FieldGroup>
               {/* Role Selection */}
-              <FormField
-                control={form.control}
+              <Controller
                 name="role"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>I want to</FormLabel>
-                    <FormControl>
-                      <div className="grid grid-cols-2 gap-3">
-                        <label
-                          className={cn(
-                            'flex items-center justify-center p-3 rounded-md border-2 cursor-pointer transition-colors',
-                            field.value === 'user'
-                              ? 'border-primary bg-primary/5'
-                              : 'border-muted hover:border-muted-foreground/30',
-                          )}
-                        >
-                          <input
-                            type="radio"
-                            value="user"
-                            checked={field.value === 'user'}
-                            onChange={() => field.onChange('user')}
-                            className="sr-only"
-                          />
-                          <span className="text-sm font-medium">Book Rooms</span>
-                        </label>
-                        <label
-                          className={cn(
-                            'flex items-center justify-center p-3 rounded-md border-2 cursor-pointer transition-colors',
-                            field.value === 'owner'
-                              ? 'border-primary bg-primary/5'
-                              : 'border-muted hover:border-muted-foreground/30',
-                          )}
-                        >
-                          <input
-                            type="radio"
-                            value="owner"
-                            checked={field.value === 'owner'}
-                            onChange={() => field.onChange('owner')}
-                            className="sr-only"
-                          />
-                          <span className="text-sm font-medium">List Rooms</span>
-                        </label>
-                      </div>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
+                control={form.control}
+                render={({ field, fieldState }) => (
+                  <Field data-invalid={fieldState.invalid}>
+                    <FieldLabel htmlFor={field.name}>I want to</FieldLabel>
+                    <Select
+                      value={field.value}
+                      onValueChange={field.onChange}
+                    >
+                      <SelectTrigger
+                        id={field.name}
+                        aria-invalid={fieldState.invalid}
+                      >
+                        <SelectValue placeholder="Select a role" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="user">
+                          Book rooms (Guest)
+                        </SelectItem>
+                        <SelectItem value="owner">
+                          List my room (Owner)
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FieldDescription>
+                      You can change this later in your profile.
+                    </FieldDescription>
+                    {fieldState.invalid && (
+                      <FieldError errors={[fieldState.error]} />
+                    )}
+                  </Field>
                 )}
               />
 
-              <FormField
-                control={form.control}
+              <Controller
                 name="name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Full Name</FormLabel>
-                    <FormControl>
-                      <Input {...field} placeholder="John Smith" />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
+                control={form.control}
+                render={({ field, fieldState }) => (
+                  <Field data-invalid={fieldState.invalid}>
+                    <FieldLabel htmlFor={field.name}>Full Name</FieldLabel>
+                    <Input
+                      {...field}
+                      id={field.name}
+                      placeholder="John Smith"
+                      autoComplete="name"
+                      aria-invalid={fieldState.invalid}
+                    />
+                    {fieldState.invalid && (
+                      <FieldError errors={[fieldState.error]} />
+                    )}
+                  </Field>
                 )}
               />
 
-              <FormField
-                control={form.control}
+              <Controller
                 name="email"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Email</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        type="email"
-                        placeholder="you@example.com"
-                        autoComplete="email"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
+                control={form.control}
+                render={({ field, fieldState }) => (
+                  <Field data-invalid={fieldState.invalid}>
+                    <FieldLabel htmlFor={field.name}>Email</FieldLabel>
+                    <Input
+                      {...field}
+                      id={field.name}
+                      type="email"
+                      placeholder="you@example.com"
+                      autoComplete="email"
+                      aria-invalid={fieldState.invalid}
+                    />
+                    {fieldState.invalid && (
+                      <FieldError errors={[fieldState.error]} />
+                    )}
+                  </Field>
                 )}
               />
 
-              <FormField
-                control={form.control}
+              <Controller
                 name="phone"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Phone Number</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        type="tel"
-                        placeholder="07700900001"
-                        autoComplete="tel"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
                 control={form.control}
-                name="password"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Password</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        type="password"
-                        placeholder="At least 6 characters"
-                        autoComplete="new-password"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
+                render={({ field, fieldState }) => (
+                  <Field data-invalid={fieldState.invalid}>
+                    <FieldLabel htmlFor={field.name}>Phone Number</FieldLabel>
+                    <Input
+                      {...field}
+                      id={field.name}
+                      type="tel"
+                      placeholder="07700900001"
+                      autoComplete="tel"
+                      aria-invalid={fieldState.invalid}
+                    />
+                    {fieldState.invalid && (
+                      <FieldError errors={[fieldState.error]} />
+                    )}
+                  </Field>
                 )}
               />
 
-              <Button type="submit" className="w-full" disabled={isPending}>
-                {isPending ? 'Creating account...' : 'Create Account'}
-              </Button>
+              <Controller
+                name="password"
+                control={form.control}
+                render={({ field, fieldState }) => (
+                  <Field data-invalid={fieldState.invalid}>
+                    <FieldLabel htmlFor={field.name}>Password</FieldLabel>
+                    <Input
+                      {...field}
+                      id={field.name}
+                      type="password"
+                      placeholder="At least 6 characters"
+                      autoComplete="new-password"
+                      aria-invalid={fieldState.invalid}
+                    />
+                    {fieldState.invalid && (
+                      <FieldError errors={[fieldState.error]} />
+                    )}
+                  </Field>
+                )}
+              />
+            </FieldGroup>
 
-              <p className="text-center text-sm text-muted-foreground">
-                Already have an account?{' '}
-                <Link to="/login" className="text-primary hover:underline">
-                  Login here
-                </Link>
-              </p>
-            </form>
-          </Form>
+            <Button type="submit" className="w-full" disabled={isPending}>
+              {isPending ? 'Creating account...' : 'Create Account'}
+            </Button>
+
+            <p className="text-center text-sm text-muted-foreground">
+              Already have an account?{' '}
+              <Link to="/login" className="text-primary hover:underline">
+                Login here
+              </Link>
+            </p>
+          </form>
         </CardContent>
       </Card>
     </div>
@@ -791,7 +802,7 @@ export default RegisterPage;
 
 ### Understanding the Role Selection
 
-The role field uses styled radio buttons hidden with `sr-only` (screen-reader only). Because we wrapped it in a `FormField`, the current value comes from `field.value` and updates flow through `field.onChange` -- no need for `watch()`.
+The role field uses a shadcn `Select` dropdown wired to the form through `Controller`. The current value comes from `field.value` and updates flow through `field.onChange` -- no need for `watch()`. A `FieldDescription` sits below the input to give helpful guidance, and `FieldError` renders only when validation fails.
 
 ---
 
@@ -1104,7 +1115,7 @@ booking-frontend/
 │   │   ├── api.ts                  # Axios instance + auth interceptors
 │   │   └── authApi.ts              # Typed auth HTTP service
 │   ├── components/
-│   │   ├── ui/                     # shadcn/ui (form, button, input, sonner, ...)
+│   │   ├── ui/                     # shadcn/ui (field, select, button, input, sonner, ...)
 │   │   ├── Navbar.tsx              # Uses useCurrentUser + useLogout
 │   │   └── ProtectedRoute.tsx      # Route guard built on useCurrentUser
 │   ├── hooks/
@@ -1116,8 +1127,8 @@ booking-frontend/
 │   ├── pages/
 │   │   ├── HomePage.tsx
 │   │   ├── AboutPage.tsx
-│   │   ├── LoginPage.tsx           # shadcn Form + useLogin
-│   │   ├── RegisterPage.tsx        # shadcn Form + useRegister + role select
+│   │   ├── LoginPage.tsx           # shadcn Field + useLogin
+│   │   ├── RegisterPage.tsx        # shadcn Field + Select + useRegister
 │   │   ├── RoomListPage.tsx
 │   │   ├── RoomDetailPage.tsx
 │   │   ├── DashboardPage.tsx       # Owner-only
@@ -1149,21 +1160,22 @@ booking-frontend/
 6. Confirm `<Toaster richColors />` is mounted in `main.tsx` (from Lesson 17)
 
 ### Exercise 2: Build the Login Flow
-1. Install the shadcn Form component: `npx shadcn@latest add form`
+1. Install the shadcn Field component: `npx shadcn@latest add field`
 2. Create the login Zod schema
-3. Build the `LoginPage` using `<Form>` + `<FormField>` + `useLogin`
+3. Build the `LoginPage` using `<Field>` + `<Controller>` + `useLogin`
 4. Test with valid credentials -- verify you see a "Welcome back" toast and are redirected
 5. Test with invalid credentials -- verify a red error toast appears
-6. Test with empty fields -- verify the Zod validation messages appear via `<FormMessage />`
+6. Test with empty fields -- verify the Zod validation messages appear via `<FieldError />`
 7. Refresh the page after logging in -- verify you stay logged in and `useCurrentUser` re-hydrates from `/auth/me`
 
 ### Exercise 3: Build the Register Flow
-1. Create the register Zod schema with the role enum
-2. Build the `RegisterPage` using `<Form>` + `<FormField>` + `useRegister`
-3. Test registering as a "user" -- verify a success toast and redirect to `/`
-4. Test registering as an "owner" -- verify a success toast and redirect to `/`
-5. Test registering with an existing email -- verify the error toast
-6. After registering, verify you are automatically logged in (token in localStorage, `useCurrentUser` returns the new user)
+1. Install the shadcn Select component: `npx shadcn@latest add select`
+2. Create the register Zod schema with the role enum
+3. Build the `RegisterPage` using `<Field>` + `<Controller>` + `<Select>` + `useRegister`
+4. Test registering as a "user" -- verify a success toast and redirect to `/`
+5. Test registering as an "owner" -- verify a success toast and redirect to `/`
+6. Test registering with an existing email -- verify the error toast
+7. After registering, verify you are automatically logged in (token in localStorage, `useCurrentUser` returns the new user)
 
 ### Exercise 4: Complete the Auth Flow
 1. Create the `ProtectedRoute` component built on `useCurrentUser`
@@ -1192,7 +1204,7 @@ booking-frontend/
 5. **Sonner toasts inside the hooks** give consistent success/error feedback across the whole app, just like the todo mutations in Lesson 17
 6. **Axios request interceptor** attaches the JWT to every call -- write once, works everywhere
 7. **Axios response interceptor** catches 401 globally and redirects to login -- no per-call error handling needed
-8. **The shadcn `Form` component** (`Form`, `FormField`, `FormItem`, `FormLabel`, `FormControl`, `FormMessage`) replaces plain `<Input {...register(...)} />` -- it wires labels, accessibility, and error messages automatically
+8. **The shadcn `Field` component** (`Field`, `FieldLabel`, `FieldError`, `FieldDescription`, `FieldGroup`) is paired with React Hook Form's `Controller` to bind inputs, wire labels via `htmlFor={field.name}`, surface validation through `<FieldError errors={[fieldState.error]} />`, and signal the invalid state with `data-invalid` + `aria-invalid`
 9. **`useNavigate` lives inside the auth hooks** -- pages stay clean and never duplicate redirect logic
 10. **`ProtectedRoute`** consumes `useCurrentUser()` -- the same single source of truth as the rest of the app
 11. **`queryClient.clear()` on logout** wipes user-specific caches so the next user does not see stale data

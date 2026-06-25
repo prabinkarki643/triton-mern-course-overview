@@ -6,7 +6,7 @@
 - Building a **`useRooms` hook family** with a typed `roomKeys` factory: `useRooms`, `useRoom`, `useCreateRoom`, `useUpdateRoom`, `useDeleteRoom`
 - Listing the owner's rooms with the **generic `<DataTable>`** from Lesson 17.1 (server-side pagination + URL-synced filters)
 - Defining typed columns with `useRoomColumns()` returning `ColumnDef<Room>[]`
-- Writing a complete **shadcn `Form`** (with `Form`, `FormField`, `FormItem`, `FormLabel`, `FormControl`, `FormMessage`) for Add Room
+- Writing a complete form with the new **shadcn `Field` primitives** (`Field`, `FieldLabel`, `FieldError`, `FieldDescription`, `FieldGroup`) driven by React Hook Form's `Controller`
 - Validating with Zod and deriving types via `z.infer`
 - Building `FormData` for multipart file uploads with Axios
 - Previewing selected images before uploading and revoking object URLs on unmount
@@ -18,7 +18,7 @@
 
 ## 23.1 The Big Picture
 
-The owner portal is a protected area where room owners manage their listings. It is built on the same patterns we already used for todos: an Axios service layer, focused React Query hooks, a reusable `<DataTable>`, and shadcn `Form` with Zod.
+The owner portal is a protected area where room owners manage their listings. It is built on the same patterns we already used for todos: an Axios service layer, focused React Query hooks, a reusable `<DataTable>`, and shadcn `Field` primitives with Zod.
 
 ```
 Owner Portal Layout (sidebar + main)
@@ -27,7 +27,7 @@ Owner Portal Layout (sidebar + main)
 │   ├── Pagination       -> URL params (?page=2)
 │   └── Row actions      -> Edit (link) + Delete (AlertDialog)
 │
-├── Add Room             (shadcn Form + Zod + image upload)
+├── Add Room             (shadcn Field + Zod + image upload)
 │   ├── Text fields (title, description, location, price, capacity)
 │   ├── Amenities checkboxes
 │   ├── Image upload with previews (URL.createObjectURL)
@@ -43,7 +43,7 @@ We are **not reinventing patterns** here. Everything builds on:
 
 - **Lesson 17** -- Axios service layer, `roomKeys` factory, mutation hooks with toasts
 - **Lesson 17.1** -- generic `<DataTable>`, `useSearchParams` filter sync, server-side pagination
-- **Lesson 12** -- shadcn `Form` + Zod + React Hook Form
+- **Lesson 12** -- shadcn `Field` primitives + Zod + React Hook Form (`Controller`)
 
 ---
 
@@ -54,8 +54,10 @@ If you already completed Lessons 17 and 17.1 in the Todo app, most of these are 
 ```bash
 cd webapp
 npm install @tanstack/react-query @tanstack/react-table axios react-hook-form zod @hookform/resolvers lucide-react
-npx shadcn@latest add form input textarea label checkbox button card table select alert-dialog skeleton sonner badge
+npx shadcn@latest add field input textarea label checkbox button card table select alert-dialog skeleton sonner badge
 ```
+
+> **Note:** We use the new shadcn `field` primitives (`Field`, `FieldLabel`, `FieldError`, `FieldDescription`, `FieldGroup`) -- **not** the older `form` block. The `Field` primitives compose directly with React Hook Form's `Controller`, giving us a leaner API and full control over each input.
 
 ---
 
@@ -983,29 +985,26 @@ export function useImagePreviews() {
 
 ---
 
-## 23.16 Add Room Page -- Full shadcn `Form`
+## 23.16 Add Room Page -- shadcn `Field` Primitives
 
-This is the complete pattern from Lesson 12, applied to the room form: `Form` provider, `FormField`, `FormItem`, `FormLabel`, `FormControl`, `FormMessage`.
+This is the modern shadcn pattern: small composable primitives (`Field`, `FieldLabel`, `FieldError`, `FieldDescription`, `FieldGroup`) wrapped around a plain `<form>` and driven by React Hook Form's `Controller`. There is no `Form` provider component anymore -- just plain HTML plus the primitives.
 
 ```tsx
 // webapp/src/pages/owner/AddRoom.tsx
 import { useNavigate } from 'react-router-dom';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-  FormDescription,
-} from '@/components/ui/form';
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Label } from '@/components/ui/label';
 import { useCreateRoom } from '@/hooks/useRooms';
 import { useImagePreviews } from '@/hooks/useImagePreviews';
 import {
@@ -1056,130 +1055,138 @@ function AddRoom(): JSX.Element {
     <div className="max-w-2xl">
       <h1 className="text-2xl font-bold mb-6">Add New Room</h1>
 
-      <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        <FieldGroup>
           {/* Title */}
-          <FormField
-            control={form.control}
+          <Controller
             name="title"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Room Title</FormLabel>
-                <FormControl>
-                  <Input placeholder="Cosy 2BR apartment in central London" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <Field data-invalid={fieldState.invalid}>
+                <FieldLabel htmlFor={field.name}>Room Title</FieldLabel>
+                <Input
+                  {...field}
+                  id={field.name}
+                  placeholder="Cosy 2BR apartment in central London"
+                  aria-invalid={fieldState.invalid}
+                />
+                {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+              </Field>
             )}
           />
 
           {/* Description */}
-          <FormField
-            control={form.control}
+          <Controller
             name="description"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Description</FormLabel>
-                <FormControl>
-                  <Textarea
-                    rows={4}
-                    placeholder="Describe the room, its features, and what makes it special..."
-                    {...field}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <Field data-invalid={fieldState.invalid}>
+                <FieldLabel htmlFor={field.name}>Description</FieldLabel>
+                <Textarea
+                  {...field}
+                  id={field.name}
+                  rows={4}
+                  placeholder="Describe the room, its features, and what makes it special..."
+                  aria-invalid={fieldState.invalid}
+                />
+                {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+              </Field>
             )}
           />
 
           {/* Location */}
-          <FormField
-            control={form.control}
+          <Controller
             name="location"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Location</FormLabel>
-                <FormControl>
-                  <Input placeholder="e.g. London, Manchester" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <Field data-invalid={fieldState.invalid}>
+                <FieldLabel htmlFor={field.name}>Location</FieldLabel>
+                <Input
+                  {...field}
+                  id={field.name}
+                  placeholder="e.g. London, Manchester"
+                  aria-invalid={fieldState.invalid}
+                />
+                {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+              </Field>
             )}
           />
 
           {/* Price + Capacity side-by-side */}
           <div className="grid grid-cols-2 gap-4">
-            <FormField
-              control={form.control}
+            <Controller
               name="price"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Price per Night (&pound;)</FormLabel>
-                  <FormControl>
-                    <Input type="number" min={1} step="0.01" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
+              control={form.control}
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>Price per Night (&pound;)</FieldLabel>
+                  <Input
+                    {...field}
+                    id={field.name}
+                    type="number"
+                    min={1}
+                    step="0.01"
+                    aria-invalid={fieldState.invalid}
+                  />
+                  <FieldDescription>Per-night rate shown to guests.</FieldDescription>
+                  {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+                </Field>
               )}
             />
 
-            <FormField
-              control={form.control}
+            <Controller
               name="capacity"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Maximum Capacity</FormLabel>
-                  <FormControl>
-                    <Input type="number" min={1} max={50} {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
+              control={form.control}
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>Maximum Capacity</FieldLabel>
+                  <Input
+                    {...field}
+                    id={field.name}
+                    type="number"
+                    min={1}
+                    max={50}
+                    aria-invalid={fieldState.invalid}
+                  />
+                  <FieldDescription>Maximum number of guests allowed.</FieldDescription>
+                  {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+                </Field>
               )}
             />
           </div>
 
           {/* Amenities -- multi-checkbox */}
-          <FormField
-            control={form.control}
+          <Controller
             name="amenities"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Amenities</FormLabel>
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <Field data-invalid={fieldState.invalid}>
+                <FieldLabel>Amenities</FieldLabel>
                 <div className="grid grid-cols-2 gap-2">
-                  {AMENITY_OPTIONS.map((amenity: string) => {
-                    const checked = field.value?.includes(amenity) ?? false;
-                    return (
-                      <div key={amenity} className="flex items-center space-x-2">
-                        <Checkbox
-                          id={`amenity-${amenity}`}
-                          checked={checked}
-                          onCheckedChange={(isChecked) => {
-                            const current: string[] = field.value ?? [];
-                            field.onChange(
-                              isChecked
-                                ? [...current, amenity]
-                                : current.filter((a) => a !== amenity)
-                            );
-                          }}
-                        />
-                        <Label
-                          htmlFor={`amenity-${amenity}`}
-                          className="text-sm font-normal"
-                        >
-                          {amenity}
-                        </Label>
-                      </div>
-                    );
-                  })}
+                  {AMENITY_OPTIONS.map((amenity: string) => (
+                    <label key={amenity} className="flex items-center gap-2">
+                      <Checkbox
+                        checked={field.value?.includes(amenity) ?? false}
+                        onCheckedChange={(checked) => {
+                          const next = checked
+                            ? [...(field.value ?? []), amenity]
+                            : (field.value ?? []).filter((a: string) => a !== amenity);
+                          field.onChange(next);
+                        }}
+                      />
+                      <span className="text-sm">{amenity}</span>
+                    </label>
+                  ))}
                 </div>
-                <FormMessage />
-              </FormItem>
+                <FieldDescription>Select all that apply.</FieldDescription>
+                {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+              </Field>
             )}
           />
 
-          {/* Images -- managed outside the form because Zod cannot validate files */}
-          <div className="space-y-2">
-            <Label htmlFor="images">Room Images (1-5)</Label>
+          {/* Images -- managed outside the schema because Zod cannot validate files */}
+          <Field>
+            <FieldLabel htmlFor="images">Room Photos (1-5)</FieldLabel>
             <Input
               id="images"
               type="file"
@@ -1187,9 +1194,9 @@ function AddRoom(): JSX.Element {
               multiple
               onChange={(e) => onSelect(e.target.files)}
             />
-            <p className="text-xs text-muted-foreground">
-              Accepted: JPG, PNG, WebP. Maximum 5 MB per file, 5 images total.
-            </p>
+            <FieldDescription>
+              Upload up to 5 images. JPG, PNG or WebP -- 5 MB max per file.
+            </FieldDescription>
 
             {previews.length > 0 && (
               <div className="grid grid-cols-3 gap-2 mt-2">
@@ -1207,23 +1214,23 @@ function AddRoom(): JSX.Element {
                 ))}
               </div>
             )}
-          </div>
+          </Field>
+        </FieldGroup>
 
-          {/* Submit */}
-          <div className="flex gap-2">
-            <Button type="submit" disabled={isPending} className="flex-1">
-              {isPending ? 'Creating Room...' : 'Create Room'}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => navigate('/owner/rooms')}
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
-      </Form>
+        {/* Submit */}
+        <div className="flex gap-2">
+          <Button type="submit" disabled={isPending} className="flex-1">
+            {isPending ? 'Creating Room...' : 'Create Room'}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => navigate('/owner/rooms')}
+          >
+            Cancel
+          </Button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -1231,21 +1238,27 @@ function AddRoom(): JSX.Element {
 export default AddRoom;
 ```
 
-### How the shadcn `Form` Pattern Works
+### How the shadcn `Field` Pattern Works
 
-This is the **standard shadcn pattern** for forms. Compare it to the manual approach in Lesson 12 -- the shadcn primitives wire labels, error messages, and accessibility attributes for you:
+The `Field` primitives are intentionally small. They group a label, input, description, and error message into one accessible block -- and they leave the input itself alone, so you can drop in any control (`Input`, `Textarea`, `Checkbox`, native `<select>`, custom widgets):
 
 | Component | Job |
 |-----------|-----|
-| `<Form {...form}>` | The provider -- gives every `FormField` access to the form context |
-| `<FormField name="..." />` | Connects one field to React Hook Form via `control` and `name` |
-| `<FormItem>` | The wrapper that groups label, control, description, and error |
-| `<FormLabel>` | Auto-wires `htmlFor` to the input id |
-| `<FormControl>` | Wraps the actual input; auto-applies `aria-invalid`, `aria-describedby` |
-| `<FormDescription>` | Helper text below the label |
-| `<FormMessage>` | Renders the Zod error message automatically |
+| `<FieldGroup>` | Wraps a stack of `Field`s and applies consistent vertical spacing |
+| `<Field data-invalid={...}>` | One field container -- accepts `data-invalid` so styles can react to errors |
+| `<FieldLabel htmlFor="...">` | Standard label -- wire it to your input via `htmlFor` + `id` |
+| `<FieldDescription>` | Helper text shown below the input |
+| `<FieldError errors={[...]}>` | Renders one or more error messages with the right styling |
 
-You **never** write `htmlFor` or `aria-invalid` manually -- the primitives do it. That is the win.
+We bind each field to React Hook Form using `Controller`, which gives us both `field` (value, `onChange`, `name`, ref) and `fieldState` (`invalid`, `error`). The pattern is always the same:
+
+1. `<Field data-invalid={fieldState.invalid}>`
+2. `<FieldLabel htmlFor={field.name}>...</FieldLabel>`
+3. The input with `{...field}`, `id={field.name}`, `aria-invalid={fieldState.invalid}`
+4. Optional `<FieldDescription>` for helper text
+5. `{fieldState.invalid && <FieldError errors={[fieldState.error]} />}`
+
+This is more code per field than the old `Form` wrapper, but you get full control of the input and no hidden magic.
 
 ### Why Image Files Live Outside the Form
 
@@ -1270,7 +1283,7 @@ Axios sends this with `Content-Type: multipart/form-data; boundary=...` so Multe
 
 ## 23.17 Edit Room Page -- Pre-Filled Form
 
-The edit page reuses the same schema, the same hook for previews, and the same shadcn `Form` blocks. The only differences:
+The edit page reuses the same schema, the same hook for previews, and the same `Field` blocks. The only differences:
 
 1. We fetch the existing room with `useRoom(id)`
 2. We `reset()` the form once the data arrives
@@ -1281,21 +1294,19 @@ The edit page reuses the same schema, the same hook for previews, and the same s
 // webapp/src/pages/owner/EditRoom.tsx
 import { useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useRoom, useUpdateRoom } from '@/hooks/useRooms';
 import { useImagePreviews } from '@/hooks/useImagePreviews';
@@ -1381,119 +1392,121 @@ function EditRoom(): JSX.Element {
     <div className="max-w-2xl">
       <h1 className="text-2xl font-bold mb-6">Edit Room</h1>
 
-      <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-          <FormField
-            control={form.control}
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        <FieldGroup>
+          <Controller
             name="title"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Room Title</FormLabel>
-                <FormControl>
-                  <Input {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <Field data-invalid={fieldState.invalid}>
+                <FieldLabel htmlFor={field.name}>Room Title</FieldLabel>
+                <Input {...field} id={field.name} aria-invalid={fieldState.invalid} />
+                {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+              </Field>
             )}
           />
 
-          <FormField
-            control={form.control}
+          <Controller
             name="description"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Description</FormLabel>
-                <FormControl>
-                  <Textarea rows={4} {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <Field data-invalid={fieldState.invalid}>
+                <FieldLabel htmlFor={field.name}>Description</FieldLabel>
+                <Textarea
+                  {...field}
+                  id={field.name}
+                  rows={4}
+                  aria-invalid={fieldState.invalid}
+                />
+                {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+              </Field>
             )}
           />
 
-          <FormField
-            control={form.control}
+          <Controller
             name="location"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Location</FormLabel>
-                <FormControl>
-                  <Input {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <Field data-invalid={fieldState.invalid}>
+                <FieldLabel htmlFor={field.name}>Location</FieldLabel>
+                <Input {...field} id={field.name} aria-invalid={fieldState.invalid} />
+                {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+              </Field>
             )}
           />
 
           <div className="grid grid-cols-2 gap-4">
-            <FormField
-              control={form.control}
+            <Controller
               name="price"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Price per Night (&pound;)</FormLabel>
-                  <FormControl>
-                    <Input type="number" min={1} step="0.01" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
+              control={form.control}
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>Price per Night (&pound;)</FieldLabel>
+                  <Input
+                    {...field}
+                    id={field.name}
+                    type="number"
+                    min={1}
+                    step="0.01"
+                    aria-invalid={fieldState.invalid}
+                  />
+                  {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+                </Field>
               )}
             />
 
-            <FormField
-              control={form.control}
+            <Controller
               name="capacity"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Maximum Capacity</FormLabel>
-                  <FormControl>
-                    <Input type="number" min={1} max={50} {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
+              control={form.control}
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>Maximum Capacity</FieldLabel>
+                  <Input
+                    {...field}
+                    id={field.name}
+                    type="number"
+                    min={1}
+                    max={50}
+                    aria-invalid={fieldState.invalid}
+                  />
+                  {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+                </Field>
               )}
             />
           </div>
 
-          <FormField
-            control={form.control}
+          <Controller
             name="amenities"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Amenities</FormLabel>
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <Field data-invalid={fieldState.invalid}>
+                <FieldLabel>Amenities</FieldLabel>
                 <div className="grid grid-cols-2 gap-2">
-                  {AMENITY_OPTIONS.map((amenity: string) => {
-                    const checked = field.value?.includes(amenity) ?? false;
-                    return (
-                      <div key={amenity} className="flex items-center space-x-2">
-                        <Checkbox
-                          id={`amenity-${amenity}`}
-                          checked={checked}
-                          onCheckedChange={(isChecked) => {
-                            const current: string[] = field.value ?? [];
-                            field.onChange(
-                              isChecked
-                                ? [...current, amenity]
-                                : current.filter((a) => a !== amenity)
-                            );
-                          }}
-                        />
-                        <Label htmlFor={`amenity-${amenity}`} className="text-sm font-normal">
-                          {amenity}
-                        </Label>
-                      </div>
-                    );
-                  })}
+                  {AMENITY_OPTIONS.map((amenity: string) => (
+                    <label key={amenity} className="flex items-center gap-2">
+                      <Checkbox
+                        checked={field.value?.includes(amenity) ?? false}
+                        onCheckedChange={(checked) => {
+                          const next = checked
+                            ? [...(field.value ?? []), amenity]
+                            : (field.value ?? []).filter((a: string) => a !== amenity);
+                          field.onChange(next);
+                        }}
+                      />
+                      <span className="text-sm">{amenity}</span>
+                    </label>
+                  ))}
                 </div>
-                <FormMessage />
-              </FormItem>
+                <FieldDescription>Select all that apply.</FieldDescription>
+                {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+              </Field>
             )}
           />
 
           {/* Current images */}
           {room.images.length > 0 && files.length === 0 && (
-            <div className="space-y-2">
-              <Label>Current Images</Label>
+            <Field>
+              <FieldLabel>Current Images</FieldLabel>
               <div className="grid grid-cols-3 gap-2">
                 {room.images.map((image, index) => (
                   <div
@@ -1508,15 +1521,15 @@ function EditRoom(): JSX.Element {
                   </div>
                 ))}
               </div>
-              <p className="text-xs text-muted-foreground">
+              <FieldDescription>
                 Uploading new images will replace the existing ones.
-              </p>
-            </div>
+              </FieldDescription>
+            </Field>
           )}
 
           {/* Upload new images */}
-          <div className="space-y-2">
-            <Label htmlFor="images">Upload New Images (optional)</Label>
+          <Field>
+            <FieldLabel htmlFor="images">Upload New Images (optional)</FieldLabel>
             <Input
               id="images"
               type="file"
@@ -1524,6 +1537,9 @@ function EditRoom(): JSX.Element {
               multiple
               onChange={(e) => onSelect(e.target.files)}
             />
+            <FieldDescription>
+              Leave empty to keep the existing photos. JPG, PNG or WebP.
+            </FieldDescription>
 
             {previews.length > 0 && (
               <div className="grid grid-cols-3 gap-2 mt-2">
@@ -1541,22 +1557,22 @@ function EditRoom(): JSX.Element {
                 ))}
               </div>
             )}
-          </div>
+          </Field>
+        </FieldGroup>
 
-          <div className="flex gap-2">
-            <Button type="submit" disabled={isPending}>
-              {isPending ? 'Saving...' : 'Save Changes'}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => navigate('/owner/rooms')}
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
-      </Form>
+        <div className="flex gap-2">
+          <Button type="submit" disabled={isPending}>
+            {isPending ? 'Saving...' : 'Save Changes'}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => navigate('/owner/rooms')}
+          >
+            Cancel
+          </Button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -1598,7 +1614,7 @@ webapp/src/
 │   │   └── room-pagination.tsx      # page controls
 │   └── ui/
 │       ├── data-table.tsx           # generic <DataTable> from Lesson 17.1
-│       ├── form.tsx                 # shadcn Form, FormField, FormItem, etc.
+│       ├── field.tsx                # shadcn Field, FieldLabel, FieldError, etc.
 │       └── ... other shadcn pieces
 ├── hooks/
 │   ├── useRooms.ts                  # roomKeys + 5 hooks
@@ -1607,8 +1623,8 @@ webapp/src/
 ├── pages/
 │   └── owner/
 │       ├── MyRooms.tsx              # DataTable orchestrator
-│       ├── AddRoom.tsx              # shadcn Form + image upload
-│       ├── EditRoom.tsx             # pre-filled shadcn Form
+│       ├── AddRoom.tsx              # Field primitives + Controller + image upload
+│       ├── EditRoom.tsx             # pre-filled Field primitives + Controller
 │       └── OwnerBookings.tsx        # placeholder (Lesson 25)
 ├── schemas/
 │   └── roomSchema.ts                # Zod schema + AMENITY_OPTIONS
@@ -1638,7 +1654,7 @@ webapp/src/
 
 ### Exercise 3: Build the Add Room Form
 1. Create the Zod schema in `schemas/roomSchema.ts`
-2. Use `Form`, `FormField`, `FormItem`, `FormLabel`, `FormControl`, `FormMessage` for every field
+2. Use the `Field`, `FieldLabel`, `FieldError`, `FieldDescription`, `FieldGroup` primitives with React Hook Form's `Controller` for every field
 3. Use the `useImagePreviews` hook for the file input
 4. On submit, build a `FormData` payload and call `createRoom(formData)`
 5. Confirm the toast appears and the navigation back to `/owner/rooms` happens on success
@@ -1669,10 +1685,11 @@ The backend then deletes those files from disk and removes them from the room do
 3. **One hook per action** -- `useRooms`, `useRoom`, `useCreateRoom`, `useUpdateRoom`, `useDeleteRoom`. Each owns its own toasts
 4. **Reuse `<DataTable>`** from Lesson 17.1 for any entity -- only the columns and the data hook change
 5. **URL is the source of truth** for table state via `useSearchParams` -- bookmarkable, refresh-proof, shareable
-6. **shadcn `Form` pattern** (`Form`, `FormField`, `FormItem`, `FormLabel`, `FormControl`, `FormMessage`) wires labels, ids, and aria attributes for you
-7. **Zod with `z.coerce.number()`** converts string inputs to numbers cleanly; `z.infer` derives types from the schema
-8. **Files live outside the schema** -- track them with a dedicated hook because Zod cannot validate `File` objects
-9. **`FormData`** is required for multipart upload; the same field name (`'images'`) can be appended multiple times for arrays of files
-10. **`URL.createObjectURL`** inside a `useEffect` with cleanup `URL.revokeObjectURL` prevents memory leaks from preview blobs
-11. **shadcn `AlertDialog`** wraps destructive actions -- never delete without explicit confirmation
-12. **Sonner toasts inside mutation hooks** mean every component using the hook gets consistent feedback for free
+6. **shadcn `Field` primitives** (`Field`, `FieldLabel`, `FieldError`, `FieldDescription`, `FieldGroup`) compose with React Hook Form's `Controller` -- no `Form` provider, no hidden wiring, full control over each input
+7. **Always wire `id={field.name}` and `aria-invalid={fieldState.invalid}`** on the input -- this is the small-but-essential accessibility glue that the old `Form` wrapper used to do automatically
+8. **Zod with `z.coerce.number()`** converts string inputs to numbers cleanly; `z.infer` derives types from the schema
+9. **Files live outside the schema** -- track them with a dedicated hook because Zod cannot validate `File` objects
+10. **`FormData`** is required for multipart upload; the same field name (`'images'`) can be appended multiple times for arrays of files
+11. **`URL.createObjectURL`** inside a `useEffect` with cleanup `URL.revokeObjectURL` prevents memory leaks from preview blobs
+12. **shadcn `AlertDialog`** wraps destructive actions -- never delete without explicit confirmation
+13. **Sonner toasts inside mutation hooks** mean every component using the hook gets consistent feedback for free

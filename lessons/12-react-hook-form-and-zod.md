@@ -4,9 +4,10 @@
 - Why use a form library instead of manual state management
 - Creating validation schemas with Zod
 - Deriving TypeScript types from Zod schemas with `z.infer`
-- Using React Hook Form with the typed `useForm` hook
+- Using React Hook Form with the typed `useForm` hook and the `Controller` component
 - Connecting Zod to React Hook Form
-- Displaying validation errors
+- Composing forms with shadcn/ui's `Field` family (`Field`, `FieldLabel`, `FieldDescription`, `FieldError`, `FieldGroup`)
+- Displaying validation errors accessibly
 - Building a validated Todo input form
 
 ---
@@ -471,12 +472,42 @@ shadcn/ui provides several Field sub-components for building forms:
 
 ### Using FieldGroup
 
+`FieldGroup` is a wrapper that stacks multiple `Field` components vertically with consistent spacing — so you don't need to add your own `space-y-*` classes:
+
 ```tsx
-<FieldGroup>
-  <Controller name="title" control={form.control} render={...} />
-  <Controller name="priority" control={form.control} render={...} />
-</FieldGroup>
+<form onSubmit={form.handleSubmit(onSubmit)}>
+  <FieldGroup>
+    <Controller name="title" control={form.control} render={...} />
+    <Controller name="priority" control={form.control} render={...} />
+  </FieldGroup>
+  <Button type="submit">Add Task</Button>
+</form>
 ```
+
+### Horizontal Field Layout
+
+By default `Field` stacks the label above the input. For inline layouts — like a row of action buttons, or a checkbox sat next to its label — use `orientation="horizontal"`:
+
+```tsx
+<Controller
+  name="acceptTerms"
+  control={form.control}
+  render={({ field, fieldState }) => (
+    <Field orientation="horizontal" data-invalid={fieldState.invalid}>
+      <Checkbox
+        id={field.name}
+        checked={field.value}
+        onCheckedChange={field.onChange}
+        aria-invalid={fieldState.invalid}
+      />
+      <FieldLabel htmlFor={field.name}>I accept the terms</FieldLabel>
+      {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+    </Field>
+  )}
+/>
+```
+
+You'll see this pattern again in later lessons when we add checkboxes, switches, and side-by-side action buttons.
 
 ---
 
@@ -661,6 +692,8 @@ Create a form with:
 - A "title" field (required, min 3 chars, max 100 chars)
 - Define the schema with Zod and derive the type with `z.infer`
 - Type the `useForm` hook and `onSubmit` handler
+- Use `Controller` + `Field` + `FieldLabel` + `FieldError` from shadcn/ui
+- Add a `FieldDescription` with helper text (e.g. "Choose a clear, short title — 3 to 100 characters")
 - Display the error message below the input when validation fails
 - Log the valid data on submit
 
@@ -668,8 +701,9 @@ Create a form with:
 Build the complete AddTodoForm with:
 - Title input with validation
 - Priority select (low/medium/high)
-- shadcn/ui components for styling
-- Error messages for all fields
+- shadcn/ui `Field` components for styling and layout
+- Wrap both fields in a `FieldGroup` for consistent spacing
+- Error messages for all fields via `FieldError`
 - Form resets after successful submission
 - All types derived from the Zod schema
 
