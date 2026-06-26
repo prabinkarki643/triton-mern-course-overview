@@ -846,24 +846,25 @@ export function SubmitButton({
 Usage with a React Query mutation hook -- `isPending` drives the button state:
 
 ```tsx
-import { useCreateRoom } from '@/hooks/useRooms';
+import { useUpdateRoom } from '@/hooks/useRooms';
 
-function CreateRoomForm() {
-  const { mutate: createRoom, isPending } = useCreateRoom();
+function EditRoomTextForm({ roomId }: { roomId: string }) {
+  const { mutate: updateRoom, isPending } = useUpdateRoom();
 
-  const onSubmit = (data: RoomFormData) => {
-    createRoom(data, {
-      onSuccess: () => form.reset(),
-    });
+  const onSubmit = (data: UpdateRoomData) => {
+    updateRoom(
+      { id: roomId, payload: data },
+      { onSuccess: () => form.reset(data) }
+    );
   };
 
   return (
     <form onSubmit={form.handleSubmit(onSubmit)}>
-      {/* ... form fields ... */}
+      {/* ... text fields only -- images live in their own gallery component ... */}
       <SubmitButton
         loading={isPending}
-        label="Create Room"
-        loadingLabel="Creating..."
+        label="Save changes"
+        loadingLabel="Saving..."
       />
     </form>
   );
