@@ -3,14 +3,14 @@
 ## What You Will Learn
 - Building an owner layout with sidebar navigation using shadcn components
 - Defining a **roomApi service layer** with Axios (mirroring the L17 `todoApi` pattern)
-- Building a **`useRooms` hook family** with a typed `roomKeys` factory: `useRooms`, `useRoom`, `useCreateRoom`, `useUpdateRoom`, `useDeleteRoom`
+- Building a **`useRooms` hook family** with a typed `roomKeys` factory: `useRooms`, `useRoom`, `useCreateRoom`, `useUpdateRoom`, `useAddRoomImages`, `useDeleteRoomImage`, `useDeleteRoom`
 - Listing the owner's rooms with the **generic `<DataTable>`** from Lesson 17.1 (server-side pagination + URL-synced filters)
 - Defining typed columns with `useRoomColumns()` returning `ColumnDef<Room>[]`
 - Writing a complete form with the new **shadcn `Field` primitives** (`Field`, `FieldLabel`, `FieldError`, `FieldDescription`, `FieldGroup`) driven by React Hook Form's `Controller`
 - Validating with Zod and deriving types via `z.infer`
-- Building `FormData` for multipart file uploads with Axios
+- Building `FormData` for multipart file uploads with Axios (for room creation and adding more images later)
 - Previewing selected images before uploading and revoking object URLs on unmount
-- Editing rooms with a pre-filled form
+- Editing rooms with a **split UI**: text fields save via JSON PUT; image gallery uses separate Add/Delete endpoints so individual photos can be added or removed without touching the whole gallery
 - Deleting rooms with shadcn `AlertDialog` confirmation
 - Showing Sonner **toasts** inside mutation hooks for consistent success / error feedback
 
@@ -34,9 +34,12 @@ Owner Portal Layout (sidebar + main)
 │   └── Submit -> FormData -> POST /api/rooms (multipart)
 │
 └── Edit Room            (same form, pre-filled via form.reset())
-    ├── Current images displayed
-    ├── Option to upload replacement images
-    └── Submit -> FormData -> PUT /api/rooms/:id
+    ├── Text fields -> Save -> JSON -> PUT /api/rooms/:id
+    └── Image gallery
+        ├── Each current image has a delete (X) button
+        │   -> DELETE /api/rooms/:id/images/:imageName
+        └── "Upload more" file input (multi-select with previews)
+            -> POST /api/rooms/:id/images (multipart)
 ```
 
 We are **not reinventing patterns** here. Everything builds on:
@@ -175,18 +178,37 @@ export interface RoomFilters {
   status?: RoomStatus;
   sort?: string;
 }
+
+// Body of PUT /api/rooms/:id -- text fields only, all optional
+export interface UpdateRoomData {
+  title?: string;
+  description?: string;
+  location?: string;
+  price?: number;
+  capacity?: number;
+  amenities?: string[];
+}
 ```
 
 ---
 
 ## 23.5 The `roomApi` Service Layer
 
-This is identical in spirit to `todoApi` from Lesson 17 -- one method per CRUD action, fully typed, automatic JSON parsing, automatic error throwing on 4xx/5xx. Create and update accept a `FormData` because rooms include image uploads.
+This is identical in spirit to `todoApi` from Lesson 17 -- one method per backend endpoint, fully typed, automatic JSON parsing, automatic error throwing on 4xx/5xx.
+
+- **Create** uses `FormData` because creation includes the initial images
+- **Update** uses plain JSON -- text fields only (see the matching note in Lesson 22.14)
+- Image management has its own two methods: `addImages` (POST) and `deleteImage` (DELETE)
 
 ```ts
 // webapp/src/services/roomApi.ts
 import api from './api';
-import type { Room, RoomFilters, RoomsResponse } from '../types/room';
+import type {
+  Room,
+  RoomFilters,
+  RoomsResponse,
+  UpdateRoomData,
+} from '../types/room';
 
 export const roomApi = {
   // GET /api/rooms?page=&limit=&search=&location=&status=
@@ -209,7 +231,7 @@ export const roomApi = {
     return data.data;
   },
 
-  // POST /api/rooms (multipart/form-data)
+  // POST /api/rooms (multipart/form-data) -- text + initial images in one call
   async create(formData: FormData): Promise<Room> {
     const { data } = await api.post<{ data: Room }>('/rooms', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -217,12 +239,25 @@ export const roomApi = {
     return data.data;
   },
 
-  // PUT /api/rooms/:id (multipart/form-data)
-  async update(id: string, formData: FormData): Promise<Room> {
-    const { data } = await api.put<{ data: Room }>(`/rooms/${id}`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
+  // PUT /api/rooms/:id -- text fields only, plain JSON
+  async update(id: string, payload: UpdateRoomData): Promise<Room> {
+    const { data } = await api.put<{ data: Room }>(`/rooms/${id}`, payload);
     return data.data;
+  },
+
+  // POST /api/rooms/:id/images -- append new images
+  async addImages(id: string, formData: FormData): Promise<Room> {
+    const { data } = await api.post<{ data: Room }>(
+      `/rooms/${id}/images`,
+      formData,
+      { headers: { 'Content-Type': 'multipart/form-data' } }
+    );
+    return data.data;
+  },
+
+  // DELETE /api/rooms/:id/images/:imageName -- remove one image
+  async deleteImage(id: string, imageName: string): Promise<void> {
+    await api.delete(`/rooms/${id}/images/${imageName}`);
   },
 
   // DELETE /api/rooms/:id
@@ -231,6 +266,8 @@ export const roomApi = {
   },
 };
 ```
+
+> Make sure your `types/room.ts` exports an `UpdateRoomData` matching the backend's `updateRoomValidator` -- all fields optional, no `images` field.
 
 **Notice:** the service knows nothing about React Query. It is pure HTTP. This is the same separation we used in Lesson 17 -- the API service is reusable from anywhere (a hook, a script, a test).
 
@@ -245,7 +282,7 @@ One focused hook per action. Each mutation invalidates the right keys and fires 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { roomApi } from '../services/roomApi';
-import type { RoomFilters } from '../types/room';
+import type { RoomFilters, UpdateRoomData } from '../types/room';
 
 // Centralised query keys -- one source of truth for cache invalidation
 export const roomKeys = {
@@ -307,8 +344,8 @@ export function useUpdateRoom() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ id, formData }: { id: string; formData: FormData }) =>
-      roomApi.update(id, formData),
+    mutationFn: ({ id, payload }: { id: string; payload: UpdateRoomData }) =>
+      roomApi.update(id, payload),
     onSuccess: (_room, variables) => {
       toast.success('Room updated successfully');
       queryClient.invalidateQueries({ queryKey: roomKeys.all });
@@ -316,6 +353,42 @@ export function useUpdateRoom() {
     },
     onError: (error: Error) => {
       toast.error(error.message || 'Failed to update room');
+    },
+  });
+}
+
+// Append new images to a room
+export function useAddRoomImages() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, formData }: { id: string; formData: FormData }) =>
+      roomApi.addImages(id, formData),
+    onSuccess: (_room, variables) => {
+      toast.success('Images uploaded');
+      queryClient.invalidateQueries({ queryKey: roomKeys.detail(variables.id) });
+      queryClient.invalidateQueries({ queryKey: roomKeys.all });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to upload images');
+    },
+  });
+}
+
+// Remove one image from a room
+export function useDeleteRoomImage() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, imageName }: { id: string; imageName: string }) =>
+      roomApi.deleteImage(id, imageName),
+    onSuccess: (_void, variables) => {
+      toast.success('Image removed');
+      queryClient.invalidateQueries({ queryKey: roomKeys.detail(variables.id) });
+      queryClient.invalidateQueries({ queryKey: roomKeys.all });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to remove image');
     },
   });
 }
@@ -1281,14 +1354,14 @@ Axios sends this with `Content-Type: multipart/form-data; boundary=...` so Multe
 
 ---
 
-## 23.17 Edit Room Page -- Pre-Filled Form
+## 23.17 Edit Room Page -- Split UI (Text Save + Image Gallery)
 
-The edit page reuses the same schema, the same hook for previews, and the same `Field` blocks. The only differences:
+The edit page handles text fields and images **separately** -- mirroring the backend split from Lesson 22.14-22.16:
 
-1. We fetch the existing room with `useRoom(id)`
-2. We `reset()` the form once the data arrives
-3. We display the existing images alongside the new file input
-4. Images are **optional** on update -- if the user picks nothing, the existing images remain
+1. **Text fields** sit in the main form. "Save Changes" submits a plain JSON `PUT` via `useUpdateRoom`.
+2. **The image gallery** lives below the form. Each existing image has a delete (X) button that calls `useDeleteRoomImage`. A separate "Upload more" file input calls `useAddRoomImages`.
+
+The user can save text edits without touching images, add an extra photo without re-uploading the whole gallery, or remove a single bad photo without clearing everything. The form preview is pulled in from `useRoom(id)` and `form.reset()` once the data arrives.
 
 ```tsx
 // webapp/src/pages/owner/EditRoom.tsx
@@ -1308,7 +1381,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useRoom, useUpdateRoom } from '@/hooks/useRooms';
+import { X } from 'lucide-react';
+import {
+  useRoom,
+  useUpdateRoom,
+  useAddRoomImages,
+  useDeleteRoomImage,
+} from '@/hooks/useRooms';
 import { useImagePreviews } from '@/hooks/useImagePreviews';
 import { API_URL } from '@/services/api';
 import {
@@ -1321,8 +1400,10 @@ function EditRoom(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: room, isLoading } = useRoom(id ?? '');
-  const { mutate: updateRoom, isPending } = useUpdateRoom();
-  const { files, previews, onSelect } = useImagePreviews();
+  const { mutate: updateRoom, isPending: isSaving } = useUpdateRoom();
+  const { mutate: addImages, isPending: isUploading } = useAddRoomImages();
+  const { mutate: deleteImage } = useDeleteRoomImage();
+  const { files, previews, onSelect, clear: clearPreviews } = useImagePreviews();
 
   const form = useForm<RoomFormData>({
     resolver: zodResolver(roomFormSchema),
@@ -1350,26 +1431,30 @@ function EditRoom(): JSX.Element {
     }
   }, [room, form]);
 
+  // Save text fields -- plain JSON, no FormData
   const onSubmit = (data: RoomFormData): void => {
     if (!id) return;
-
-    const formData = new FormData();
-    formData.append('title', data.title);
-    formData.append('description', data.description);
-    formData.append('location', data.location);
-    formData.append('price', String(data.price));
-    formData.append('capacity', String(data.capacity));
-    data.amenities?.forEach((a) => formData.append('amenities[]', a));
-
-    // Only append images if the owner picked new ones
-    if (files.length > 0) {
-      files.forEach((file) => formData.append('images', file));
-    }
-
     updateRoom(
-      { id, formData },
+      { id, payload: data },
       { onSuccess: () => navigate('/owner/rooms') }
     );
+  };
+
+  // Upload the picked images, then clear the previews
+  const handleUploadImages = (): void => {
+    if (!id || files.length === 0) return;
+    const formData = new FormData();
+    files.forEach((file) => formData.append('images', file));
+    addImages(
+      { id, formData },
+      { onSuccess: () => clearPreviews() }
+    );
+  };
+
+  // Remove a single image straight from the gallery
+  const handleDeleteImage = (imageName: string): void => {
+    if (!id) return;
+    deleteImage({ id, imageName });
   };
 
   if (isLoading) {
@@ -1503,66 +1588,11 @@ function EditRoom(): JSX.Element {
             )}
           />
 
-          {/* Current images */}
-          {room.images.length > 0 && files.length === 0 && (
-            <Field>
-              <FieldLabel>Current Images</FieldLabel>
-              <div className="grid grid-cols-3 gap-2">
-                {room.images.map((image, index) => (
-                  <div
-                    key={image}
-                    className="aspect-video overflow-hidden rounded-md border"
-                  >
-                    <img
-                      src={`${baseUrl}/uploads/rooms/${image}`}
-                      alt={`Room image ${index + 1}`}
-                      className="h-full w-full object-cover"
-                    />
-                  </div>
-                ))}
-              </div>
-              <FieldDescription>
-                Uploading new images will replace the existing ones.
-              </FieldDescription>
-            </Field>
-          )}
-
-          {/* Upload new images */}
-          <Field>
-            <FieldLabel htmlFor="images">Upload New Images (optional)</FieldLabel>
-            <Input
-              id="images"
-              type="file"
-              accept=".jpg,.jpeg,.png,.webp"
-              multiple
-              onChange={(e) => onSelect(e.target.files)}
-            />
-            <FieldDescription>
-              Leave empty to keep the existing photos. JPG, PNG or WebP.
-            </FieldDescription>
-
-            {previews.length > 0 && (
-              <div className="grid grid-cols-3 gap-2 mt-2">
-                {previews.map((preview, index) => (
-                  <div
-                    key={index}
-                    className="aspect-video overflow-hidden rounded-md border"
-                  >
-                    <img
-                      src={preview}
-                      alt={`New preview ${index + 1}`}
-                      className="h-full w-full object-cover"
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
-          </Field>
         </FieldGroup>
 
         <div className="flex gap-2">
-          <Button type="submit" disabled={isPending}>
-            {isPending ? 'Saving...' : 'Save Changes'}
+          <Button type="submit" disabled={isSaving}>
+            {isSaving ? 'Saving...' : 'Save Changes'}
           </Button>
           <Button
             type="button"
@@ -1573,6 +1603,80 @@ function EditRoom(): JSX.Element {
           </Button>
         </div>
       </form>
+
+      {/* Image gallery -- managed independently from the form above */}
+      <section className="mt-10 space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold">Photos</h2>
+          <p className="text-sm text-muted-foreground">
+            Hover an image to remove it, or add more below.
+          </p>
+        </div>
+
+        {room.images.length > 0 ? (
+          <div className="grid grid-cols-3 gap-2">
+            {room.images.map((image) => (
+              <div
+                key={image}
+                className="group relative aspect-video overflow-hidden rounded-md border"
+              >
+                <img
+                  src={`${baseUrl}/uploads/rooms/${image}`}
+                  alt="Room"
+                  className="h-full w-full object-cover"
+                />
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="icon"
+                  className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100"
+                  onClick={() => handleDeleteImage(image)}
+                  aria-label="Delete image"
+                >
+                  <X className="size-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">No photos yet.</p>
+        )}
+
+        <div className="space-y-3">
+          <Input
+            type="file"
+            accept=".jpg,.jpeg,.png,.webp"
+            multiple
+            onChange={(e) => onSelect(e.target.files)}
+          />
+
+          {previews.length > 0 && (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                {previews.map((preview, index) => (
+                  <div
+                    key={index}
+                    className="aspect-video overflow-hidden rounded-md border"
+                  >
+                    <img
+                      src={preview}
+                      alt={`Preview ${index + 1}`}
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                ))}
+              </div>
+              <Button
+                type="button"
+                onClick={handleUploadImages}
+                disabled={isUploading}
+              >
+                {isUploading ? 'Uploading...' : `Upload ${files.length} image(s)`}
+              </Button>
+            </>
+          )}
+        </div>
+      </section>
     </div>
   );
 }
@@ -1617,7 +1721,7 @@ webapp/src/
 │       ├── field.tsx                # shadcn Field, FieldLabel, FieldError, etc.
 │       └── ... other shadcn pieces
 ├── hooks/
-│   ├── useRooms.ts                  # roomKeys + 5 hooks
+│   ├── useRooms.ts                  # roomKeys + 7 hooks (incl. add/delete images)
 │   ├── useRoomsFilters.ts           # URL <-> filters sync
 │   └── useImagePreviews.ts          # File state + object URL lifecycle
 ├── pages/
@@ -1662,20 +1766,14 @@ webapp/src/
 ### Exercise 4: Build the Edit Room Page
 1. Fetch the room with `useRoom(id)`
 2. Call `form.reset(roomData)` inside a `useEffect`
-3. Show the existing images when no new files are selected
-4. Confirm: leaving the file input empty preserves the existing images
+3. Wire the **text** form's Save button to `useUpdateRoom` (JSON PUT)
+4. Below the form, render the image gallery:
+   - Each existing image gets a hover-revealed delete button calling `useDeleteRoomImage`
+   - The file input + previews + "Upload" button calls `useAddRoomImages`
+5. Confirm: editing a typo and pressing Save does **not** re-upload images; removing one photo does not affect the others
 
-### Exercise 5: Image Management Improvement (Stretch)
-Allow the owner to remove individual existing images and add new ones alongside the survivors:
-1. Track removed filenames in state
-2. Show a small X button on each existing thumbnail
-3. Send the removed list to the backend as a JSON field:
-
-```ts
-formData.append('removedImages', JSON.stringify(removedImages));
-```
-
-The backend then deletes those files from disk and removes them from the room document.
+### Exercise 5: Reorder Images (Stretch)
+Add an "Image order" PATCH endpoint on the backend (`PATCH /api/rooms/:id/images/order` with body `{ images: [...] }`), and let the owner drag thumbnails to reorder them with a library like `dnd-kit`. Update the Mongoose document with the new array order.
 
 ---
 
@@ -1691,5 +1789,6 @@ The backend then deletes those files from disk and removes them from the room do
 9. **Files live outside the schema** -- track them with a dedicated hook because Zod cannot validate `File` objects
 10. **`FormData`** is required for multipart upload; the same field name (`'images'`) can be appended multiple times for arrays of files
 11. **`URL.createObjectURL`** inside a `useEffect` with cleanup `URL.revokeObjectURL` prevents memory leaks from preview blobs
-12. **shadcn `AlertDialog`** wraps destructive actions -- never delete without explicit confirmation
-13. **Sonner toasts inside mutation hooks** mean every component using the hook gets consistent feedback for free
+12. **Image management is split** -- `useAddRoomImages` handles uploads, `useDeleteRoomImage` handles individual removals. The PUT form stays focused on text, the gallery stays focused on photos, and the user can do each independently.
+13. **shadcn `AlertDialog`** wraps destructive actions -- never delete without explicit confirmation
+14. **Sonner toasts inside mutation hooks** mean every component using the hook gets consistent feedback for free

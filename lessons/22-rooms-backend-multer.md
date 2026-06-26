@@ -9,7 +9,8 @@
 - Validating multipart requests with **`express-validator`** (the same pattern used in Lessons 16 and 20)
 - Handling errors in controllers with **explicit `try/catch`** blocks (matching Lessons 16 and 20)
 - Building paginated, filterable, and searchable GET endpoints with a `{ data, meta }` envelope
-- Deleting files from disk when a room is removed
+- **Splitting image management into its own endpoints** -- `POST /:id/images` to add and `DELETE /:id/images/:imageName` to remove individual images
+- Deleting files from disk when a room or single image is removed
 
 ---
 
@@ -356,6 +357,15 @@ export const updateRoomValidator = [
 // GET /api/rooms/:id and DELETE /api/rooms/:id -- just validate the ID
 export const roomIdValidator = [roomIdParam];
 
+// DELETE /api/rooms/:id/images/:imageName -- validate ID + safe filename
+export const roomImageDeleteValidator = [
+  roomIdParam,
+  param("imageName")
+    .isString()
+    .matches(/^[a-zA-Z0-9._-]+$/)
+    .withMessage("Invalid image name format"),
+];
+
 // GET /api/rooms -- validate optional query parameters (filters + pagination)
 export const listRoomsValidator = [
   query("location")
@@ -473,7 +483,9 @@ export const createRoom = async (req: Request, res: Response): Promise<void> => 
 
 ## 22.11 The Room Routes
 
-Each request flows through **upload → validator → validateResult → controller**. Multer parses the multipart form first (so `req.body` is populated), then `express-validator` checks the values, then `validateResult` either responds with 400 or passes the request to the controller. The exact same `validator → validateResult → controller` shape used in Lesson 16, just with Multer added in front for the upload routes.
+Each upload-handling route flows through **upload → validator → validateResult → controller**. Multer parses the multipart form first (so `req.body` is populated for `createRoom`), then `express-validator` checks the values, then `validateResult` either responds with 400 or passes the request to the controller.
+
+PUT and DELETE routes are pure JSON / pure URL params -- no Multer in front of them.
 
 ```typescript
 // backend/src/routes/roomRoutes.ts
@@ -487,11 +499,14 @@ import {
   getRoomById,
   updateRoom,
   deleteRoom,
+  addRoomImages,
+  deleteRoomImage,
 } from "../controllers/roomController";
 import {
   createRoomValidator,
   updateRoomValidator,
   roomIdValidator,
+  roomImageDeleteValidator,
   listRoomsValidator,
 } from "../validators/room.validator";
 
@@ -501,7 +516,7 @@ const router: Router = Router();
 router.get("/", listRoomsValidator, validateResult, getRooms);
 router.get("/:id", roomIdValidator, validateResult, getRoomById);
 
-// Protected routes -- only authenticated owners
+// Owner-only routes
 router.post(
   "/",
   requireAuth,
@@ -515,7 +530,6 @@ router.put(
   "/:id",
   requireAuth,
   requireRole("owner"),
-  upload.array("images", 5),
   updateRoomValidator,
   validateResult,
   updateRoom
@@ -529,10 +543,29 @@ router.delete(
   deleteRoom
 );
 
+// Image management -- separate, focused endpoints
+router.post(
+  "/:id/images",
+  requireAuth,
+  requireRole("owner"),
+  upload.array("images", 5),
+  roomIdValidator,
+  validateResult,
+  addRoomImages
+);
+router.delete(
+  "/:id/images/:imageName",
+  requireAuth,
+  requireRole("owner"),
+  roomImageDeleteValidator,
+  validateResult,
+  deleteRoomImage
+);
+
 export default router;
 ```
 
-**`upload.array("images", 5)`** tells Multer to expect up to 5 files in a field called `images`. Multer must run **before** the validators -- otherwise `req.body` would be empty when the validators check it.
+**`upload.array("images", 5)`** tells Multer to expect up to 5 files in a field called `images`. Multer must run **before** the validators on the routes that use it -- otherwise `req.body` would be empty when the validators check it.
 
 ---
 
@@ -716,14 +749,16 @@ export const getRoomById = async (req: Request, res: Response): Promise<void> =>
 
 ---
 
-## 22.14 PUT /api/rooms/:id -- Update Room (Owner Only)
+## 22.14 PUT /api/rooms/:id -- Update Text Fields (Owner Only)
 
-Only the room owner should be able to edit their listing. We also handle optional new image uploads:
+PUT is **text-only**: title, description, price, location, capacity, amenities. **No image handling here.** Image management lives in its own dedicated endpoints (sections 22.15 and 22.16) -- this keeps each endpoint focused on one job and makes the Edit Room screen cleaner on the frontend.
+
+- The user wants to fix a typo? Just send the changed text fields as plain JSON. No FormData, no Multer.
+- The user wants to add a photo? Hit `POST /api/rooms/:id/images`.
+- The user wants to remove a photo? Hit `DELETE /api/rooms/:id/images/:imageName`.
 
 ```typescript
 // backend/src/controllers/roomController.ts (continued)
-import fs from "fs";
-import path from "path";
 
 export const updateRoom = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -750,21 +785,6 @@ export const updateRoom = async (req: Request, res: Response): Promise<void> => 
     if (capacity !== undefined) room.capacity = capacity; // already a number via .toInt()
     if (amenities !== undefined) room.amenities = parseAmenities(amenities);
 
-    // Handle new images (if uploaded)
-    const files = (req.files as Express.Multer.File[]) || [];
-    if (files.length > 0) {
-      // Delete old images from disk
-      for (const oldImage of room.images) {
-        const oldPath: string = path.join(__dirname, "..", "..", "uploads", "rooms", oldImage);
-        if (fs.existsSync(oldPath)) {
-          fs.unlinkSync(oldPath);
-        }
-      }
-
-      // Replace with new image filenames
-      room.images = files.map((file) => file.filename);
-    }
-
     const updatedRoom: IRoom = await room.save();
 
     res.json({ data: updatedRoom });
@@ -775,11 +795,121 @@ export const updateRoom = async (req: Request, res: Response): Promise<void> => 
 };
 ```
 
-**Key detail:** When new images are uploaded, we delete the old files from disk first. Otherwise, orphaned files would pile up in the `uploads/rooms` directory forever.
+> **Why no images in PUT?** "PUT" in HTTP means "replace this resource." If PUT both *replaced* the text fields and *appended* images, the behaviour would be inconsistent. By splitting them, every endpoint has exactly one job and the frontend can wire up "Save" and the image gallery's "Upload" / "Delete" buttons to different actions.
 
 ---
 
-## 22.15 DELETE /api/rooms/:id -- Delete Room (Owner Only)
+## 22.15 POST /api/rooms/:id/images -- Add Images (Owner Only)
+
+Append new images to an existing room. Multer parses up to 5 files, we validate ownership, then push the filenames onto the room's `images` array.
+
+```typescript
+// backend/src/controllers/roomController.ts (continued)
+
+export const addRoomImages = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const room: IRoom | null = await Room.findById(req.params.id);
+
+    if (!room) {
+      res.status(404).json({ message: "Room not found" });
+      return;
+    }
+
+    // Check ownership
+    if (room.owner.toString() !== req.user!.userId) {
+      res.status(403).json({ message: "You can only edit your own rooms" });
+      return;
+    }
+
+    const files = (req.files as Express.Multer.File[]) || [];
+
+    if (files.length === 0) {
+      res.status(400).json({ message: "No images provided" });
+      return;
+    }
+
+    // Append new image filenames to the existing list
+    const newFilenames: string[] = files.map((file) => file.filename);
+    room.images = [...room.images, ...newFilenames];
+
+    const updatedRoom: IRoom = await room.save();
+
+    res.status(200).json({ data: updatedRoom });
+  } catch (error: unknown) {
+    console.error("addRoomImages error:", error);
+    res.status(500).json({ message: "Failed to add images" });
+  }
+};
+```
+
+**Why return the updated room?** The frontend needs to know what the new gallery looks like to re-render it. Returning the full room (instead of just the new filenames) means the React Query cache gets refreshed in one shot.
+
+---
+
+## 22.16 DELETE /api/rooms/:id/images/:imageName -- Remove One Image (Owner Only)
+
+Remove a single image from a room: delete the file from disk and remove the filename from the `images` array.
+
+```typescript
+// backend/src/controllers/roomController.ts (continued)
+import fs from "fs";
+import path from "path";
+
+export const deleteRoomImage = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id, imageName } = req.params;
+
+    const room: IRoom | null = await Room.findById(id);
+
+    if (!room) {
+      res.status(404).json({ message: "Room not found" });
+      return;
+    }
+
+    // Check ownership
+    if (room.owner.toString() !== req.user!.userId) {
+      res.status(403).json({ message: "You can only edit your own rooms" });
+      return;
+    }
+
+    // Make sure the image actually belongs to this room.
+    // This also blocks an attacker trying to delete arbitrary files via
+    // a crafted filename -- we only ever delete files in the room's own list.
+    if (!room.images.includes(imageName)) {
+      res.status(404).json({ message: "Image not found on this room" });
+      return;
+    }
+
+    // Delete the file from disk if it still exists
+    const imagePath: string = path.join(
+      __dirname,
+      "..",
+      "..",
+      "uploads",
+      "rooms",
+      imageName
+    );
+    if (fs.existsSync(imagePath)) {
+      fs.unlinkSync(imagePath);
+    }
+
+    // Remove the filename from the room's images array
+    room.images = room.images.filter((name) => name !== imageName);
+    await room.save();
+
+    res.status(204).send();
+  } catch (error: unknown) {
+    console.error("deleteRoomImage error:", error);
+    res.status(500).json({ message: "Failed to delete image" });
+  }
+};
+```
+
+**Security note:** Checking `room.images.includes(imageName)` before touching the filesystem is a critical guard. Without it, a malicious user could send `imageName = "../../../etc/passwd"` and try to delete arbitrary files. Since the database only stores filenames Multer chose, the includes check restricts deletes to files we know we created.
+
+---
+
+## 22.17 DELETE /api/rooms/:id -- Delete Room (Owner Only)
 
 When a room is deleted, we must also delete its image files from disk. The response uses status `204 No Content` -- there is nothing meaningful to return for a successful delete (matching the Todo API in Lesson 16).
 
@@ -822,7 +952,7 @@ export const deleteRoom = async (req: Request, res: Response): Promise<void> => 
 
 ---
 
-## 22.16 Registering the Routes
+## 22.18 Registering the Routes
 
 Add the room routes to your main Express app:
 
@@ -836,7 +966,7 @@ app.use("/api/rooms", roomRoutes);
 
 ---
 
-## 22.17 Extending the Global Error Handler for Multer
+## 22.19 Extending the Global Error Handler for Multer
 
 In Lesson 20 we added a global error handler at the bottom of `index.ts`. Multer-specific errors (file too large, unexpected field, wrong file type) need their own branches so we can return clear 400 responses. We extend the existing handler -- no separate `errorHandler.ts` file needed.
 
@@ -892,7 +1022,7 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction): void =>
 
 ---
 
-## 22.18 Testing with Postman or Thunder Client
+## 22.20 Testing with Postman or Thunder Client
 
 ### Creating a Room (POST)
 
@@ -955,6 +1085,55 @@ No authentication needed -- browsing is public.
 }
 ```
 
+### Updating Room Text Fields (PUT)
+
+Pure JSON, no Multer.
+
+1. Method: **PUT**, URL: `http://localhost:3001/api/rooms/<roomId>`
+2. Header: `Authorization: Bearer <your-jwt-token>`
+3. Header: `Content-Type: application/json`
+4. Body (raw JSON):
+   ```json
+   { "title": "Updated room title", "price": 95 }
+   ```
+5. Send
+
+**Expected response (200):** `{ "data": { ...updated room... } }`
+
+### Adding More Images (POST /:id/images)
+
+1. Method: **POST**, URL: `http://localhost:3001/api/rooms/<roomId>/images`
+2. Header: `Authorization: Bearer <your-jwt-token>`
+3. Body: **form-data**, key `images`, attach up to 5 image files
+4. Send
+
+**Expected response (200):**
+```json
+{
+  "data": {
+    "_id": "65abc...",
+    "images": [
+      "1700000000000-room1.jpg",
+      "1700000000001-room2.jpg",
+      "1700001234567-new-photo.jpg"
+    ],
+    "...": "..."
+  }
+}
+```
+
+The new filenames are **appended** to the existing array, not replacing it.
+
+### Removing a Single Image (DELETE /:id/images/:imageName)
+
+1. Method: **DELETE**, URL: `http://localhost:3001/api/rooms/<roomId>/images/1700001234567-new-photo.jpg`
+2. Header: `Authorization: Bearer <your-jwt-token>`
+3. Send
+
+**Expected response: 204 No Content.** The file is removed from `uploads/rooms/` and pulled out of the room's `images` array.
+
+If the filename does not belong to that room you get `404 { "message": "Image not found on this room" }`. If someone tries a traversal attack (`../../etc/passwd`) the validator rejects it as a 400.
+
 ### Example Validation Error (400)
 
 ```json
@@ -978,7 +1157,7 @@ You should see the uploaded image displayed directly.
 
 ---
 
-## 22.19 Complete File Summary
+## 22.21 Complete File Summary
 
 ```
 backend/
@@ -1063,5 +1242,7 @@ if (files.length === 0) {
 12. **Pagination** uses `skip` and `limit` to return results in pages: `skip = (page - 1) * limit` -- always combined with `.sort()`
 13. **`Promise.all`** runs `find()` and `countDocuments()` in parallel for fewer round trips
 14. **MongoDB `$regex`** enables case-insensitive search across text fields
-15. **Always delete files from disk** when deleting or replacing room images -- otherwise orphaned files accumulate
-16. **Global error handler** branches on Multer errors, Mongoose validation, and CastError to keep responses structured
+15. **PUT updates text only** -- image management lives in its own endpoints (`POST /:id/images` to add, `DELETE /:id/images/:imageName` to remove). Each endpoint has one job, the frontend wiring stays clean.
+16. **Validate filenames before touching disk** -- `room.images.includes(imageName)` plus a `[a-zA-Z0-9._-]+` regex blocks path-traversal attacks like `../../etc/passwd`
+17. **Always delete files from disk** when deleting a room or a single image -- otherwise orphaned files accumulate
+18. **Global error handler** branches on Multer errors, Mongoose validation, and CastError to keep responses structured
