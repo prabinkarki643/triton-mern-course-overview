@@ -66,17 +66,19 @@ This is **simpler, more consistent with the rest of the app, and avoids re-rende
 
 ## 21.2 Updating the Axios Instance
 
-You already have an Axios instance from Lesson 17 (`api/api.ts` or `services/api.ts`). Now we extend it with **two interceptors** for authentication:
+You already have an Axios instance from Lesson 17 (`api/api.ts` or `services/api.ts`). Now we extend it with **two interceptors** for authentication, plus a small tweak that makes server error messages reach our toasts:
 
 1. A **request interceptor** that attaches the JWT token to every request
-2. A **response interceptor** that catches 401 (Unauthorized) and redirects to login
+2. A **response interceptor** that
+   - Catches 401 (Unauthorized) on protected pages and forces a logout
+   - Pulls the friendly `message` field out of error responses so `error.message` is human-readable everywhere
 
 ```ts
-// src/api/api.ts -- add to your existing Axios instance from Lesson 17
+// src/services/api.ts
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3001/api',
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:4001/api',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -92,23 +94,55 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Response interceptor -- handle expired/invalid tokens globally
+// Response interceptor -- handle expired tokens + surface server messages
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // If the token expired and we are not on a public auth page, force logout
     if (error.response?.status === 401) {
-      localStorage.removeItem('token');
-      // Hard redirect so React Query cache is also cleared on next mount
-      if (window.location.pathname !== '/login') {
+      const onAuthPage =
+        window.location.pathname === '/login' ||
+        window.location.pathname === '/register';
+      if (!onAuthPage) {
+        localStorage.removeItem('token');
         window.location.href = '/login';
+        return Promise.reject(error);
       }
     }
+
+    // Pull the friendly message from the server's { message: "..." } envelope
+    // so error.message shows "Invalid email or password" instead of
+    // "Request failed with status code 401" everywhere in the app.
+    const serverMessage = error.response?.data?.message;
+    if (serverMessage) {
+      error.message = serverMessage;
+    }
+
     return Promise.reject(error);
   },
 );
 
 export default api;
 ```
+
+### Why the Server Message Override?
+
+By default, when the backend responds with `401 { "message": "Invalid email or password" }`, Axios throws an error whose `.message` is the unhelpful `"Request failed with status code 401"`. Every toast in the app would read that.
+
+The override at the bottom of the interceptor copies the server's `message` onto `error.message`, so a single line like `toast.error(error.message)` automatically shows:
+
+| Backend response | Toast text |
+|---|---|
+| `401 { message: "Invalid email or password" }` | "Invalid email or password" |
+| `400 { message: "A user with this email already exists" }` | "A user with this email already exists" |
+| `400 { message: "Validation failed", errors: [...] }` | "Validation failed" |
+| Network down (no response at all) | "Network Error" (Axios default) |
+
+Doing this once in the interceptor means none of the React Query hooks need their own message-parsing logic -- every `onError: (error) => toast.error(error.message)` just works.
+
+### Why Skip the 401 Redirect on `/login` and `/register`?
+
+A wrong-password attempt returns 401 -- but the user is *trying* to log in, not "their session expired". Redirecting them back to the page they are already on would clear the form and confuse them. The check `onAuthPage` keeps the form visible while still showing the error toast.
 
 ### What Are Interceptors?
 
@@ -351,14 +385,18 @@ export function useLogout() {
 
 ## 21.7 Wiring Up the App
 
-The `main.tsx` from Lesson 17 already has `QueryClientProvider` and `<Toaster />`. We just need to make sure `BrowserRouter` wraps everything so our auth hooks can use `useNavigate`:
+The `main.tsx` from Lesson 17 already has `QueryClientProvider` and `<Toaster />`, and the shadcn preset added a `ThemeProvider`. We need to:
+
+1. Make sure `BrowserRouter` wraps everything (so our auth hooks can use `useNavigate`)
+2. Pin the theme to **light mode** so our rose/pink gradient pages render the way we designed them (without this, students on macOS with system dark mode flip the whole UI to dark)
 
 ```tsx
 // src/main.tsx
-import React from 'react';
-import ReactDOM from 'react-dom/client';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ThemeProvider } from '@/components/theme-provider';
 import { Toaster } from '@/components/ui/sonner';
 import App from './App';
 import './index.css';
@@ -373,15 +411,17 @@ const queryClient = new QueryClient({
   },
 });
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
     <BrowserRouter>
       <QueryClientProvider client={queryClient}>
-        <App />
-        <Toaster richColors position="top-right" />
+        <ThemeProvider defaultTheme="light">
+          <App />
+          <Toaster richColors position="top-right" />
+        </ThemeProvider>
       </QueryClientProvider>
     </BrowserRouter>
-  </React.StrictMode>,
+  </StrictMode>,
 );
 ```
 
@@ -1164,7 +1204,7 @@ booking-frontend/
 2. Create the login Zod schema
 3. Build the `LoginPage` using `<Field>` + `<Controller>` + `useLogin`
 4. Test with valid credentials -- verify you see a "Welcome back" toast and are redirected
-5. Test with invalid credentials -- verify a red error toast appears
+5. Test with invalid credentials -- verify the red toast shows the **server's** message ("Invalid email or password"), not the generic "Request failed with status code 401"
 6. Test with empty fields -- verify the Zod validation messages appear via `<FieldError />`
 7. Refresh the page after logging in -- verify you stay logged in and `useCurrentUser` re-hydrates from `/auth/me`
 
@@ -1203,7 +1243,7 @@ booking-frontend/
 4. **Mutation `onSuccess`** is the right place for token storage, cache seeding (`queryClient.setQueryData`), Sonner toasts, and `navigate()`
 5. **Sonner toasts inside the hooks** give consistent success/error feedback across the whole app, just like the todo mutations in Lesson 17
 6. **Axios request interceptor** attaches the JWT to every call -- write once, works everywhere
-7. **Axios response interceptor** catches 401 globally and redirects to login -- no per-call error handling needed
+7. **Axios response interceptor** catches 401 globally and redirects to login (except on `/login` and `/register`), and copies the server's `message` field onto `error.message` so every toast shows a human-readable error -- no per-call error handling needed
 8. **The shadcn `Field` component** (`Field`, `FieldLabel`, `FieldError`, `FieldDescription`, `FieldGroup`) is paired with React Hook Form's `Controller` to bind inputs, wire labels via `htmlFor={field.name}`, surface validation through `<FieldError errors={[fieldState.error]} />`, and signal the invalid state with `data-invalid` + `aria-invalid`
 9. **`useNavigate` lives inside the auth hooks** -- pages stay clean and never duplicate redirect logic
 10. **`ProtectedRoute`** consumes `useCurrentUser()` -- the same single source of truth as the rest of the app

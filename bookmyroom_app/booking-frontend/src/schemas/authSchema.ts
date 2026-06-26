@@ -1,0 +1,28 @@
+// src/schemas/authSchema.ts
+import { z } from "zod";
+
+export const loginSchema = z.object({
+  email: z.string().min(1, "Email is required").email("Enter a valid email"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+});
+
+export const registerSchema = z.object({
+  name: z
+    .string()
+    .min(2, "Name must be at least 2 characters")
+    .max(50, "Name must be under 50 characters")
+    .trim(),
+  email: z.string().min(1, "Email is required").email("Enter a valid email"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+  phone: z
+    .string()
+    .min(7, "Phone number must be at least 7 digits")
+    .max(20, "Phone number is too long")
+    .trim(),
+  role: z.enum(["user", "owner"], {
+    message: "Please choose Guest or Owner",
+  }),
+});
+
+export type LoginFormData = z.infer<typeof loginSchema>;
+export type RegisterFormData = z.infer<typeof registerSchema>;
