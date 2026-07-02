@@ -7,9 +7,9 @@ import express, {
 } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import path from "path";
 import multer from "multer";
 import connectDB from "./config/database";
+import { paths } from "./config/paths";
 import authRoutes from "./routes/authRoutes";
 import roomRoutes from "./routes/roomRoutes";
 
@@ -29,10 +29,7 @@ app.use(
 app.use(express.json());
 
 // Serve uploaded room images from /uploads
-app.use(
-  "/uploads",
-  express.static(path.join(__dirname, "..", "uploads"))
-);
+app.use("/uploads", express.static(paths.uploads));
 
 // Routes
 app.use("/api/auth", authRoutes);

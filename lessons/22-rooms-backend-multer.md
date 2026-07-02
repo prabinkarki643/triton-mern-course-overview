@@ -1,6 +1,7 @@
 # Lesson 22: Room Management Backend & File Uploads
 
 ## What You Will Learn
+- Anchoring on-disk paths with a **central `config/paths.ts` module** so every consumer imports `paths.roomImages` / `paths.uploads` instead of counting `..`, `..`
 - Creating CRUD endpoints for room management with owner-based access control
 - Setting up Multer for handling file uploads in Express
 - Filtering uploaded files to accept only specific image formats
@@ -44,11 +45,66 @@ npm install -D @types/multer
 
 ---
 
-## 22.3 Setting Up Multer Storage
+## 22.3 A Central `paths` Module
+
+Before we touch Multer, let's solve a small ergonomic problem you would otherwise hit repeatedly. Our backend will need the on-disk path to `uploads/rooms/` in **three separate files**:
+
+- `middleware/upload.ts` -- so Multer knows where to write new uploads
+- `controllers/roomController.ts` -- so we can `fs.unlinkSync()` files when a room or image is deleted
+- `index.ts` -- so `express.static` can serve them at `/uploads`
+
+Written naively in each file, we would repeat something like this:
+
+```typescript
+// don't do this -- see next paragraph for why
+const uploadDir = path.join(__dirname, "..", "..", "uploads", "rooms");
+```
+
+The problem is that `__dirname` is different in every file. From `src/middleware/upload.ts` you go up **twice** (`..`, `..`) to reach the backend root. But from `src/index.ts` you only go up **once** (`..`). Every consumer would need a different depth of `..` -- confusing for you and confusing for anyone reading the code.
+
+### The fix -- one anchor, one source of truth
+
+We create a tiny `config/paths.ts` module. The confusing `path.resolve` lives there **once**. Every other file just imports named constants:
+
+```typescript
+// backend/src/config/paths.ts
+import path from "path";
+
+// __dirname here is src/config/, so go up twice to reach the backend project root.
+// Every filesystem path in the app derives from this one anchor -- change it once,
+// everywhere follows.
+export const APP_ROOT: string = path.resolve(__dirname, "..", "..");
+
+export const paths = {
+  root: APP_ROOT,
+  uploads: path.join(APP_ROOT, "uploads"),
+  roomImages: path.join(APP_ROOT, "uploads", "rooms"),
+} as const;
+```
+
+**Why `as const`?** It narrows the object type so TypeScript autocompletes `paths.roomImages`, `paths.uploads`, `paths.root` as literal string types, not `string`. If you mistype `paths.roomImage` (missing the s), the compiler catches it.
+
+Now everywhere else in the backend reads self-documenting:
+
+```typescript
+import { paths } from "../config/paths";
+
+const uploadDir = paths.roomImages;
+const imagePath = path.join(paths.roomImages, imageName);
+app.use("/uploads", express.static(paths.uploads));
+```
+
+No more `..`, `..` counting. If you later add avatar uploads, you add **one line** to `paths.ts` (`avatars: path.join(APP_ROOT, "uploads", "avatars")`) and every consumer imports `paths.avatars`.
+
+We will use `paths.roomImages` and `paths.uploads` throughout the rest of this lesson.
+
+---
+
+## 22.4 Setting Up Multer Storage
 
 Multer needs to know **where** to save files and **what** to name them. We configure this with `diskStorage`. We put everything Multer-related -- the upload directory, the storage config, the file filter, and the multer instance itself -- in a single `middleware/upload.ts` file. That way any route that wants to accept uploads just imports it.
 
-Start the file with the imports and compute the absolute upload path from `__dirname`:
+Start with the imports and pull the upload folder from our `paths` module:
 
 ```typescript
 // backend/src/middleware/upload.ts
@@ -56,13 +112,11 @@ import multer, { FileFilterCallback } from "multer";
 import path from "path";
 import fs from "fs";
 import { Request } from "express";
+import { paths } from "../config/paths";
 
-// Where uploaded room images live on disk. __dirname is src/middleware,
-// so we go up twice to reach the backend project root, then into uploads/rooms.
-const uploadDir: string = path.join(__dirname, "..", "..", "uploads", "rooms");
+// Where uploaded room images live on disk (defined once in config/paths.ts)
+const uploadDir: string = paths.roomImages;
 ```
-
-> Why an **absolute path** built from `__dirname` and not a relative one like `"uploads/rooms"`? Relative paths are resolved against the process's *current working directory* (`process.cwd()`), which depends on **where** the developer ran `npm run dev` from. Building the path off `__dirname` is deterministic -- the code always writes to the same folder regardless of where the process was launched.
 
 Now the storage config -- destination points at our absolute path, filename is a unique slug so two uploads never collide:
 
@@ -97,7 +151,7 @@ The final filename looks something like `1782958518067-56314975-cosy-apartment.j
 
 ---
 
-## 22.4 File Filter -- Accept Only Images
+## 22.5 File Filter -- Accept Only Images
 
 We do not want users uploading PDFs, executables, or other non-image files. The file filter checks the MIME type and extension:
 
@@ -133,7 +187,7 @@ const fileFilter = (
 
 ---
 
-## 22.5 Creating the Upload Middleware
+## 22.6 Creating the Upload Middleware
 
 Now we combine storage, file filter, and size limits into a single Multer instance:
 
@@ -159,11 +213,11 @@ Two limits, two different Multer errors:
 | `fileSize` | A single file is over 5 MB | `LIMIT_FILE_SIZE` |
 | `files` | The user sends more than 5 files | `LIMIT_FILE_COUNT` |
 
-We will branch on both of these in the global error handler (section 22.19) so the user gets a helpful message instead of the raw Multer text.
+We will branch on both of these in the global error handler (section 22.20) so the user gets a helpful message instead of the raw Multer text.
 
 ---
 
-## 22.6 The Room Model
+## 22.7 The Room Model
 
 Before building routes, we need a Mongoose model for rooms:
 
@@ -250,13 +304,13 @@ export default Room;
 
 ---
 
-## 22.7 Creating the Uploads Directory
+## 22.8 Creating the Uploads Directory
 
-Multer will not create the destination directory for us -- if `uploads/rooms/` does not exist when a request arrives, the upload fails. We already computed the absolute path at the top of `upload.ts` (section 22.3). Right below that variable, add three lines that create the directory on boot if it is missing:
+Multer will not create the destination directory for us -- if `uploads/rooms/` does not exist when a request arrives, the upload fails. We already imported `paths.roomImages` at the top of `upload.ts` (section 22.4). Right below that constant, add three lines that create the directory on boot if it is missing:
 
 ```typescript
-// backend/src/middleware/upload.ts (the fs check under the uploadDir variable)
-const uploadDir: string = path.join(__dirname, "..", "..", "uploads", "rooms");
+// backend/src/middleware/upload.ts (the fs check under the uploadDir constant)
+const uploadDir: string = paths.roomImages;
 
 // Make sure the directory exists on boot (Multer will not create it)
 if (!fs.existsSync(uploadDir)) {
@@ -272,22 +326,19 @@ The `{ recursive: true }` option creates parent directories too, so if neither `
 
 ---
 
-## 22.8 Serving Static Files
+## 22.9 Serving Static Files
 
 When the frontend needs to display a room image, it requests the file from the backend. Express can serve files from a directory using `express.static`. Add these lines to `index.ts` -- alongside the other middleware, before the route mounts:
 
 ```typescript
 // backend/src/index.ts
-import path from "path";
 import express from "express";
+import { paths } from "./config/paths";
 
 // ... other setup ...
 
 // Serve uploaded room images at /uploads/rooms/<filename>
-app.use(
-  "/uploads",
-  express.static(path.join(__dirname, "..", "uploads"))
-);
+app.use("/uploads", express.static(paths.uploads));
 ```
 
 Now a file saved as `uploads/rooms/1782958518067-cosy-apartment.jpg` is accessible at:
@@ -300,7 +351,7 @@ http://localhost:4001/uploads/rooms/1782958518067-cosy-apartment.jpg
 
 ---
 
-## 22.9 Request Validation with express-validator
+## 22.10 Request Validation with express-validator
 
 Just like the Todo API (Lesson 16) and the auth endpoints (Lesson 20), we validate room requests with **`express-validator`** chains and the shared `validateResult` middleware. This gives every endpoint in the project the same validation pattern and the same 400 response shape.
 
@@ -474,11 +525,11 @@ export const listRoomsValidator = [
 ];
 ```
 
-> **Note on file validation:** `express-validator` only checks `req.body`, `req.params`, and `req.query`. File checking (size, MIME type, count) is already handled by Multer's `fileFilter` and `limits` (sections 22.4-22.5).
+> **Note on file validation:** `express-validator` only checks `req.body`, `req.params`, and `req.query`. File checking (size, MIME type, count) is already handled by Multer's `fileFilter` and `limits` (sections 22.5-22.6).
 
 ---
 
-## 22.10 POST /api/rooms -- Create a Room with Images
+## 22.11 POST /api/rooms -- Create a Room with Images
 
 This is the most complex endpoint -- it handles both text fields and file uploads in a single request. We use an explicit `try/catch` block (matching Lessons 16 and 20) so any database error returns a clean 500 response with a descriptive message.
 
@@ -536,7 +587,7 @@ export const createRoom = async (req: Request, res: Response): Promise<void> => 
 
 ---
 
-## 22.11 The Room Routes
+## 22.12 The Room Routes
 
 Each upload-handling route flows through **upload → validator → validateResult → controller**. Multer parses the multipart form first (so `req.body` is populated for `createRoom`), then `express-validator` checks the values, then `validateResult` either responds with 400 or passes the request to the controller.
 
@@ -624,7 +675,7 @@ export default router;
 
 ---
 
-## 22.12 GET /api/rooms -- Pagination, Filtering, and Search
+## 22.13 GET /api/rooms -- Pagination, Filtering, and Search
 
 A real application does not return every room at once. We need pagination (pages of results), filtering (by location, price, capacity), and search (by title or description).
 
@@ -777,7 +828,7 @@ MongoDB only returns rooms matching **all** conditions.
 
 ---
 
-## 22.13 GET /api/rooms/:id -- Room Details
+## 22.14 GET /api/rooms/:id -- Room Details
 
 A simple endpoint that returns a single room with full owner details:
 
@@ -804,9 +855,9 @@ export const getRoomById = async (req: Request, res: Response): Promise<void> =>
 
 ---
 
-## 22.14 PUT /api/rooms/:id -- Update Text Fields (Owner Only)
+## 22.15 PUT /api/rooms/:id -- Update Text Fields (Owner Only)
 
-PUT is **text-only**: title, description, price, location, capacity, amenities. **No image handling here.** Image management lives in its own dedicated endpoints (sections 22.15 and 22.16) -- this keeps each endpoint focused on one job and makes the Edit Room screen cleaner on the frontend.
+PUT is **text-only**: title, description, price, location, capacity, amenities. **No image handling here.** Image management lives in its own dedicated endpoints (sections 22.16 and 22.17) -- this keeps each endpoint focused on one job and makes the Edit Room screen cleaner on the frontend.
 
 - The user wants to fix a typo? Just send the changed text fields as plain JSON. No FormData, no Multer.
 - The user wants to add a photo? Hit `POST /api/rooms/:id/images`.
@@ -854,7 +905,7 @@ export const updateRoom = async (req: Request, res: Response): Promise<void> => 
 
 ---
 
-## 22.15 POST /api/rooms/:id/images -- Add Images (Owner Only)
+## 22.16 POST /api/rooms/:id/images -- Add Images (Owner Only)
 
 Append new images to an existing room. Multer parses up to 5 files, we validate ownership, then push the filenames onto the room's `images` array.
 
@@ -901,7 +952,7 @@ export const addRoomImages = async (req: Request, res: Response): Promise<void> 
 
 ---
 
-## 22.16 DELETE /api/rooms/:id/images/:imageName -- Remove One Image (Owner Only)
+## 22.17 DELETE /api/rooms/:id/images/:imageName -- Remove One Image (Owner Only)
 
 Remove a single image from a room: delete the file from disk and remove the filename from the `images` array.
 
@@ -909,6 +960,7 @@ Remove a single image from a room: delete the file from disk and remove the file
 // backend/src/controllers/roomController.ts (continued)
 import fs from "fs";
 import path from "path";
+import { paths } from "../config/paths";
 
 export const deleteRoomImage = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -936,14 +988,7 @@ export const deleteRoomImage = async (req: Request, res: Response): Promise<void
     }
 
     // Delete the file from disk if it still exists
-    const imagePath: string = path.join(
-      __dirname,
-      "..",
-      "..",
-      "uploads",
-      "rooms",
-      imageName
-    );
+    const imagePath: string = path.join(paths.roomImages, imageName);
     if (fs.existsSync(imagePath)) {
       fs.unlinkSync(imagePath);
     }
@@ -964,7 +1009,7 @@ export const deleteRoomImage = async (req: Request, res: Response): Promise<void
 
 ---
 
-## 22.17 DELETE /api/rooms/:id -- Delete Room (Owner Only)
+## 22.18 DELETE /api/rooms/:id -- Delete Room (Owner Only)
 
 When a room is deleted, we must also delete its image files from disk. The response uses status `204 No Content` -- there is nothing meaningful to return for a successful delete (matching the Todo API in Lesson 16).
 
@@ -988,7 +1033,7 @@ export const deleteRoom = async (req: Request, res: Response): Promise<void> => 
 
     // Delete image files from disk
     for (const image of room.images) {
-      const imagePath: string = path.join(__dirname, "..", "..", "uploads", "rooms", image);
+      const imagePath: string = path.join(paths.roomImages, image);
       if (fs.existsSync(imagePath)) {
         fs.unlinkSync(imagePath);
       }
@@ -1007,29 +1052,27 @@ export const deleteRoom = async (req: Request, res: Response): Promise<void> => 
 
 ---
 
-## 22.18 Registering the Routes
+## 22.19 Registering the Routes
 
 Add the room routes to your main Express app alongside the auth routes from Lesson 20. The full "middleware + routes" section of `index.ts` now looks like this:
 
 ```typescript
 // backend/src/index.ts (relevant middleware + route mounts)
+import { paths } from "./config/paths";
 import authRoutes from "./routes/authRoutes";
 import roomRoutes from "./routes/roomRoutes";
 
 app.use(cors({ /* ... */ }));
 app.use(express.json());
 
-// Serve uploaded images from /uploads (added in section 22.8)
-app.use(
-  "/uploads",
-  express.static(path.join(__dirname, "..", "uploads"))
-);
+// Serve uploaded images from /uploads (added in section 22.9)
+app.use("/uploads", express.static(paths.uploads));
 
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/rooms", roomRoutes);
 
-// ... the global error handler comes last (section 22.19) ...
+// ... the global error handler comes last (section 22.20) ...
 ```
 
 **Order matters:**
@@ -1039,7 +1082,7 @@ app.use("/api/rooms", roomRoutes);
 
 ---
 
-## 22.19 Extending the Global Error Handler for Multer
+## 22.20 Extending the Global Error Handler for Multer
 
 In Lesson 20 we added a global error handler at the bottom of `index.ts`. Multer-specific errors (file too large, too many files, wrong file type) need their own branches so we can return clear 400 responses. We **replace** that Lesson 20 handler with the fuller version below -- no separate `errorHandler.ts` file needed.
 
@@ -1102,7 +1145,7 @@ app.use(
 
 ---
 
-## 22.20 Testing with Postman or Thunder Client
+## 22.21 Testing with Postman or Thunder Client
 
 ### Creating a Room (POST)
 
@@ -1237,25 +1280,28 @@ You should see the uploaded image displayed directly.
 
 ---
 
-## 22.21 Complete File Summary
+## 22.22 Complete File Summary
 
 ```
 backend/
 ├── src/
+│   ├── config/
+│   │   ├── database.ts            # (from Lesson 19) MongoDB connection
+│   │   └── paths.ts               # NEW -- APP_ROOT + paths.uploads + paths.roomImages
 │   ├── controllers/
 │   │   └── roomController.ts      # CRUD logic with explicit try/catch in each handler
 │   ├── middleware/
 │   │   ├── auth.ts                # (from Lesson 20) requireAuth, requireRole
 │   │   ├── validate.ts            # (from Lesson 20) validateResult
-│   │   └── upload.ts              # Multer storage, filter, limits
+│   │   └── upload.ts              # Multer storage, filter, limits -- uses paths.roomImages
 │   ├── models/
 │   │   └── Room.ts                # Mongoose schema with typed interface
 │   ├── routes/
 │   │   └── roomRoutes.ts          # Public + protected route definitions
 │   ├── validators/
-│   │   └── room.validator.ts      # createRoomValidator, updateRoomValidator, listRoomsValidator, roomIdValidator
-│   └── index.ts                   # Static files + route registration + global error handler
-├── uploads/
+│   │   └── room.validator.ts      # createRoomValidator, updateRoomValidator, listRoomsValidator, roomIdValidator, roomImageDeleteValidator
+│   └── index.ts                   # express.static(paths.uploads) + route registration + global error handler
+├── uploads/                       # gitignored -- created on boot by upload.ts
 │   └── rooms/                     # Uploaded images stored here
 └── package.json
 ```
@@ -1265,13 +1311,15 @@ backend/
 ## Practice Exercises
 
 ### Exercise 1: Complete Room API
-1. Create the `upload.ts` middleware with storage, filter, and size limit
-2. Create the `Room` model with all fields and validation
-3. Create `validators/room.validator.ts` with all four validator arrays
-4. Implement all five endpoints (each with its own `try/catch`): POST, GET (list), GET (single), PUT, DELETE
-5. Wire each route as `[upload?] → [validator] → validateResult → controller`
-6. Ensure the `uploads/rooms` directory is created on server start
-7. Test creating a room with images using Postman or Thunder Client
+1. Create `config/paths.ts` exporting `APP_ROOT`, `paths.uploads`, and `paths.roomImages`
+2. Create the `upload.ts` middleware with storage, filter, and size limit -- reading `paths.roomImages`
+3. Create the `Room` model with all fields including `isAvailable`
+4. Create `validators/room.validator.ts` with all five validator arrays (create, update, list, roomId, roomImageDelete)
+5. Implement all seven endpoints (each with its own `try/catch`): POST /rooms, GET /rooms, GET /rooms/:id, PUT /rooms/:id, POST /rooms/:id/images, DELETE /rooms/:id/images/:imageName, DELETE /rooms/:id
+6. Wire each route as `[upload?] → [validator] → validateResult → controller`
+7. Ensure the `uploads/rooms` directory is created on server start (from `upload.ts`, using `paths.roomImages`)
+8. Serve static files with `express.static(paths.uploads)`
+9. Test the full CRUD flow with Postman or Thunder Client, including the two image endpoints
 
 ### Exercise 2: Add Amenity Filtering
 Extend the GET `/api/rooms` endpoint to filter by amenities:
@@ -1308,21 +1356,22 @@ if (files.length === 0) {
 ---
 
 ## Key Takeaways
-1. **Multer** handles `multipart/form-data` -- the encoding used for file uploads in HTTP
-2. **`diskStorage`** gives you control over the destination folder and filename for each upload
-3. **File filters** should check both MIME type and file extension for security
-4. **`upload.array("images", 5)`** accepts up to 5 files in the `images` field of the form
-5. **Middleware order matters** -- run Multer **before** the validators so `req.body` is populated when the validators check it
-6. **`express-validator`** is used for every endpoint in the project -- same pattern as Lessons 16 and 20
-7. **`.toFloat()` / `.toInt()`** sanitisers convert multipart strings into real numbers, so the controller skips manual `Number()` conversions
-8. **Explicit `try/catch`** in every controller catches Mongoose and file-system errors and returns a clean 500 with a descriptive message -- the same pattern used in Lessons 16 and 20
-9. **Response envelope** -- `{ data: room }` for single items and `{ data: [...], meta: {...} }` for paginated lists, identical to the Todo API
-10. **`express.static`** serves files from a directory, making uploads accessible via URL
-11. **Ownership checks** (`room.owner.toString() === req.user!.userId`) ensure only the creator can edit or delete
-12. **Pagination** uses `skip` and `limit` to return results in pages: `skip = (page - 1) * limit` -- always combined with `.sort()`
-13. **`Promise.all`** runs `find()` and `countDocuments()` in parallel for fewer round trips
-14. **MongoDB `$regex`** enables case-insensitive search across text fields
-15. **PUT updates text only** -- image management lives in its own endpoints (`POST /:id/images` to add, `DELETE /:id/images/:imageName` to remove). Each endpoint has one job, the frontend wiring stays clean.
-16. **Validate filenames before touching disk** -- `room.images.includes(imageName)` plus a `[a-zA-Z0-9._-]+` regex blocks path-traversal attacks like `../../etc/passwd`
-17. **Always delete files from disk** when deleting a room or a single image -- otherwise orphaned files accumulate
-18. **Global error handler** branches on Multer errors, Mongoose validation, and CastError to keep responses structured
+1. **A central `config/paths.ts` module** anchors every filesystem path off `APP_ROOT` once. Consumers read `paths.roomImages` / `paths.uploads` instead of counting `..`, `..` from wherever they live.
+2. **Multer** handles `multipart/form-data` -- the encoding used for file uploads in HTTP
+3. **`diskStorage`** gives you control over the destination folder and filename for each upload
+4. **File filters** should check both MIME type and file extension for security
+5. **`upload.array("images", 5)`** accepts up to 5 files in the `images` field of the form
+6. **Middleware order matters** -- run Multer **before** the validators so `req.body` is populated when the validators check it
+7. **`express-validator`** is used for every endpoint in the project -- same pattern as Lessons 16 and 20
+8. **`.toFloat()` / `.toInt()`** sanitisers convert multipart strings into real numbers, so the controller skips manual `Number()` conversions
+9. **Explicit `try/catch`** in every controller catches Mongoose and file-system errors and returns a clean 500 with a descriptive message -- the same pattern used in Lessons 16 and 20
+10. **Response envelope** -- `{ data: room }` for single items and `{ data: [...], meta: {...} }` for paginated lists, identical to the Todo API
+11. **`express.static`** serves files from a directory, making uploads accessible via URL
+12. **Ownership checks** (`room.owner.toString() === req.user!.userId`) ensure only the creator can edit or delete
+13. **Pagination** uses `skip` and `limit` to return results in pages: `skip = (page - 1) * limit` -- always combined with `.sort()`
+14. **`Promise.all`** runs `find()` and `countDocuments()` in parallel for fewer round trips
+15. **MongoDB `$regex`** enables case-insensitive search across text fields
+16. **PUT updates text only** -- image management lives in its own endpoints (`POST /:id/images` to add, `DELETE /:id/images/:imageName` to remove). Each endpoint has one job, the frontend wiring stays clean.
+17. **Validate filenames before touching disk** -- `room.images.includes(imageName)` plus a `[a-zA-Z0-9._-]+` regex blocks path-traversal attacks like `../../etc/passwd`
+18. **Always delete files from disk** when deleting a room or a single image -- otherwise orphaned files accumulate
+19. **Global error handler** branches on Multer errors, Mongoose validation, and CastError to keep responses structured

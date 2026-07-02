@@ -3,6 +3,7 @@ import { Request, Response } from "express";
 import fs from "fs";
 import path from "path";
 import Room, { IRoom } from "../models/Room";
+import { paths } from "../config/paths";
 
 // Amenities can arrive as a JSON string (from multipart forms) or a
 // comma-separated list. Normalise both into a plain string[].
@@ -258,14 +259,7 @@ export const deleteRoomImage = async (
       return;
     }
 
-    const imagePath: string = path.join(
-      __dirname,
-      "..",
-      "..",
-      "uploads",
-      "rooms",
-      imageName
-    );
+    const imagePath: string = path.join(paths.roomImages, imageName);
     if (fs.existsSync(imagePath)) {
       fs.unlinkSync(imagePath);
     }
@@ -300,14 +294,7 @@ export const deleteRoom = async (
 
     // Wipe all image files for this room from disk
     for (const image of room.images) {
-      const imagePath: string = path.join(
-        __dirname,
-        "..",
-        "..",
-        "uploads",
-        "rooms",
-        image
-      );
+      const imagePath: string = path.join(paths.roomImages, image);
       if (fs.existsSync(imagePath)) {
         fs.unlinkSync(imagePath);
       }

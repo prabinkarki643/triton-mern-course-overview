@@ -3,9 +3,10 @@ import multer, { FileFilterCallback } from "multer";
 import path from "path";
 import fs from "fs";
 import { Request } from "express";
+import { paths } from "../config/paths";
 
 // Where uploaded room images live on disk
-const uploadDir: string = path.join(__dirname, "..", "..", "uploads", "rooms");
+const uploadDir: string = paths.roomImages;
 
 // Make sure the directory exists on boot (Multer will not create it)
 if (!fs.existsSync(uploadDir)) {
