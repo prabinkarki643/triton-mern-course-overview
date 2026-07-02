@@ -10,7 +10,9 @@
 - Programmatic navigation with `useNavigate` from inside mutation `onSuccess` callbacks
 - Creating a `ProtectedRoute` component for route guarding
 - Role-based route protection (owner-only pages)
-- Updating the Navbar based on authentication state
+- Structuring the app with **two layout routes** (MainLayout for the public shell, AuthLayout for login/register)
+- Setting up the shadcn **`ThemeProvider`** and pinning `defaultTheme="light"` so the design ships consistently
+- Building a Navbar with an **avatar dropdown menu** that reacts to auth state without any props or context
 
 ---
 
@@ -66,7 +68,7 @@ This is **simpler, more consistent with the rest of the app, and avoids re-rende
 
 ## 21.2 Updating the Axios Instance
 
-You already have an Axios instance from Lesson 17 (`api/api.ts` or `services/api.ts`). Now we extend it with **two interceptors** for authentication, plus a small tweak that makes server error messages reach our toasts:
+You already have an Axios instance from Lesson 17 (`services/api.ts`). Now we extend it with **two interceptors** for authentication, plus a small tweak that makes server error messages reach our toasts:
 
 1. A **request interceptor** that attaches the JWT token to every request
 2. A **response interceptor** that
@@ -214,7 +216,7 @@ export interface AuthResponse {
 Just like `todoApi` in Lesson 17, we wrap all auth HTTP calls in a typed service. Our backend responses are wrapped in `{ data: ... }`, so we unwrap once here:
 
 ```ts
-// src/api/authApi.ts
+// src/services/authApi.ts
 import api from './api';
 import type { User, LoginData, RegisterData, AuthResponse } from '../types/user';
 
@@ -255,7 +257,7 @@ Following the same pattern as `todoKeys` in Lesson 17, define a centralised obje
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { authApi } from '../api/authApi';
+import { authApi } from '../services/authApi';
 import type { User, LoginData, RegisterData } from '../types/user';
 
 // Centralised auth query keys -- one source of truth
@@ -383,23 +385,57 @@ export function useLogout() {
 
 ---
 
-## 21.7 Wiring Up the App
+## 21.7 The Theme Provider
 
-The `main.tsx` from Lesson 17 already has `QueryClientProvider` and `<Toaster />`, and the shadcn preset added a `ThemeProvider`. We need to:
+When you ran the shadcn init in Lesson 19, it scaffolded a `src/components/theme-provider.tsx` file for you. Open it up -- it is ~220 lines of context provider that lets any component read or change the current theme. It supports three values: `"light"`, `"dark"`, or `"system"` (follows the operating system preference).
 
-1. Make sure `BrowserRouter` wraps everything (so our auth hooks can use `useNavigate`)
-2. Pin the theme to **light mode** so our rose/pink gradient pages render the way we designed them (without this, students on macOS with system dark mode flip the whole UI to dark)
+You do not need to memorise the internals. Here is what it does for us:
+
+| Feature | What it does |
+|---|---|
+| `useTheme()` hook | Any child can read `theme` or call `setTheme("dark")` |
+| Adds `.light` or `.dark` on `<html>` | Tailwind's dark-mode utilities key off this class |
+| Persists to `localStorage` | Refresh the page and your choice sticks |
+| Listens to system changes | If theme is `"system"` and the OS flips to dark, the app flips too |
+| **`d` keyboard shortcut** | Press `d` anywhere (except inside inputs) to toggle light/dark instantly |
+
+### Why We Pin `defaultTheme="light"`
+
+Our auth pages use rose-and-pink gradients that were designed for a light background. If a student on macOS with system dark mode visits the app, the shadcn default (`"system"`) would flip the whole UI to dark and the gradients would look muddy.
+
+**We pin the default to `light` for this course** so the design looks the way you built it, on every machine, out of the box:
+
+```tsx
+<ThemeProvider defaultTheme="light">
+  {/* ... */}
+</ThemeProvider>
+```
+
+> This only changes the **starting** value on a fresh browser. If a user later presses `d` to toggle, or you build a theme switcher, their choice is written to `localStorage` and honoured on the next visit.
+
+The theme-provider is a shadcn asset -- treat it as a black box for now. If you ever want to teach dark mode later, students can build a theme toggle button in ~10 lines using `useTheme()`.
+
+---
+
+## 21.8 Wiring Up the App
+
+The `main.tsx` from Lesson 17 already has `QueryClientProvider` and `<Toaster />`. We need to add three more wrappers around `<App />`:
+
+1. **`BrowserRouter`** -- so our auth hooks can use `useNavigate`
+2. **`ThemeProvider defaultTheme="light"`** -- the theme provider we just discussed
+3. Confirm **`<Toaster richColors />`** is still mounted so `toast.success()` / `toast.error()` from the auth hooks appear
 
 ```tsx
 // src/main.tsx
-import { StrictMode } from 'react';
-import { createRoot } from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ThemeProvider } from '@/components/theme-provider';
-import { Toaster } from '@/components/ui/sonner';
-import App from './App';
-import './index.css';
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ThemeProvider } from "@/components/theme-provider";
+import { Toaster } from "@/components/ui/sonner";
+
+import "./index.css";
+import App from "./App.tsx";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -411,7 +447,7 @@ const queryClient = new QueryClient({
   },
 });
 
-createRoot(document.getElementById('root')!).render(
+createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <BrowserRouter>
       <QueryClientProvider client={queryClient}>
@@ -425,16 +461,18 @@ createRoot(document.getElementById('root')!).render(
 );
 ```
 
-**Order matters:**
-1. `BrowserRouter` -- so hooks can use `useNavigate`
+**Provider order matters:**
+
+1. `BrowserRouter` outermost -- so hooks anywhere in the tree (including inside React Query mutations) can use `useNavigate`
 2. `QueryClientProvider` -- so hooks can use React Query
-3. `<Toaster />` -- mounted once at the root so toasts work anywhere
+3. `ThemeProvider` -- so components can read the current theme
+4. `<Toaster />` at the same level as `<App />` -- mounted once so toasts render on top of every page
 
 **No `AuthProvider`.** Any component that needs the current user just calls `useCurrentUser()`.
 
 ---
 
-## 21.8 Login Page
+## 21.9 Login Page
 
 Build a login form using the **shadcn `Field` component** with React Hook Form + Zod, connected via the `useLogin` mutation hook.
 
@@ -628,7 +666,7 @@ We use this **same `Field` + `Controller` pattern in every form across the app**
 
 ---
 
-## 21.9 Register Page
+## 21.10 Register Page
 
 The register page uses the same `Field` + `Controller` pattern plus a shadcn `Select` for choosing the role. If you have not added the `Select` component yet, install it now:
 
@@ -846,7 +884,7 @@ The role field uses a shadcn `Select` dropdown wired to the form through `Contro
 
 ---
 
-## 21.10 Protected Route Component
+## 21.11 Protected Route Component
 
 A `ProtectedRoute` component wraps any route that requires authentication. It uses `useCurrentUser()` so there is only **one source of truth** for who is logged in:
 
@@ -929,60 +967,116 @@ navigate(from ?? (data.user.role === 'owner' ? '/owner/dashboard' : '/'));
 
 ---
 
-## 21.11 Setting Up Routes with Protection
+## 21.12 Setting Up Routes with Two Layouts
 
-Update `App.tsx` to use the `ProtectedRoute` component:
+Our app has two very different kinds of pages:
+
+- **Main pages** (Home, Owner Dashboard, 404) need the sticky Navbar, footer, etc.
+- **Auth pages** (Login, Register) look nothing like the rest -- they are centred cards on a gradient background, and would look wrong under the same Navbar.
+
+React Router lets us solve this with **layout routes**: each `Route` without a `path` acts as a wrapper that renders its own JSX plus `<Outlet />`, and any child routes get placed into that outlet.
+
+### The Two Layouts
+
+Both are tiny components. Each one just picks a wrapping design and drops an `<Outlet />` where child routes should render.
+
+**MainLayout** -- sticky navbar + main content area:
+
+```tsx
+// src/layouts/MainLayout.tsx
+import { Outlet } from "react-router-dom";
+import { Navbar } from "@/components/Navbar";
+
+export function MainLayout() {
+  return (
+    <div className="flex min-h-svh flex-col">
+      <Navbar />
+      <main className="flex-1">
+        <Outlet />
+      </main>
+    </div>
+  );
+}
+```
+
+**AuthLayout** -- centred wrapper with **no** navbar (auth pages have their own gradient card, so the app chrome would fight with it):
+
+```tsx
+// src/layouts/AuthLayout.tsx
+import { Outlet } from "react-router-dom";
+
+function AuthLayout() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="w-full">
+        <Outlet />
+      </div>
+    </div>
+  );
+}
+
+export default AuthLayout;
+```
+
+### The Not Found Page
+
+The `*` catch-all route needs a component too. Keep it simple:
+
+```tsx
+// src/pages/NotFoundPage.tsx
+import { Link } from "react-router-dom";
+
+function NotFoundPage() {
+  return (
+    <div className="py-16 text-center">
+      <h1 className="mb-4 text-6xl font-bold text-muted-foreground">404</h1>
+      <p className="mb-8 text-xl">Page not found</p>
+      <Link to="/" className="text-primary underline hover:no-underline">
+        Go back home
+      </Link>
+    </div>
+  );
+}
+
+export default NotFoundPage;
+```
+
+### App.tsx -- Nesting Routes Under Layouts
 
 ```tsx
 // src/App.tsx
-import { Routes, Route } from 'react-router-dom';
-import MainLayout from './layouts/MainLayout';
-import AuthLayout from './layouts/AuthLayout';
-import ProtectedRoute from './components/ProtectedRoute';
-import HomePage from './pages/HomePage';
-import AboutPage from './pages/AboutPage';
-import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
-import RoomListPage from './pages/RoomListPage';
-import RoomDetailPage from './pages/RoomDetailPage';
-import DashboardPage from './pages/DashboardPage';
-import MyBookingsPage from './pages/MyBookingsPage';
-import NotFoundPage from './pages/NotFoundPage';
+import { Routes, Route } from "react-router-dom";
+import { MainLayout } from "@/layouts/MainLayout";
+import { HomePage } from "@/pages/HomePage";
+import { LoginPage } from "@/pages/LoginPage";
+import { RegisterPage } from "@/pages/RegisterPage";
+import { OwnerDashboardPage } from "@/pages/OwnerDashboardPage";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
+import AuthLayout from "./layouts/AuthLayout";
+import NotFoundPage from "./pages/NotFoundPage";
 
-function App(): JSX.Element {
+export function App() {
   return (
     <Routes>
-      {/* Public routes with main layout */}
+      {/* Pages that share the sticky Navbar */}
       <Route element={<MainLayout />}>
         <Route path="/" element={<HomePage />} />
-        <Route path="/about" element={<AboutPage />} />
-        <Route path="/rooms" element={<RoomListPage />} />
-        <Route path="/rooms/:id" element={<RoomDetailPage />} />
 
-        {/* Protected -- any logged-in user */}
-        <Route
-          path="/my-bookings"
-          element={
-            <ProtectedRoute>
-              <MyBookingsPage />
-            </ProtectedRoute>
-          }
-        />
-
-        {/* Owner-only */}
+        {/* Owner-only route */}
         <Route
           path="/owner/dashboard"
           element={
             <ProtectedRoute requireRole="owner">
-              <DashboardPage />
+              <OwnerDashboardPage />
             </ProtectedRoute>
           }
         />
 
+        {/* Catch-all -- any unknown path lands here */}
         <Route path="*" element={<NotFoundPage />} />
       </Route>
 
-      {/* Auth routes -- no navbar */}
+      {/* Auth pages -- no navbar, centred card */}
       <Route element={<AuthLayout />}>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
@@ -994,210 +1088,263 @@ function App(): JSX.Element {
 export default App;
 ```
 
-### The Auth Layout
+**Reading the file, top to bottom:**
 
-A simpler layout for login and register pages -- just a centred container, no navbar:
+| Route | Layout | Access | Component |
+|---|---|---|---|
+| `/` | MainLayout | Anyone | `HomePage` |
+| `/owner/dashboard` | MainLayout | Owner only | `OwnerDashboardPage` (wrapped in `ProtectedRoute`) |
+| Anything unmatched | MainLayout | Anyone | `NotFoundPage` |
+| `/login` | AuthLayout | Anyone | `LoginPage` |
+| `/register` | AuthLayout | Anyone | `RegisterPage` |
 
-```tsx
-// src/layouts/AuthLayout.tsx
-import { Outlet } from 'react-router-dom';
-
-function AuthLayout(): JSX.Element {
-  return (
-    <div className="min-h-screen bg-background flex items-center justify-center px-4">
-      <div className="w-full max-w-md">
-        <Outlet />
-      </div>
-    </div>
-  );
-}
-
-export default AuthLayout;
-```
+> **A note about future lessons:** Right now we only have the Home page and Owner Dashboard. In lessons 24 (`/rooms`, `/rooms/:id`), 25 (`/my-bookings`, `/owner/bookings`), and 27 (`/owner/rooms`), we will keep adding routes to this same `App.tsx`. The two-layout structure stays the same -- we just add more `<Route>` entries inside `MainLayout`.
 
 ---
 
-## 21.12 Navbar with Auth State
+## 21.13 Navbar with Auth State
 
-The Navbar uses `useCurrentUser()` to know who is logged in and `useLogout()` for the logout button. No props, no context -- just hooks:
+The Navbar uses `useCurrentUser()` to know who is logged in and `useLogout()` for the logout button. **No props, no context -- just hooks.** When the user logs in or out, every Navbar re-renders automatically.
+
+We install the shadcn `avatar` and `dropdown-menu` components (if you have not already):
+
+```bash
+npx shadcn@latest add avatar dropdown-menu
+```
+
+Then build the Navbar. The logged-in state shows an avatar with the user's initials that opens a dropdown menu; the logged-out state shows Log in and Sign up buttons.
 
 ```tsx
 // src/components/Navbar.tsx
-import { NavLink, useNavigate } from 'react-router-dom';
-import { useCurrentUser, useLogout } from '../hooks/useAuth';
-import { Button } from '@/components/ui/button';
+import { Link, NavLink } from "react-router-dom";
+import { Hotel, LogOut, User as UserIcon, LayoutDashboard } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { useCurrentUser, useLogout } from "@/hooks/useAuth";
 
-function Navbar(): JSX.Element {
+export function Navbar() {
   const { data: user } = useCurrentUser();
   const logout = useLogout();
-  const navigate = useNavigate();
 
-  const isAuthenticated = !!user;
+  // Extract initials from the name for the avatar fallback: "Ram Bahadur" -> "RB"
+  const initials = user
+    ? user.name
+        .split(" ")
+        .map((part) => part[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase()
+    : "";
+
+  // Reusable NavLink styling helper -- active links get the strong colour
+  const navLinkClass = ({ isActive }: { isActive: boolean }) =>
+    `text-sm font-medium transition-colors hover:text-foreground ${
+      isActive ? "text-foreground" : "text-muted-foreground"
+    }`;
 
   return (
-    <nav className="border-b bg-card">
-      <div className="container mx-auto px-4 flex items-center justify-between h-16">
-        <NavLink to="/" className="text-xl font-bold text-primary">
-          BookMyRoom
-        </NavLink>
+    <header className="bg-background/80 sticky top-0 z-40 border-b backdrop-blur-lg">
+      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+        {/* Brand */}
+        <Link to="/" className="flex items-center gap-2">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-gradient-to-br from-rose-500 to-pink-600 text-white shadow-sm">
+            <Hotel className="size-5" />
+          </div>
+          <span className="text-lg font-semibold tracking-tight">
+            BookMyRoom
+          </span>
+        </Link>
 
-        <div className="flex items-center gap-4">
-          <NavLink
-            to="/"
-            end
-            className={({ isActive }) =>
-              isActive
-                ? 'text-primary font-semibold'
-                : 'text-muted-foreground hover:text-foreground transition-colors'
-            }
-          >
-            Home
+        {/* Primary nav -- hidden on mobile */}
+        <nav className="hidden items-center gap-8 md:flex">
+          <NavLink to="/" end className={navLinkClass}>
+            Browse Rooms
           </NavLink>
-
-          <NavLink
-            to="/rooms"
-            className={({ isActive }) =>
-              isActive
-                ? 'text-primary font-semibold'
-                : 'text-muted-foreground hover:text-foreground transition-colors'
-            }
-          >
-            Rooms
-          </NavLink>
-
-          {/* Owners get a dashboard link */}
-          {isAuthenticated && user?.role === 'owner' && (
-            <NavLink
-              to="/owner/dashboard"
-              className={({ isActive }) =>
-                isActive
-                  ? 'text-primary font-semibold'
-                  : 'text-muted-foreground hover:text-foreground transition-colors'
-              }
-            >
-              Dashboard
-            </NavLink>
-          )}
-
-          {/* Any logged-in user gets bookings */}
-          {isAuthenticated && (
-            <NavLink
-              to="/my-bookings"
-              className={({ isActive }) =>
-                isActive
-                  ? 'text-primary font-semibold'
-                  : 'text-muted-foreground hover:text-foreground transition-colors'
-              }
-            >
+          {user && (
+            <NavLink to="/my-bookings" className={navLinkClass}>
               My Bookings
             </NavLink>
           )}
+          {user?.role === "owner" && (
+            <NavLink to="/owner/dashboard" className={navLinkClass}>
+              Owner Portal
+            </NavLink>
+          )}
+        </nav>
 
-          {/* Auth buttons */}
-          {isAuthenticated ? (
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-muted-foreground">{user.name}</span>
-              <Button variant="outline" size="sm" onClick={() => logout()}>
-                Logout
-              </Button>
-            </div>
+        {/* Auth area */}
+        <div className="flex items-center gap-2">
+          {user ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger className="hover:bg-muted focus-visible:ring-ring flex items-center gap-2 rounded-full border bg-background py-1 pl-1 pr-3 outline-none transition-colors focus-visible:ring-2">
+                <Avatar size="sm">
+                  <AvatarFallback className="bg-gradient-to-br from-rose-500 to-pink-600 text-xs font-medium text-white">
+                    {initials}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="hidden text-sm font-medium sm:inline">
+                  {user.name}
+                </span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <div className="px-2 py-1.5">
+                  <div className="text-sm font-medium">{user.name}</div>
+                  <div className="text-muted-foreground text-xs">
+                    {user.email}
+                  </div>
+                </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem>
+                  <UserIcon className="mr-2 size-4" />
+                  Profile
+                </DropdownMenuItem>
+                {user.role === "owner" && (
+                  <DropdownMenuItem asChild>
+                    <Link to="/owner/dashboard">
+                      <LayoutDashboard className="mr-2 size-4" />
+                      Owner Dashboard
+                    </Link>
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onClick={logout}>
+                  <LogOut className="mr-2 size-4" />
+                  Log out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           ) : (
-            <div className="flex items-center gap-2">
+            <>
               <Button
+                asChild
                 variant="ghost"
                 size="sm"
-                onClick={() => navigate('/login')}
+                className="hidden sm:inline-flex"
               >
-                Login
+                <Link to="/login">Log in</Link>
               </Button>
-              <Button size="sm" onClick={() => navigate('/register')}>
-                Register
+              <Button
+                asChild
+                size="sm"
+                className="bg-gradient-to-r from-rose-500 to-pink-600 text-white hover:from-rose-600 hover:to-pink-700"
+              >
+                <Link to="/register">Sign up</Link>
               </Button>
-            </div>
+            </>
           )}
         </div>
       </div>
-    </nav>
+    </header>
   );
 }
-
-export default Navbar;
 ```
 
 ### What the Navbar Shows
 
-| State | Left Side | Right Side |
+| State | Nav Links | Right Side |
 |-------|-----------|------------|
-| Not logged in | Home, Rooms | Login, Register buttons |
-| Logged in (user) | Home, Rooms, My Bookings | Name + Logout button |
-| Logged in (owner) | Home, Rooms, Dashboard, My Bookings | Name + Logout button |
+| Not logged in | Browse Rooms | Log in + Sign up (gradient) |
+| Logged in (user) | Browse Rooms, My Bookings | Avatar + name → dropdown |
+| Logged in (owner) | Browse Rooms, My Bookings, Owner Portal | Avatar + name → dropdown with **Owner Dashboard** menu item |
 
-The key pattern is **conditional rendering** with `&&`:
+### Reading the Auth Area
+
+Two important patterns to notice:
+
+**1. `Button asChild` with `<Link>`** — the shadcn Button component supports `asChild` (via Radix Slot). When we pass a `<Link>` as its child, the Link element gets the Button's styling **but stays a real React Router link** with its own `to` behaviour. No `onClick={() => navigate("/login")}` shim needed.
 
 ```tsx
-{isAuthenticated && user?.role === 'owner' && (
-  <NavLink to="/owner/dashboard">Dashboard</NavLink>
+<Button asChild variant="ghost">
+  <Link to="/login">Log in</Link>
+</Button>
+```
+
+**2. Role-conditional dropdown item** — the "Owner Dashboard" menu item only renders when the user is an owner. Guests never see it in their menu.
+
+```tsx
+{user.role === "owner" && (
+  <DropdownMenuItem asChild>
+    <Link to="/owner/dashboard">
+      <LayoutDashboard className="mr-2 size-4" />
+      Owner Dashboard
+    </Link>
+  </DropdownMenuItem>
 )}
 ```
 
-This reads as: "If the user is authenticated AND their role is owner, then show the Dashboard link."
+### How the Navbar Reacts to Auth Changes
 
-When the user logs in, the `useLogin` hook seeds the cache. Every component using `useCurrentUser()` -- including this Navbar -- immediately re-renders with the new user. No prop drilling, no manual subscription.
+You never wire the Navbar to any store, event, or context. All the reactivity comes from `useCurrentUser()`:
+
+- **User logs in** → `useLogin.onSuccess` seeds the cache with `queryClient.setQueryData(authKeys.user(), data.user)`
+- Every component reading `useCurrentUser()` re-renders → Navbar swaps from Log in / Sign up buttons to avatar dropdown, in one frame
+- **User logs out** → `useLogout` writes `null` to the same cache key → Navbar flips back the other way
+
+No prop drilling, no manual subscription, no `<AuthProvider>`. This is the whole point of putting auth in React Query.
 
 ---
 
-## 21.13 Complete File Summary
+## 21.14 Complete File Summary
+
+By the end of Lesson 21, your `booking-frontend/src` folder should look like this. Files marked **NEW** were created in this lesson; the rest were carried in from Lesson 19 or the shadcn init.
 
 ```
 booking-frontend/
 ├── src/
-│   ├── api/
-│   │   ├── api.ts                  # Axios instance + auth interceptors
-│   │   └── authApi.ts              # Typed auth HTTP service
 │   ├── components/
-│   │   ├── ui/                     # shadcn/ui (field, select, button, input, sonner, ...)
-│   │   ├── Navbar.tsx              # Uses useCurrentUser + useLogout
-│   │   └── ProtectedRoute.tsx      # Route guard built on useCurrentUser
+│   │   ├── ui/                     # shadcn/ui (button, input, avatar, field,
+│   │   │                           #  select, dropdown-menu, sonner, ...)
+│   │   ├── theme-provider.tsx      # from shadcn init -- treat as a black box
+│   │   ├── Navbar.tsx              # NEW -- avatar dropdown, role-aware links
+│   │   └── ProtectedRoute.tsx      # NEW -- route guard using useCurrentUser
 │   ├── hooks/
-│   │   └── useAuth.ts              # authKeys + useCurrentUser, useLogin,
-│   │                               #          useRegister, useLogout
+│   │   └── useAuth.ts              # NEW -- authKeys + useCurrentUser,
+│   │                               #        useLogin, useRegister, useLogout
 │   ├── layouts/
-│   │   ├── MainLayout.tsx          # Navbar + Outlet + Footer
-│   │   └── AuthLayout.tsx          # Centred card layout
+│   │   ├── MainLayout.tsx          # NEW -- Navbar + Outlet
+│   │   └── AuthLayout.tsx          # NEW -- Centred wrapper for auth pages
 │   ├── pages/
-│   │   ├── HomePage.tsx
-│   │   ├── AboutPage.tsx
-│   │   ├── LoginPage.tsx           # shadcn Field + useLogin
-│   │   ├── RegisterPage.tsx        # shadcn Field + Select + useRegister
-│   │   ├── RoomListPage.tsx
-│   │   ├── RoomDetailPage.tsx
-│   │   ├── DashboardPage.tsx       # Owner-only
-│   │   ├── MyBookingsPage.tsx      # Auth-required
-│   │   └── NotFoundPage.tsx
+│   │   ├── HomePage.tsx            # from earlier lessons
+│   │   ├── LoginPage.tsx           # NEW -- shadcn Field + useLogin
+│   │   ├── RegisterPage.tsx        # NEW -- shadcn Field + Select + useRegister
+│   │   ├── OwnerDashboardPage.tsx  # NEW -- placeholder for lessons 22-27
+│   │   └── NotFoundPage.tsx        # NEW -- catch-all for the `*` route
 │   ├── schemas/
-│   │   └── authSchemas.ts          # loginSchema + registerSchema (Zod)
+│   │   └── authSchema.ts           # NEW -- loginSchema + registerSchema (Zod)
+│   ├── services/
+│   │   ├── api.ts                  # UPDATED -- adds JWT + 401 interceptors
+│   │   └── authApi.ts              # NEW -- register / login / getMe
 │   ├── types/
-│   │   ├── user.ts                 # User, LoginData, RegisterData, AuthResponse
-│   │   ├── room.ts
-│   │   └── booking.ts
-│   ├── App.tsx                     # Routes + ProtectedRoute
-│   ├── main.tsx                    # BrowserRouter + QueryClientProvider + Toaster
-│   └── index.css
-├── .env
+│   │   ├── user.ts                 # UPDATED -- adds LoginData / RegisterData / AuthResponse
+│   │   ├── room.ts                 # from Lesson 19 (used in later lessons)
+│   │   └── booking.ts              # from Lesson 19 (used in later lessons)
+│   ├── App.tsx                     # UPDATED -- MainLayout + AuthLayout routes
+│   ├── main.tsx                    # UPDATED -- BrowserRouter, ThemeProvider, Toaster
+│   └── index.css                   # from shadcn init
+├── .env                            # VITE_API_URL=http://localhost:4001/api
 └── package.json
 ```
+
+> **What is missing (on purpose):** we do not yet have `/rooms`, `/my-bookings`, or the owner dashboard body. Those routes and their supporting components arrive in lessons 22-27. Lesson 21's job is auth + the two-layout skeleton -- everything else builds on top.
 
 ---
 
 ## Practice Exercises
 
-### Exercise 1: Set Up the Auth Hooks
-1. Update your Axios instance with the request and response interceptors
-2. Create `api/authApi.ts` with `register`, `login`, and `getMe`
+### Exercise 1: Set Up the Auth Hooks + Providers
+1. Update `services/api.ts` with the request and response interceptors
+2. Create `services/authApi.ts` with `register`, `login`, and `getMe`
 3. Create `hooks/useAuth.ts` with the `authKeys` factory
 4. Add the `useCurrentUser` query hook
 5. Add the `useLogin`, `useRegister`, and `useLogout` hooks -- each with a Sonner toast
-6. Confirm `<Toaster richColors />` is mounted in `main.tsx` (from Lesson 17)
+6. In `main.tsx`, wrap `<App />` with `BrowserRouter`, `QueryClientProvider`, and `ThemeProvider defaultTheme="light"`. Confirm `<Toaster richColors />` is at the same level as `<App />`.
 
 ### Exercise 2: Build the Login Flow
 1. Install the shadcn Field component: `npx shadcn@latest add field`
@@ -1217,18 +1364,28 @@ booking-frontend/
 6. Test registering with an existing email -- verify the error toast
 7. After registering, verify you are automatically logged in (token in localStorage, `useCurrentUser` returns the new user)
 
-### Exercise 4: Complete the Auth Flow
+### Exercise 4: Two Layouts + Not Found
+1. Create `layouts/MainLayout.tsx` -- Navbar + `<Outlet />`
+2. Create `layouts/AuthLayout.tsx` -- centred wrapper, no navbar (auth pages have their own gradient)
+3. Create `pages/NotFoundPage.tsx` -- a friendly 404 with a link home
+4. Wire `App.tsx` so `/`, `/owner/dashboard`, and `*` live under `MainLayout`, and `/login`, `/register` live under `AuthLayout`
+5. Confirm:
+   - Visiting `/` shows the Navbar
+   - Visiting `/login` shows the centred card **without** the Navbar
+   - Visiting `/some-nonsense-path` shows the 404 page **with** the Navbar
+
+### Exercise 5: Complete the Auth Flow
 1. Create the `ProtectedRoute` component built on `useCurrentUser`
-2. Add protected routes to `App.tsx` (My Bookings for any user, Dashboard for owners)
-3. Build the auth-aware `Navbar` using `useCurrentUser` and `useLogout`
+2. Wrap `/owner/dashboard` in `<ProtectedRoute requireRole="owner">`
+3. Build the auth-aware `Navbar` with the avatar dropdown and role-conditional "Owner Portal" link
 4. Test the full flow:
    - Visit `/owner/dashboard` while logged out -- should redirect to `/login`
-   - Login as a user -- should not see "Dashboard" in the navbar
-   - Login as an owner -- should see "Dashboard" and be redirected to `/owner/dashboard`
-   - Click "Logout" -- should see a "Logged out" toast and be redirected to `/login`
-   - Verify the navbar updates immediately after login and logout
+   - Login as a user -- should **not** see "Owner Portal" in the navbar
+   - Login as an owner -- should see "Owner Portal" and be redirected to `/owner/dashboard`
+   - Open the avatar dropdown and click "Log out" -- should see a "Logged out" toast and be redirected to `/login`
+   - Verify the navbar updates immediately after login and logout (no page refresh needed)
 
-### Exercise 5: Handle 401s Gracefully (Advanced)
+### Exercise 6: Handle 401s Gracefully (Advanced)
 1. Manually delete the token from localStorage while keeping the React Query cache populated
 2. Trigger an authenticated request (e.g. navigate to `/my-bookings`)
 3. Confirm the response interceptor redirects you to `/login` automatically
@@ -1249,3 +1406,6 @@ booking-frontend/
 10. **`ProtectedRoute`** consumes `useCurrentUser()` -- the same single source of truth as the rest of the app
 11. **`queryClient.clear()` on logout** wipes user-specific caches so the next user does not see stale data
 12. **Role-based UI** uses `user.role` directly from `useCurrentUser` -- no extra context, no extra props
+13. **Two layout routes** (`MainLayout` for the main shell, `AuthLayout` for centred auth cards) keep the app chrome clean without duplicating markup on every page
+14. **`ThemeProvider defaultTheme="light"`** ships the app with a consistent look on every machine; the `d` keyboard shortcut and `localStorage` sync come from the shadcn provider for free
+15. **`<Button asChild><Link .../></Button>`** styles a real React Router link as a button without an `onClick` shim -- the shadcn / Radix Slot pattern
