@@ -7,8 +7,11 @@ import express, {
 } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import path from "path";
+import multer from "multer";
 import connectDB from "./config/database";
 import authRoutes from "./routes/authRoutes";
+import roomRoutes from "./routes/roomRoutes";
 
 // Load environment variables BEFORE anything else
 dotenv.config();
@@ -25,8 +28,15 @@ app.use(
 );
 app.use(express.json());
 
+// Serve uploaded room images from /uploads
+app.use(
+  "/uploads",
+  express.static(path.join(__dirname, "..", "uploads"))
+);
+
 // Routes
 app.use("/api/auth", authRoutes);
+app.use("/api/rooms", roomRoutes);
 
 // Health check route
 app.get("/api/health", (_req: Request, res: Response) => {
@@ -34,16 +44,42 @@ app.get("/api/health", (_req: Request, res: Response) => {
 });
 
 // Global error handler -- safety net for anything thrown outside a
-// controller's try/catch (e.g. Mongoose ValidationError, CastError).
+// controller's try/catch (Mongoose ValidationError, CastError, MulterError).
 app.use(
   (err: Error, _req: Request, res: Response, _next: NextFunction): void => {
     console.error("Unhandled error:", err);
 
+    // Multer errors (file size / count / unexpected field)
+    if (err instanceof multer.MulterError) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        res
+          .status(400)
+          .json({ message: "Each image must be under 5 MB" });
+        return;
+      }
+      if (err.code === "LIMIT_FILE_COUNT") {
+        res
+          .status(400)
+          .json({ message: "You can upload up to 5 images at a time" });
+        return;
+      }
+      res.status(400).json({ message: err.message });
+      return;
+    }
+
+    // File-filter rejection from upload.ts
+    if (err.message === "Only .jpg, .png, and .webp image files are allowed") {
+      res.status(400).json({ message: err.message });
+      return;
+    }
+
+    // Mongoose validation
     if (err.name === "ValidationError") {
       res.status(400).json({ message: err.message });
       return;
     }
 
+    // Invalid MongoDB ObjectId
     if (err.name === "CastError") {
       res.status(400).json({ message: "Invalid ID format" });
       return;
