@@ -46,28 +46,54 @@ npm install -D @types/multer
 
 ## 22.3 Setting Up Multer Storage
 
-Multer needs to know **where** to save files and **what** to name them. We configure this with `diskStorage`:
+Multer needs to know **where** to save files and **what** to name them. We configure this with `diskStorage`. We put everything Multer-related -- the upload directory, the storage config, the file filter, and the multer instance itself -- in a single `middleware/upload.ts` file. That way any route that wants to accept uploads just imports it.
+
+Start the file with the imports and compute the absolute upload path from `__dirname`:
 
 ```typescript
 // backend/src/middleware/upload.ts
 import multer, { FileFilterCallback } from "multer";
 import path from "path";
+import fs from "fs";
 import { Request } from "express";
 
-// Configure where and how files are stored
+// Where uploaded room images live on disk. __dirname is src/middleware,
+// so we go up twice to reach the backend project root, then into uploads/rooms.
+const uploadDir: string = path.join(__dirname, "..", "..", "uploads", "rooms");
+```
+
+> Why an **absolute path** built from `__dirname` and not a relative one like `"uploads/rooms"`? Relative paths are resolved against the process's *current working directory* (`process.cwd()`), which depends on **where** the developer ran `npm run dev` from. Building the path off `__dirname` is deterministic -- the code always writes to the same folder regardless of where the process was launched.
+
+Now the storage config -- destination points at our absolute path, filename is a unique slug so two uploads never collide:
+
+```typescript
+// backend/src/middleware/upload.ts (continued)
+
 const storage = multer.diskStorage({
-  destination: (req: Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) => {
-    cb(null, "uploads/rooms");
+  destination: (_req, _file, cb) => {
+    cb(null, uploadDir);
   },
-  filename: (req: Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) => {
-    // Create a unique filename: timestamp-originalname
-    // e.g., 1700000000000-living-room.jpg
-    cb(null, `${Date.now()}-${file.originalname}`);
+  filename: (_req, file, cb) => {
+    // Prefix with a timestamp + random number so two uploads with the same
+    // name never collide, and slug the original name for safety.
+    const uniqueSuffix: string = `${Date.now()}-${Math.round(
+      Math.random() * 1e9
+    )}`;
+    const ext: string = path.extname(file.originalname).toLowerCase();
+    const base: string = path
+      .basename(file.originalname, ext)
+      .replace(/[^a-z0-9]/gi, "-")
+      .toLowerCase();
+    cb(null, `${uniqueSuffix}-${base}${ext}`);
   },
 });
 ```
 
-**Why `Date.now()`?** If two users upload a file called `photo.jpg`, they would overwrite each other. The timestamp makes every filename unique.
+**Why the extra work on the filename?** A bare `${Date.now()}-${file.originalname}` has two problems:
+1. If two users upload `photo.jpg` in the same millisecond, they collide.
+2. Original filenames can contain spaces, unicode, or slashes -- anything that ends up in a URL should be slugged.
+
+The final filename looks something like `1782958518067-56314975-cosy-apartment.jpg`.
 
 ---
 
@@ -78,27 +104,32 @@ We do not want users uploading PDFs, executables, or other non-image files. The 
 ```typescript
 // backend/src/middleware/upload.ts (continued)
 
-const allowedMimeTypes: string[] = ["image/jpeg", "image/png", "image/webp"];
-const allowedExtensions: string[] = [".jpg", ".jpeg", ".png", ".webp"];
-
-const imageOnly = (
-  req: Request,
+const fileFilter = (
+  _req: Request,
   file: Express.Multer.File,
   cb: FileFilterCallback
 ): void => {
-  const extension: string = path.extname(file.originalname).toLowerCase();
-  const isMimeValid: boolean = allowedMimeTypes.includes(file.mimetype);
-  const isExtValid: boolean = allowedExtensions.includes(extension);
+  const allowedMimeTypes: string[] = [
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+  ];
+  const allowedExtensions: string[] = [".jpg", ".jpeg", ".png", ".webp"];
 
-  if (isMimeValid && isExtValid) {
-    cb(null, true); // Accept the file
+  const mimeOk: boolean = allowedMimeTypes.includes(file.mimetype);
+  const extOk: boolean = allowedExtensions.includes(
+    path.extname(file.originalname).toLowerCase()
+  );
+
+  if (mimeOk && extOk) {
+    cb(null, true);
   } else {
     cb(new Error("Only .jpg, .png, and .webp image files are allowed"));
   }
 };
 ```
 
-**Why check both MIME type and extension?** A malicious user could rename `virus.exe` to `virus.jpg`. Checking both provides an extra layer of safety. The MIME type is determined by the file content, not the name.
+**Why check both MIME type and extension?** A malicious user could rename `virus.exe` to `virus.jpg`. The MIME type is derived from the actual file bytes, so checking both gives you an extra layer of defence.
 
 ---
 
@@ -111,16 +142,24 @@ Now we combine storage, file filter, and size limits into a single Multer instan
 
 const upload = multer({
   storage,
-  fileFilter: imageOnly,
+  fileFilter,
   limits: {
     fileSize: 5 * 1024 * 1024, // 5 MB per file
+    files: 5, // up to 5 files per request
   },
 });
 
 export default upload;
 ```
 
-The `limits.fileSize` is in bytes. `5 * 1024 * 1024` equals 5 megabytes. If a user tries to upload a 10 MB photo, Multer will reject it automatically.
+Two limits, two different Multer errors:
+
+| Limit | If exceeded | Error code Multer throws |
+|---|---|---|
+| `fileSize` | A single file is over 5 MB | `LIMIT_FILE_SIZE` |
+| `files` | The user sends more than 5 files | `LIMIT_FILE_COUNT` |
+
+We will branch on both of these in the global error handler (section 22.19) so the user gets a helpful message instead of the raw Multer text.
 
 ---
 
@@ -141,6 +180,7 @@ export interface IRoom extends Document {
   amenities: string[];
   images: string[];
   owner: mongoose.Types.ObjectId;
+  isAvailable: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -188,6 +228,10 @@ const roomSchema = new Schema<IRoom>(
       ref: "User",
       required: true,
     },
+    isAvailable: {
+      type: Boolean,
+      default: true,
+    },
   },
   {
     timestamps: true, // Adds createdAt and updatedAt automatically
@@ -201,47 +245,58 @@ export default Room;
 **Key points:**
 - `images` stores an array of filenames (not full URLs) -- we construct URLs when serving
 - `owner` references the User model -- only this user can edit or delete the room
+- `isAvailable` defaults to `true` so newly created rooms are bookable; the owner can toggle it later, and Lesson 25 will use it when checking whether a booking can be made
 - `timestamps: true` gives us `createdAt` and `updatedAt` for free
 
 ---
 
 ## 22.7 Creating the Uploads Directory
 
-Express will not create directories for us. We need the `uploads/rooms` folder to exist before Multer tries to write to it:
+Multer will not create the destination directory for us -- if `uploads/rooms/` does not exist when a request arrives, the upload fails. We already computed the absolute path at the top of `upload.ts` (section 22.3). Right below that variable, add three lines that create the directory on boot if it is missing:
 
 ```typescript
-// backend/src/index.ts (add near the top, after imports)
-import fs from "fs";
-import path from "path";
+// backend/src/middleware/upload.ts (the fs check under the uploadDir variable)
+const uploadDir: string = path.join(__dirname, "..", "..", "uploads", "rooms");
 
-const uploadsDir: string = path.join(__dirname, "..", "uploads", "rooms");
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+// Make sure the directory exists on boot (Multer will not create it)
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
 }
 ```
 
-The `{ recursive: true }` option creates parent directories too, so if `uploads/` does not exist, it will be created along with `uploads/rooms/`.
+**Why put this in `upload.ts` and not `index.ts`?** The directory only exists because Multer needs it. Keeping the "make sure this folder exists" line next to the "here is where Multer writes files" line means anyone reading `upload.ts` sees the full lifecycle in one place. There is nothing for `index.ts` to know about it.
+
+The `{ recursive: true }` option creates parent directories too, so if neither `uploads/` nor `uploads/rooms/` exists, both are created in one call.
+
+> **Add `uploads/` to your `.gitignore`.** These are user-generated files -- they should never end up in the repo.
 
 ---
 
 ## 22.8 Serving Static Files
 
-When the frontend needs to display a room image, it requests the file from the backend. Express can serve files from a directory using `express.static`:
+When the frontend needs to display a room image, it requests the file from the backend. Express can serve files from a directory using `express.static`. Add these lines to `index.ts` -- alongside the other middleware, before the route mounts:
 
 ```typescript
 // backend/src/index.ts
+import path from "path";
 import express from "express";
 
-const app = express();
+// ... other setup ...
 
-// Serve uploaded files as static assets
-app.use("/uploads", express.static(path.join(__dirname, "..", "uploads")));
+// Serve uploaded room images at /uploads/rooms/<filename>
+app.use(
+  "/uploads",
+  express.static(path.join(__dirname, "..", "uploads"))
+);
 ```
 
-Now a file saved as `uploads/rooms/1700000000000-kitchen.jpg` is accessible at:
+Now a file saved as `uploads/rooms/1782958518067-cosy-apartment.jpg` is accessible at:
+
 ```
-http://localhost:3001/uploads/rooms/1700000000000-kitchen.jpg
+http://localhost:4001/uploads/rooms/1782958518067-cosy-apartment.jpg
 ```
+
+> Notice we point `express.static` at the parent `uploads/` folder (not `uploads/rooms/`). This lets us add more upload folders later (e.g. `uploads/avatars/`) without changing this line.
 
 ---
 
@@ -954,65 +1009,90 @@ export const deleteRoom = async (req: Request, res: Response): Promise<void> => 
 
 ## 22.18 Registering the Routes
 
-Add the room routes to your main Express app:
+Add the room routes to your main Express app alongside the auth routes from Lesson 20. The full "middleware + routes" section of `index.ts` now looks like this:
 
 ```typescript
-// backend/src/index.ts
+// backend/src/index.ts (relevant middleware + route mounts)
+import authRoutes from "./routes/authRoutes";
 import roomRoutes from "./routes/roomRoutes";
 
-// ... after other middleware (and before the global error handler)
+app.use(cors({ /* ... */ }));
+app.use(express.json());
+
+// Serve uploaded images from /uploads (added in section 22.8)
+app.use(
+  "/uploads",
+  express.static(path.join(__dirname, "..", "uploads"))
+);
+
+// Routes
+app.use("/api/auth", authRoutes);
 app.use("/api/rooms", roomRoutes);
+
+// ... the global error handler comes last (section 22.19) ...
 ```
+
+**Order matters:**
+- `express.json()` and `cors()` must run before the routes so `req.body` is parsed and CORS headers are set
+- `express.static("/uploads")` must be mounted before the route handlers so `/uploads/rooms/foo.jpg` is served as a file, not treated as an API path
+- The global error handler is the **last** `app.use()` call so it catches errors from any earlier middleware or route
 
 ---
 
 ## 22.19 Extending the Global Error Handler for Multer
 
-In Lesson 20 we added a global error handler at the bottom of `index.ts`. Multer-specific errors (file too large, unexpected field, wrong file type) need their own branches so we can return clear 400 responses. We extend the existing handler -- no separate `errorHandler.ts` file needed.
+In Lesson 20 we added a global error handler at the bottom of `index.ts`. Multer-specific errors (file too large, too many files, wrong file type) need their own branches so we can return clear 400 responses. We **replace** that Lesson 20 handler with the fuller version below -- no separate `errorHandler.ts` file needed.
 
 ```typescript
 // backend/src/index.ts (replace the existing global error handler)
 import multer from "multer";
-import { Request, Response, NextFunction } from "express";
 
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction): void => {
-  console.error(err);
+app.use(
+  (err: Error, _req: Request, res: Response, _next: NextFunction): void => {
+    console.error("Unhandled error:", err);
 
-  // Multer-specific errors (file uploads)
-  if (err instanceof multer.MulterError) {
-    if (err.code === "LIMIT_FILE_SIZE") {
-      res.status(400).json({ message: "File too large. Maximum size is 5 MB." });
+    // Multer errors (file size / count / unexpected field)
+    if (err instanceof multer.MulterError) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        res
+          .status(400)
+          .json({ message: "Each image must be under 5 MB" });
+        return;
+      }
+      if (err.code === "LIMIT_FILE_COUNT") {
+        res
+          .status(400)
+          .json({ message: "You can upload up to 5 images at a time" });
+        return;
+      }
+      res.status(400).json({ message: err.message });
       return;
     }
-    if (err.code === "LIMIT_UNEXPECTED_FILE") {
-      res.status(400).json({ message: "Too many files. Maximum is 5 images." });
+
+    // File-filter rejection from upload.ts
+    if (err.message === "Only .jpg, .png, and .webp image files are allowed") {
+      res.status(400).json({ message: err.message });
       return;
     }
-    res.status(400).json({ message: err.message });
-    return;
-  }
 
-  // File-filter rejection from upload.ts
-  if (err.message === "Only .jpg, .png, and .webp image files are allowed") {
-    res.status(400).json({ message: err.message });
-    return;
-  }
+    // Mongoose validation
+    if (err.name === "ValidationError") {
+      res.status(400).json({ message: err.message });
+      return;
+    }
 
-  // Mongoose validation
-  if (err.name === "ValidationError") {
-    res.status(400).json({ message: err.message });
-    return;
-  }
+    // Invalid MongoDB ObjectId
+    if (err.name === "CastError") {
+      res.status(400).json({ message: "Invalid ID format" });
+      return;
+    }
 
-  // Invalid MongoDB ObjectId
-  if (err.name === "CastError") {
-    res.status(400).json({ message: "Invalid ID format" });
-    return;
+    res.status(500).json({ message: err.message || "Server error" });
   }
-
-  res.status(500).json({ message: err.message || "Server error" });
-});
+);
 ```
+
+> **`LIMIT_FILE_COUNT` vs `LIMIT_UNEXPECTED_FILE`** -- Multer has both, but they mean different things. `LIMIT_FILE_COUNT` fires when the client sends more files than the `files` limit we set in `multer({ limits: { files: 5 } })`. `LIMIT_UNEXPECTED_FILE` fires when the field name in the form does not match the field name in `upload.array("images", 5)`. Because we configured `files: 5` in `upload.ts`, the code we care about is `LIMIT_FILE_COUNT`.
 
 **The full error-handling pattern in this project:**
 - **`express-validator`** catches bad input (400) before the controller runs
@@ -1026,7 +1106,7 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction): void =>
 
 ### Creating a Room (POST)
 
-1. Set method to **POST** and URL to `http://localhost:3001/api/rooms`
+1. Set method to **POST** and URL to `http://localhost:4001/api/rooms`
 2. Add header: `Authorization: Bearer <your-jwt-token>`
 3. Switch body to **form-data** (not JSON!)
 4. Add text fields:
@@ -1063,7 +1143,7 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction): void =>
 ### Browsing Rooms (GET with Filters and Pagination)
 
 ```
-GET http://localhost:3001/api/rooms?page=1&limit=5&location=London&minPrice=50&maxPrice=200
+GET http://localhost:4001/api/rooms?page=1&limit=5&location=London&minPrice=50&maxPrice=200
 ```
 
 No authentication needed -- browsing is public.
@@ -1089,7 +1169,7 @@ No authentication needed -- browsing is public.
 
 Pure JSON, no Multer.
 
-1. Method: **PUT**, URL: `http://localhost:3001/api/rooms/<roomId>`
+1. Method: **PUT**, URL: `http://localhost:4001/api/rooms/<roomId>`
 2. Header: `Authorization: Bearer <your-jwt-token>`
 3. Header: `Content-Type: application/json`
 4. Body (raw JSON):
@@ -1102,7 +1182,7 @@ Pure JSON, no Multer.
 
 ### Adding More Images (POST /:id/images)
 
-1. Method: **POST**, URL: `http://localhost:3001/api/rooms/<roomId>/images`
+1. Method: **POST**, URL: `http://localhost:4001/api/rooms/<roomId>/images`
 2. Header: `Authorization: Bearer <your-jwt-token>`
 3. Body: **form-data**, key `images`, attach up to 5 image files
 4. Send
@@ -1126,7 +1206,7 @@ The new filenames are **appended** to the existing array, not replacing it.
 
 ### Removing a Single Image (DELETE /:id/images/:imageName)
 
-1. Method: **DELETE**, URL: `http://localhost:3001/api/rooms/<roomId>/images/1700001234567-new-photo.jpg`
+1. Method: **DELETE**, URL: `http://localhost:4001/api/rooms/<roomId>/images/1700001234567-new-photo.jpg`
 2. Header: `Authorization: Bearer <your-jwt-token>`
 3. Send
 
@@ -1150,7 +1230,7 @@ If the filename does not belong to that room you get `404 { "message": "Image no
 
 Open in your browser:
 ```
-http://localhost:3001/uploads/rooms/1700000000000-room1.jpg
+http://localhost:4001/uploads/rooms/1700000000000-room1.jpg
 ```
 
 You should see the uploaded image displayed directly.
