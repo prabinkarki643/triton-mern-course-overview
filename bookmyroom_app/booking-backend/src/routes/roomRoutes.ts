@@ -6,6 +6,7 @@ import upload from "../middleware/upload";
 import {
   createRoom,
   getRooms,
+  getMyRooms,
   getRoomById,
   updateRoom,
   deleteRoom,
@@ -24,6 +25,15 @@ const router: Router = Router();
 
 // Public routes -- anyone can browse rooms
 router.get("/", listRoomsValidator, validateResult, getRooms);
+
+// Owner: their own rooms -- must be BEFORE /:id so "my-rooms" is not parsed as an id
+router.get(
+  "/my-rooms",
+  requireAuth,
+  requireRole("owner"),
+  getMyRooms
+);
+
 router.get("/:id", roomIdValidator, validateResult, getRoomById);
 
 // Owner-only routes

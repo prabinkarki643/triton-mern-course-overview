@@ -1116,7 +1116,11 @@ function AddRoom(): JSX.Element {
     formData.append('location', data.location);
     formData.append('price', String(data.price));
     formData.append('capacity', String(data.capacity));
-    data.amenities?.forEach((a) => formData.append('amenities[]', a));
+    // Amenities travels as a single JSON string. Multer does not auto-parse
+    // repeated form fields into arrays the way URL-encoded bodies do, so we
+    // give the backend one clean JSON payload -- parseAmenities on the
+    // controller side handles the deserialisation.
+    formData.append('amenities', JSON.stringify(data.amenities ?? []));
     files.forEach((file) => formData.append('images', file));
 
     createRoom(formData, {
@@ -1343,11 +1347,10 @@ JSON cannot carry files. `FormData` is a browser API that builds the `multipart/
 
 ```ts
 const formData = new FormData();
-formData.append('title', 'My Room');           // text field
-formData.append('amenities[]', 'WiFi');         // array element
-formData.append('amenities[]', 'Parking');      // another array element
-formData.append('images', fileObject1);         // file field
-formData.append('images', fileObject2);         // multiple files -> same field name
+formData.append('title', 'My Room');                      // text field
+formData.append('amenities', JSON.stringify(['WiFi']));   // JSON-encoded array
+formData.append('images', fileObject1);                   // file field
+formData.append('images', fileObject2);                   // multiple files -> same field name
 ```
 
 Axios sends this with `Content-Type: multipart/form-data; boundary=...` so Multer on the backend can parse both the text fields and the files in one go.

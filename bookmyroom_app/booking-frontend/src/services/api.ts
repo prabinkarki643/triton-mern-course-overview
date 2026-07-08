@@ -1,8 +1,12 @@
 // src/services/api.ts
 import axios from "axios";
 
+// Exported so image URLs can be built off the same base (see EditRoom / RoomCard).
+export const API_URL: string =
+  import.meta.env.VITE_API_URL || "http://localhost:4001/api";
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "http://localhost:4001/api",
+  baseURL: API_URL,
   headers: {
     "Content-Type": "application/json",
   },
