@@ -138,6 +138,74 @@ export const getRooms = async (
   }
 };
 
+// GET /api/rooms/my-rooms -- current owner's rooms (paginated + filterable)
+// Requires requireAuth so req.user is set.
+export const getMyRooms = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { search, status, sort, page, limit } = req.query as {
+      search?: string;
+      status?: "active" | "inactive";
+      sort?: string;
+      page?: number;
+      limit?: number;
+    };
+
+    // Owner filter -- always applied from JWT so no one else's rooms leak in
+    const filter: Record<string, unknown> = {
+      owner: req.user!.userId,
+    };
+
+    if (search) {
+      filter.$or = [
+        { title: { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } },
+      ];
+    }
+    if (status === "active") filter.isAvailable = true;
+    else if (status === "inactive") filter.isAvailable = false;
+
+    // Sort
+    let sortOption: Record<string, 1 | -1> = { createdAt: -1 };
+    if (sort === "price_asc") sortOption = { price: 1 };
+    else if (sort === "price_desc") sortOption = { price: -1 };
+    else if (sort === "oldest") sortOption = { createdAt: 1 };
+
+    // Pagination
+    const pageNum: number = Number(page) || 1;
+    const limitNum: number = Number(limit) || 10;
+    const skip: number = (pageNum - 1) * limitNum;
+
+    const [rooms, total] = await Promise.all([
+      Room.find(filter)
+        .populate("owner", "name email")
+        .sort(sortOption)
+        .skip(skip)
+        .limit(limitNum),
+      Room.countDocuments(filter),
+    ]);
+
+    const totalPages: number = Math.ceil(total / limitNum);
+
+    res.json({
+      data: rooms,
+      meta: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages,
+        hasNextPage: pageNum < totalPages,
+        hasPrevPage: pageNum > 1,
+      },
+    });
+  } catch (error: unknown) {
+    console.error("getMyRooms error:", error);
+    res.status(500).json({ message: "Failed to fetch your rooms" });
+  }
+};
+
 // GET /api/rooms/:id -- single room with owner populated
 export const getRoomById = async (
   req: Request,
