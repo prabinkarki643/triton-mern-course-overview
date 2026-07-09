@@ -1719,8 +1719,11 @@ The page is almost identical to "My Bookings". That is the whole point of the re
 
 ## 25.15 Adding the Booking Routes to the Frontend
 
+The owner route tree was defined in Lesson 23 (§23.8.7). We keep that shape here -- the only new child route is `bookings`, which the L23 lesson already had as a placeholder page. Nothing else moves.
+
 ```tsx
 // booking-frontend/src/App.tsx (additional routes)
+import { Navigate, Route, Routes } from "react-router-dom";
 import MyBookings from "./pages/MyBookings";
 import OwnerBookings from "./pages/owner/OwnerBookings";
 
@@ -1733,8 +1736,17 @@ import OwnerBookings from "./pages/owner/OwnerBookings";
   {/* Guest routes (authenticated) */}
   <Route path="/bookings" element={<MyBookings />} />
 
-  {/* Owner routes */}
-  <Route path="/owner" element={<OwnerLayout />}>
+  {/* Owner routes -- same shape as Lesson 23.8.7 */}
+  <Route
+    path="/owner"
+    element={
+      <ProtectedRoute requireRole="owner">
+        <OwnerLayout />
+      </ProtectedRoute>
+    }
+  >
+    <Route index element={<Navigate to="dashboard" replace />} />
+    <Route path="dashboard" element={<OwnerDashboardPage />} />
     <Route path="rooms" element={<MyRooms />} />
     <Route path="rooms/new" element={<AddRoom />} />
     <Route path="rooms/:id/edit" element={<EditRoom />} />
@@ -1742,6 +1754,8 @@ import OwnerBookings from "./pages/owner/OwnerBookings";
   </Route>
 </Routes>
 ```
+
+> The `bookings` route now points at the real `OwnerBookings` page you build in section 25.14 -- previously it was a "Coming in Lesson 25" placeholder from L23.
 
 ---
 

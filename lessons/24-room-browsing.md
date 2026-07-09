@@ -1073,13 +1073,15 @@ import RoomListing from "./pages/RoomListing";
 import RoomDetail from "./pages/RoomDetail";
 
 <Routes>
+  {/* Public routes */}
   <Route path="/" element={<Home />} />
   <Route path="/rooms" element={<RoomListing />} />
   <Route path="/rooms/:id" element={<RoomDetail />} />
 
-  {/* Owner routes (from Lesson 23) */}
+  {/* Owner routes (see Lesson 23.8.7 for the full nested tree
+      with ProtectedRoute + <Route index element={<Navigate to="dashboard"/>} />) */}
   <Route path="/owner" element={<OwnerLayout />}>
-    {/* ... */}
+    {/* dashboard, rooms, rooms/new, rooms/:id/edit, bookings -- from L23 */}
   </Route>
 </Routes>
 ```

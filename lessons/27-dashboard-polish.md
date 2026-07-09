@@ -394,10 +394,10 @@ export function StatsCard({ title, value, icon, isLoading }: StatsCardProps) {
 
 ### Step 6: The Owner Dashboard Page
 
-The page becomes tiny because every concern lives in a hook or a reusable component.
+The page becomes tiny because every concern lives in a hook or a reusable component. This **replaces** the placeholder `OwnerDashboardPage` from Lesson 23 -- the file path, component name and export stay the same, so no routing changes are needed.
 
 ```tsx
-// webapp/src/pages/OwnerDashboard.tsx
+// booking-frontend/src/pages/OwnerDashboardPage.tsx
 import { Home, CalendarCheck, Wallet, Clock } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable } from '@/components/ui/data-table';
@@ -405,13 +405,16 @@ import { StatsCard } from '@/components/dashboard/stats-card';
 import { recentBookingsColumns } from '@/components/dashboard/recent-bookings-columns';
 import { useOwnerStats, useOwnerRecentBookings } from '@/hooks/useDashboard';
 
-export function OwnerDashboard() {
+export function OwnerDashboardPage() {
   const { data: stats, isLoading: statsLoading } = useOwnerStats();
   const { data: recentBookings, isLoading: bookingsLoading } =
     useOwnerRecentBookings();
 
+  // Notice: NO outer `p-6` on this container. The OwnerLayout shell
+  // (Lesson 23.8.5) already provides `p-4 sm:p-6` around its <Outlet />,
+  // so any padding here would double up.
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       <h1 className="text-2xl font-bold">Owner Dashboard</h1>
 
       {/* Stats Cards */}
