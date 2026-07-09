@@ -1,7 +1,7 @@
 # Lesson 23: Owner Portal Frontend
 
 ## What You Will Learn
-- Building an owner layout with sidebar navigation using shadcn components
+- Building the owner dashboard shell with the shadcn **`sidebar-07` block** -- a drop-in `AppSidebar` + `NavMain` + `NavUser` pattern that ships with a collapsible-icon rail, active-route styling, and a user-menu footer. We adapt it into `OwnerSidebar`, `OwnerNavMain` (a collapsible **Rooms** group, plus **Bookings**), and `OwnerNavUser` (the logged-in owner's avatar + Logout dropdown), then mount the whole thing at `/owner/dashboard` with React Router's `Outlet`
 - Defining a **roomApi service layer** with Axios (mirroring the L17 `todoApi` pattern)
 - Building a **`useRooms` hook family** with a typed `roomKeys` factory: `useRooms`, `useRoom`, `useCreateRoom`, `useUpdateRoom`, `useAddRoomImages`, `useDeleteRoomImage`, `useDeleteRoom`
 - Listing the owner's rooms with the **generic `<DataTable>`** from Lesson 17.1 (server-side pagination + URL-synced filters)
@@ -18,28 +18,39 @@
 
 ## 23.1 The Big Picture
 
-The owner portal is a protected area where room owners manage their listings. It is built on the same patterns we already used for todos: an Axios service layer, focused React Query hooks, a reusable `<DataTable>`, and shadcn `Field` primitives with Zod.
+The owner portal is a protected area where room owners manage their listings. It is built on the same patterns we already used for todos: an Axios service layer, focused React Query hooks, a reusable `<DataTable>`, and shadcn `Field` primitives with Zod. The shell around every owner page is the shadcn **`sidebar-07`** block -- a well-designed dashboard layout you install with one command and then customise.
 
 ```
-Owner Portal Layout (sidebar + main)
-├── My Rooms             (DataTable: image, title, location, price, capacity, status, actions)
-│   ├── Filters (search, location, status) -> URL params
-│   ├── Pagination       -> URL params (?page=2)
-│   └── Row actions      -> Edit (link) + Delete (AlertDialog)
+/owner  (OwnerLayout: SidebarProvider + OwnerSidebar + SidebarInset + <Outlet/>)
 │
-├── Add Room             (shadcn Field + Zod + image upload)
-│   ├── Text fields (title, description, location, price, capacity)
-│   ├── Amenities checkboxes
-│   ├── Image upload with previews (URL.createObjectURL)
+├── /owner/dashboard    (landing page: welcome card; L25/L27 will add stats)
+│
+├── /owner/rooms        (My Rooms table: image, title, location, price, capacity, status)
+│   ├── Filters (search, location, status)   -> URL params
+│   ├── Pagination                            -> URL params (?page=2)
+│   └── Row actions -> Edit (link) + Delete (AlertDialog)
+│
+├── /owner/rooms/new    (Add Room: shadcn Field + Zod + image upload)
 │   └── Submit -> FormData -> POST /api/rooms (multipart)
 │
-└── Edit Room            (same form, pre-filled via form.reset())
-    ├── Text fields -> Save -> JSON -> PUT /api/rooms/:id
-    └── Image gallery
-        ├── Each current image has a delete (X) button
-        │   -> DELETE /api/rooms/:id/images/:imageName
-        └── "Upload more" file input (multi-select with previews)
-            -> POST /api/rooms/:id/images (multipart)
+├── /owner/rooms/:id/edit  (Edit Room: split UI)
+│   ├── Text fields -> Save -> JSON -> PUT /api/rooms/:id
+│   └── Image gallery
+│       ├── Each current image has a delete (X) button
+│       │   -> DELETE /api/rooms/:id/images/:imageName
+│       └── "Upload more" file input (multi-select with previews)
+│           -> POST /api/rooms/:id/images (multipart)
+│
+└── /owner/bookings     (placeholder for Lesson 25 -- approve / reject requests)
+
+Sidebar shape (OwnerNavMain + OwnerNavUser footer):
+   Dashboard           -> /owner/dashboard
+   Rooms  (collapsible)
+     ├── Rooms List    -> /owner/rooms
+     └── Create Room   -> /owner/rooms/new
+   Bookings            -> /owner/bookings
+   ─────────────────────
+   [avatar] Owner name  (dropdown: Profile, Log out)
 ```
 
 We are **not reinventing patterns** here. Everything builds on:
@@ -58,9 +69,39 @@ If you already completed Lessons 17 and 17.1 in the Todo app, most of these are 
 cd webapp
 npm install @tanstack/react-query @tanstack/react-table axios react-hook-form zod @hookform/resolvers lucide-react
 npx shadcn@latest add field input textarea label checkbox button card table select alert-dialog skeleton sonner badge
+npx shadcn@latest add sidebar-07
+npx shadcn@latest add breadcrumb
 ```
 
 > **Note:** We use the new shadcn `field` primitives (`Field`, `FieldLabel`, `FieldError`, `FieldDescription`, `FieldGroup`) -- **not** the older `form` block. The `Field` primitives compose directly with React Hook Form's `Controller`, giving us a leaner API and full control over each input.
+
+> **About the sidebar-07 block:** `sidebar-07` is a shadcn **block**, not just a primitive. Running `npx shadcn@latest add sidebar-07` drops a whole starter dashboard shell into `src/components/`: `app-sidebar.tsx`, `nav-main.tsx`, `nav-user.tsx`, `nav-projects.tsx`, `team-switcher.tsx`, plus the `sidebar`, `dropdown-menu`, `collapsible`, `avatar`, `separator`, `tooltip`, and `sheet` UI primitives they depend on. We are going to **keep the primitives**, **adapt the pieces we need** (`app-sidebar` → `OwnerSidebar`, `nav-main` → `OwnerNavMain`, `nav-user` → `OwnerNavUser`), and **delete what we don't** (`nav-projects.tsx`, `team-switcher.tsx`) so students see how to trim a block down to what their app actually needs. You can preview the block first at <https://ui.shadcn.com/blocks/sidebar#sidebar-07>.
+>
+> **Note:** `sidebar-07` **does not** ship a breadcrumb component -- the demo you see on the shadcn site is inline. That's why we install the shadcn `breadcrumb` primitive separately above; we then wrap it in our own `HeaderBreadcrumbs` component in section 23.8.6.
+>
+> **Wrap your app in `TooltipProvider`.** The `SidebarMenuButton` used inside `OwnerNavMain` renders a tooltip (via the `tooltip={...}` prop) whenever the sidebar is collapsed to icons, and Radix Tooltips need a `TooltipProvider` somewhere above them. Add it in `main.tsx`, just above `<App />`:
+>
+> ```tsx
+> // webapp/src/main.tsx
+> import { TooltipProvider } from '@/components/ui/tooltip';
+>
+> createRoot(document.getElementById('root')!).render(
+>   <StrictMode>
+>     <BrowserRouter>
+>       <QueryClientProvider client={queryClient}>
+>         <ThemeProvider defaultTheme="light">
+>           <TooltipProvider delayDuration={0}>
+>             <App />
+>             <Toaster richColors position="top-right" />
+>           </TooltipProvider>
+>         </ThemeProvider>
+>       </QueryClientProvider>
+>     </BrowserRouter>
+>   </StrictMode>,
+> );
+> ```
+>
+> Forgetting this throws `Tooltip must be used within TooltipProvider` at runtime the first time an icon-rail tooltip tries to render.
 
 ---
 
@@ -469,82 +510,608 @@ export function useRoomsFilters() {
 
 ---
 
-## 23.8 Owner Layout with Sidebar
+## 23.8 Owner Layout with the shadcn `sidebar-07` Block
 
-The owner portal uses a sidebar layout shared by every owner page:
+Rather than hand-rolling a sidebar, we install the shadcn **`sidebar-07`** block and adapt it. Blocks are pre-composed patterns that give us a great starting point (collapsible-icon rail, sticky header slot, user-menu footer, tooltip when collapsed, mobile drawer) so we can focus on *our* nav structure, not on layout plumbing.
+
+The nav shape for our owner portal:
+
+| Section | Item | Route |
+|---------|------|-------|
+| Nav main | **Dashboard** | `/owner/dashboard` |
+|          | **Rooms** (collapsible) | -- |
+|          | &nbsp;&nbsp;Rooms List | `/owner/rooms` |
+|          | &nbsp;&nbsp;Create Room | `/owner/rooms/new` |
+|          | **Bookings** | `/owner/bookings` |
+| Footer | Current owner (avatar + dropdown: Profile, Log out) | -- |
+
+The header slot (top of `SidebarInset`) hosts the `SidebarTrigger` (the collapse toggle) and the page title.
+
+---
+
+### 23.8.1 Install the block
+
+```bash
+cd webapp
+npx shadcn@latest add sidebar-07
+```
+
+This drops a handful of files into `src/components/` (the AppSidebar/NavMain/NavUser starter set) plus the underlying UI primitives. Delete the pieces we don't need for BookMyRoom (`team-switcher.tsx`, `nav-projects.tsx`), then rename/move the rest under `src/components/owner/`:
+
+```
+src/components/
+├── owner/
+│   ├── OwnerLayout.tsx        # was: nothing -- we write this
+│   ├── OwnerSidebar.tsx       # adapted from app-sidebar.tsx
+│   ├── OwnerNavMain.tsx       # adapted from nav-main.tsx
+│   └── OwnerNavUser.tsx       # adapted from nav-user.tsx
+└── ui/
+    ├── sidebar.tsx            # installed by sidebar-07
+    ├── dropdown-menu.tsx      # installed by sidebar-07
+    ├── collapsible.tsx        # installed by sidebar-07
+    ├── avatar.tsx             # installed by sidebar-07
+    ├── separator.tsx          # installed by sidebar-07
+    ├── tooltip.tsx            # installed by sidebar-07
+    └── sheet.tsx              # installed by sidebar-07 (mobile drawer)
+```
+
+> **Why rename?** Keeping app-scoped components (`OwnerSidebar`, `OwnerNavMain`, `OwnerNavUser`) under `components/owner/` makes it obvious they belong to the owner portal. When you later add a guest portal or an admin portal, you can install `sidebar-07` again and create `AdminSidebar`, `AdminNavMain`, etc. -- with zero collisions.
+
+---
+
+### 23.8.2 `OwnerSidebar` -- the composition root
+
+Compared with `app-sidebar.tsx`, we swap the block's starter parts (`TeamSwitcher`, `NavProjects`, `NavUser`) for our owner-specific `OwnerNavMain` and `OwnerNavUser`:
+
+```tsx
+// webapp/src/components/owner/OwnerSidebar.tsx
+import { Link } from 'react-router-dom';
+import { Building2 } from 'lucide-react';
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarRail,
+} from '@/components/ui/sidebar';
+import { OwnerNavMain } from './OwnerNavMain';
+import { OwnerNavUser } from './OwnerNavUser';
+
+export function OwnerSidebar({
+  ...props
+}: React.ComponentProps<typeof Sidebar>) {
+  return (
+    <Sidebar variant="inset" collapsible="icon" {...props}>
+      <SidebarHeader>
+        {/* Brand row -- also acts as a link back to the dashboard */}
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild size="lg">
+              <Link to="/owner/dashboard">
+                <div className="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg">
+                  <Building2 className="size-4" />
+                </div>
+                <div className="grid flex-1 text-left text-sm leading-tight">
+                  <span className="truncate font-semibold">BookMyRoom</span>
+                  <span className="truncate text-xs">Owner Portal</span>
+                </div>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarHeader>
+
+      <SidebarContent>
+        <OwnerNavMain />
+      </SidebarContent>
+
+      <SidebarFooter>
+        <OwnerNavUser />
+      </SidebarFooter>
+
+      <SidebarRail />
+    </Sidebar>
+  );
+}
+```
+
+Key props on `<Sidebar>`:
+
+| Prop | Value | Effect |
+|------|-------|--------|
+| `variant` | `"inset"` | Sidebar and main content sit inside a rounded surface (the "inset" look) |
+| `collapsible` | `"icon"` | Collapsing shrinks to an icon rail instead of hiding entirely |
+
+`<SidebarRail>` is the thin vertical strip on the outside edge that you can click to collapse/expand the sidebar.
+
+---
+
+### 23.8.3 `OwnerNavMain` -- top-level items + a collapsible group
+
+This is where the owner-portal nav structure lives. It has one collapsible group (**Rooms**, containing "Rooms List" and "Create Room") and one flat item (**Bookings**). We use React Router's `useLocation()` to compute active state and to auto-open the group when the current URL is inside it.
+
+```tsx
+// webapp/src/components/owner/OwnerNavMain.tsx
+import { useEffect, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import {
+  CalendarCheck,
+  ChevronRight,
+  Home,
+  LayoutDashboard,
+  type LucideIcon,
+} from 'lucide-react';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
+import {
+  SidebarGroup,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
+} from '@/components/ui/sidebar';
+import { cn } from '@/lib/utils';
+
+type NavItem = {
+  title: string;
+  url: string;
+  icon: LucideIcon;
+  exact?: boolean;              // if true, "active" needs an exact path match
+  items?: { title: string; url: string }[];
+};
+
+const navMain: NavItem[] = [
+  {
+    title: 'Dashboard',
+    url: '/owner/dashboard',
+    icon: LayoutDashboard,
+    exact: true,                 // only highlight on /owner/dashboard exactly
+  },
+  {
+    title: 'Rooms',
+    url: '/owner/rooms',
+    icon: Home,
+    items: [
+      { title: 'Rooms List', url: '/owner/rooms' },
+      { title: 'Create Room', url: '/owner/rooms/new' },
+    ],
+  },
+  {
+    title: 'Bookings',
+    url: '/owner/bookings',
+    icon: CalendarCheck,
+  },
+];
+
+export function OwnerNavMain() {
+  const location = useLocation();
+  const pathname = location.pathname;
+
+  // "This item's route matches the URL" -- exact or prefix, matching NavLink's end=
+  const isItemActive = (item: NavItem): boolean =>
+    item.exact ? pathname === item.url : pathname.startsWith(item.url);
+
+  // "One of this item's children matches the URL" -- used to auto-open groups
+  const isChildActive = (item: NavItem): boolean =>
+    item.items?.some(
+      (sub) => pathname === sub.url || pathname.startsWith(sub.url + '/')
+    ) ?? false;
+
+  // Track which collapsible groups are open. Seed from the current URL so that
+  // navigating straight to /owner/rooms/new opens the Rooms group.
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(navMain.map((item) => [item.title, isChildActive(item)]))
+  );
+
+  // Whenever the URL changes, force groups containing the active child open.
+  useEffect(() => {
+    setOpenGroups((prev) => {
+      const next = { ...prev };
+      navMain.forEach((item) => {
+        if (isChildActive(item)) next[item.title] = true;
+      });
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
+  return (
+    <SidebarGroup>
+      <SidebarMenu>
+        {navMain.map((item) =>
+          (item.items || []).length > 0 ? (
+            // ------- Collapsible group (Rooms) -------
+            <Collapsible
+              key={item.title}
+              asChild
+              open={openGroups[item.title] ?? false}
+              onOpenChange={(open) =>
+                setOpenGroups((prev) => ({ ...prev, [item.title]: open }))
+              }
+              className="group/collapsible"
+            >
+              <SidebarMenuItem>
+                <CollapsibleTrigger asChild>
+                  <SidebarMenuButton
+                    tooltip={item.title}
+                    isActive={isChildActive(item)}
+                  >
+                    <item.icon />
+                    <span>{item.title}</span>
+                    <ChevronRight className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+                  </SidebarMenuButton>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <SidebarMenuSub>
+                    {item.items?.map((subItem) => (
+                      <SidebarMenuSubItem key={subItem.title}>
+                        <SidebarMenuSubButton
+                          asChild
+                          isActive={pathname === subItem.url}
+                        >
+                          <Link to={subItem.url}>
+                            <span>{subItem.title}</span>
+                          </Link>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    ))}
+                  </SidebarMenuSub>
+                </CollapsibleContent>
+              </SidebarMenuItem>
+            </Collapsible>
+          ) : (
+            // ------- Top-level flat item (Bookings) -------
+            <SidebarMenuItem key={item.title}>
+              <SidebarMenuButton
+                asChild
+                tooltip={item.title}
+                isActive={isItemActive(item)}
+              >
+                <Link to={item.url}>
+                  <item.icon />
+                  <span>{item.title}</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )
+        )}
+      </SidebarMenu>
+    </SidebarGroup>
+  );
+}
+```
+
+**The tricky bits explained:**
+
+1. **`isItemActive` vs `isChildActive`** -- top-level flat items just need to know if the URL points to them (used to highlight the item). Collapsible groups also need to know if any *child* of theirs is active (used both to highlight the parent and to force the group open when you land on `/owner/rooms/new` via a bookmark or browser refresh).
+2. **`Collapsible open={...} onOpenChange={...}`** -- we control the open state so we can force the group open from the effect. The uncontrolled version would collapse on every URL change, which is not what we want.
+3. **`tooltip={item.title}`** on `SidebarMenuButton` -- when the sidebar is collapsed to icons, hovering shows the item name as a tooltip. Without it the collapsed rail is a mystery.
+4. **`SidebarMenuSubButton isActive={pathname === subItem.url}`** -- for sub-items we compare exactly, so `/owner/rooms` highlights "Rooms List" without also highlighting "Create Room" (whose URL starts with `/owner/rooms`).
+
+---
+
+### 23.8.4 `OwnerNavUser` -- the footer avatar + dropdown
+
+The footer shows the logged-in owner (from the `useCurrentUser()` hook you built in Lesson 21) and a dropdown menu for Profile / Log out. We reuse the shadcn `DropdownMenu` and `Avatar` primitives the block installed.
+
+```tsx
+// webapp/src/components/owner/OwnerNavUser.tsx
+import { Link, useNavigate } from 'react-router-dom';
+import { ChevronsUpDown, LogOut, User } from 'lucide-react';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  useSidebar,
+} from '@/components/ui/sidebar';
+import { useCurrentUser } from '@/hooks/useAuth';
+
+function initialsOf(name?: string): string {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/);
+  return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
+}
+
+export function OwnerNavUser() {
+  const { isMobile } = useSidebar();       // tells us whether to open the menu upward
+  const { data: user } = useCurrentUser();
+  const navigate = useNavigate();
+
+  const handleLogout = (): void => {
+    localStorage.removeItem('token');
+    navigate('/login');
+  };
+
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <SidebarMenuButton
+              size="lg"
+              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+            >
+              <Avatar className="h-8 w-8 rounded-lg">
+                <AvatarFallback className="rounded-lg">
+                  {initialsOf(user?.name)}
+                </AvatarFallback>
+              </Avatar>
+              <div className="grid flex-1 text-left text-sm leading-tight">
+                <span className="truncate font-semibold">{user?.name}</span>
+                <span className="text-muted-foreground truncate text-xs">
+                  {user?.email}
+                </span>
+              </div>
+              <ChevronsUpDown className="ml-auto size-4" />
+            </SidebarMenuButton>
+          </DropdownMenuTrigger>
+
+          <DropdownMenuContent
+            className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
+            side={isMobile ? 'bottom' : 'right'}
+            align="end"
+            sideOffset={4}
+          >
+            <DropdownMenuLabel className="p-0 font-normal">
+              <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+                <Avatar className="h-8 w-8 rounded-lg">
+                  <AvatarFallback className="rounded-lg">
+                    {initialsOf(user?.name)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="grid flex-1 text-left text-sm leading-tight">
+                  <span className="truncate font-semibold">{user?.name}</span>
+                  <span className="text-muted-foreground truncate text-xs">
+                    {user?.email}
+                  </span>
+                </div>
+              </div>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem asChild>
+                <Link to="/owner/dashboard">
+                  <User />
+                  Profile
+                </Link>
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={handleLogout}>
+              <LogOut />
+              Log out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  );
+}
+```
+
+> **`useSidebar` gives us context awareness.** It exposes `isMobile`, `open`, `openMobile`, and helpers to toggle the sidebar. Here we use `isMobile` to open the dropdown downward on mobile (where "right" would run off-screen).
+
+---
+
+### 23.8.5 `OwnerLayout` -- the shell that everything renders inside
+
+Finally, we compose `SidebarProvider` + `OwnerSidebar` + `SidebarInset` (the surface for the main content) into a layout component whose `<Outlet />` renders whichever child route is active.
 
 ```tsx
 // webapp/src/components/owner/OwnerLayout.tsx
-import { NavLink, Outlet } from 'react-router-dom';
-import { Home, PlusCircle, CalendarCheck } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { Outlet } from 'react-router-dom';
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+} from '@/components/ui/sidebar';
+import { Separator } from '@/components/ui/separator';
+import { OwnerSidebar } from './OwnerSidebar';
+import { HeaderBreadcrumbs } from './HeaderBreadcrumbs';
 
-interface NavItem {
-  to: string;
-  label: string;
-  icon: React.ReactNode;
-}
-
-const navItems: NavItem[] = [
-  { to: '/owner/rooms', label: 'My Rooms', icon: <Home className="h-4 w-4" /> },
-  { to: '/owner/rooms/new', label: 'Add Room', icon: <PlusCircle className="h-4 w-4" /> },
-  { to: '/owner/bookings', label: 'Booking Requests', icon: <CalendarCheck className="h-4 w-4" /> },
-];
-
-function OwnerLayout(): JSX.Element {
+function OwnerLayout() {
   return (
-    <div className="flex min-h-screen">
-      <aside className="w-64 border-r bg-muted/30 p-4">
-        <h2 className="mb-6 text-lg font-semibold">Owner Portal</h2>
-        <nav className="space-y-1">
-          {navItems.map((item: NavItem) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === '/owner/rooms'}
-              className={({ isActive }) =>
-                cn(
-                  'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                  isActive
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                )
-              }
-            >
-              {item.icon}
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-      </aside>
-
-      <main className="flex-1 p-6">
-        <Outlet />
-      </main>
-    </div>
+    <SidebarProvider>
+      <OwnerSidebar />
+      <SidebarInset>
+        <header className="bg-background sticky top-0 z-40 flex h-14 shrink-0 items-center gap-2 border-b px-4">
+          <SidebarTrigger className="-ml-1" />
+          <Separator orientation="vertical" className="mr-2 h-4" />
+          <HeaderBreadcrumbs homeUrl="/owner/dashboard" />
+        </header>
+        <div className="flex flex-1 flex-col gap-4 p-4 sm:p-6">
+          <Outlet />
+        </div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }
 
 export default OwnerLayout;
 ```
 
-### Owner Routes
+The parts you need to know:
+
+| Piece | Job |
+|-------|-----|
+| `<SidebarProvider>` | Owns the sidebar's open/collapsed/mobile state. Everything using `useSidebar` reads from this. |
+| `<OwnerSidebar />` | The composition we built in 23.8.2 -- header, nav, footer, rail. |
+| `<SidebarInset>` | The right-hand surface that houses the main content. Pairs with `variant="inset"` on the sidebar. |
+| Sticky header inside `SidebarInset` | Holds the `SidebarTrigger` (collapse toggle) + `HeaderBreadcrumbs` (built in the next section). Later you can also drop in a notification bell or a search input here. |
+| `<Outlet />` | React Router's slot for the active child route. |
+
+---
+
+### 23.8.6 `HeaderBreadcrumbs` -- a route-aware title
+
+The sticky header needs a title, but hard-coding "Owner Portal" everywhere is a missed opportunity: the URL already tells us where the user is, so we can turn it into a breadcrumb that tracks their journey. `sidebar-07` doesn't include this component -- we build our own on top of the shadcn `breadcrumb` primitive we installed in section 23.2.
+
+The plan:
+
+1. Take the current pathname (via `useLocation()`).
+2. Strip the `/owner` prefix -- everything the owner sees is inside the portal, so showing it in the breadcrumb is noise.
+3. Prepend a "Home" crumb that links to `homeUrl` (`/owner/dashboard`).
+4. Turn each remaining segment into a friendly label: kebab-case → Title Case; treat any 24-hex-character segment as a MongoDB ObjectId and render it as `#abcd` (last four characters) so long room ids don't blow out the header.
+
+```tsx
+// webapp/src/components/owner/HeaderBreadcrumbs.tsx
+import { Link, useLocation } from 'react-router-dom';
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from '@/components/ui/breadcrumb';
+
+interface HeaderBreadcrumbsProps {
+  homeUrl?: string;   // defaults to /owner/dashboard
+  rootLabel?: string; // label shown for the first crumb
+  stripPrefix?: string; // prefix to remove from the pathname (defaults to /owner)
+}
+
+// Recognise a Mongo ObjectId so we can render it compactly ("#abcd")
+const OBJECT_ID = /^[a-f0-9]{24}$/i;
+
+function friendlyName(segment: string): string {
+  if (OBJECT_ID.test(segment)) return `#${segment.slice(-4)}`;
+  // "rooms" -> "Rooms", "my-bookings" -> "My Bookings"
+  return decodeURIComponent(segment)
+    .replace(/-/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+export function HeaderBreadcrumbs({
+  homeUrl = '/owner/dashboard',
+  rootLabel = 'Home',
+  stripPrefix = '/owner',
+}: HeaderBreadcrumbsProps) {
+  const location = useLocation();
+  const pathname = location.pathname;
+
+  // Drop the /owner prefix -- everything below is what we want to show
+  const relative = pathname.startsWith(stripPrefix)
+    ? pathname.slice(stripPrefix.length)
+    : pathname;
+
+  // Turn "/rooms/:id/edit" into ["rooms", ":id", "edit"] and build hrefs.
+  // Each item is cumulative: /owner/rooms, /owner/rooms/:id, /owner/rooms/:id/edit
+  const segments = relative.split('/').filter(Boolean);
+  const items = segments.map((segment, index) => ({
+    label: friendlyName(segment),
+    // Skip building a link for the "dashboard" segment (it's already Home)
+    href:
+      segment === 'dashboard'
+        ? homeUrl
+        : stripPrefix + '/' + segments.slice(0, index + 1).join('/'),
+  }));
+
+  // Always start with "Home" pointing at the homeUrl (dashboard).
+  // If the current page IS the dashboard, "Home" is the only crumb.
+  const allItems =
+    segments[0] === 'dashboard'
+      ? [{ label: rootLabel, href: homeUrl }]
+      : [{ label: rootLabel, href: homeUrl }, ...items];
+
+  return (
+    <Breadcrumb>
+      <BreadcrumbList>
+        {allItems.map((item, index) => {
+          const isLast = index === allItems.length - 1;
+          return (
+            <BreadcrumbItem key={`${item.label}-${index}`}>
+              {isLast ? (
+                <BreadcrumbPage className="max-w-[160px] truncate">
+                  {item.label}
+                </BreadcrumbPage>
+              ) : (
+                <>
+                  <BreadcrumbLink asChild>
+                    <Link to={item.href} className="max-w-[140px] truncate">
+                      {item.label}
+                    </Link>
+                  </BreadcrumbLink>
+                  <BreadcrumbSeparator />
+                </>
+              )}
+            </BreadcrumbItem>
+          );
+        })}
+      </BreadcrumbList>
+    </Breadcrumb>
+  );
+}
+```
+
+**How it renders in practice:**
+
+| URL | Breadcrumb |
+|-----|------------|
+| `/owner/dashboard` | Home |
+| `/owner/rooms` | Home / Rooms |
+| `/owner/rooms/new` | Home / Rooms / New |
+| `/owner/rooms/6a4df47641fc245752bfd6d8/edit` | Home / Rooms / #d6d8 / Edit |
+| `/owner/bookings` | Home / Bookings |
+
+**Design choices worth pointing out to students:**
+
+- **Why strip the `/owner` prefix?** Every owner page starts with `/owner`, so surfacing it in the breadcrumb wastes screen space and adds no information. The `stripPrefix` prop keeps the component reusable -- when we build the guest browsing UI in Lesson 24 we can drop it in with `stripPrefix=""` and get standard breadcrumbs for the public site.
+- **Why not link the last crumb?** The active page is already open -- clicking a link to the page you're on is dead weight. shadcn's `<BreadcrumbPage>` handles the styling (subtle "current page" colour) automatically.
+- **Why shorten ObjectIds?** A 24-character hex string is meaningless to the user and takes over the header. Showing the last four characters (`#d6d8`) is enough to distinguish rooms when the owner is tab-switching, and stays inside the sticky header at every viewport width.
+- **Why is this a client component, not a router config?** Building it from `useLocation()` means **any** owner route -- including ones we add in Lessons 24-27 -- picks up sensible breadcrumbs for free. No route-config table to keep in sync.
+
+---
+
+### 23.8.7 Owner Routes
+
+The layout is mounted once, at `/owner`, and every owner page renders inside it via nested routes. A tiny redirect (`""` -> `dashboard`) makes `/owner` land on the dashboard.
 
 ```tsx
 // webapp/src/App.tsx (relevant section)
-import { Routes, Route } from 'react-router-dom';
-import OwnerLayout from './components/owner/OwnerLayout';
-import MyRooms from './pages/owner/MyRooms';
-import AddRoom from './pages/owner/AddRoom';
-import EditRoom from './pages/owner/EditRoom';
-import OwnerBookings from './pages/owner/OwnerBookings';
+import { Navigate, Routes, Route } from 'react-router-dom';
+import OwnerLayout from '@/components/owner/OwnerLayout';
+import { OwnerDashboardPage } from '@/pages/OwnerDashboardPage';
+import MyRooms from '@/pages/owner/MyRooms';
+import AddRoom from '@/pages/owner/AddRoom';
+import EditRoom from '@/pages/owner/EditRoom';
+import OwnerBookings from '@/pages/owner/OwnerBookings';
+import { ProtectedRoute } from '@/components/ProtectedRoute';
 
-function App(): JSX.Element {
+function App() {
   return (
     <Routes>
-      {/* ... public routes ... */}
+      {/* ... public + auth routes ... */}
 
-      <Route path="/owner" element={<OwnerLayout />}>
+      {/* Owner Portal -- protected + wrapped in the sidebar layout */}
+      <Route
+        path="/owner"
+        element={
+          <ProtectedRoute requireRole="owner">
+            <OwnerLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Navigate to="dashboard" replace />} />
+        <Route path="dashboard" element={<OwnerDashboardPage />} />
         <Route path="rooms" element={<MyRooms />} />
         <Route path="rooms/new" element={<AddRoom />} />
         <Route path="rooms/:id/edit" element={<EditRoom />} />
@@ -554,6 +1121,12 @@ function App(): JSX.Element {
   );
 }
 ```
+
+Notice three things:
+
+1. **`ProtectedRoute` wraps `OwnerLayout`, not each page individually.** The layout mounts once for the whole owner section, so the auth check runs once and every child route inherits it.
+2. **`<Route index element={<Navigate to="dashboard" replace />} />`** turns `/owner` into an alias for `/owner/dashboard` -- if the owner clicks the brand row (which links to `/owner/dashboard`), or lands on `/owner` from an external link, they always end up on the dashboard.
+3. **The dashboard is inside the sidebar shell.** Previously `/owner/dashboard` was a bare page with no sidebar; now it renders inside `OwnerLayout` just like every other owner page, so the sidebar (and its "current owner" footer) is always visible.
 
 ---
 
@@ -1714,12 +2287,24 @@ This works because we set up `express.static('uploads')` in Lesson 22 to serve t
 webapp/src/
 ├── components/
 │   ├── owner/
-│   │   ├── OwnerLayout.tsx          # sidebar + Outlet
+│   │   ├── OwnerLayout.tsx          # SidebarProvider + OwnerSidebar + SidebarInset + Outlet
+│   │   ├── OwnerSidebar.tsx         # adapted from sidebar-07's app-sidebar.tsx
+│   │   ├── OwnerNavMain.tsx         # Dashboard + collapsible Rooms group + flat Bookings item
+│   │   ├── OwnerNavUser.tsx         # current owner avatar + Profile/Log out dropdown
+│   │   ├── HeaderBreadcrumbs.tsx    # route-aware header title (uses useLocation)
 │   │   ├── room-columns.tsx         # useRoomColumns -> ColumnDef<Room>[]
 │   │   ├── room-row-actions.tsx     # edit link + delete with AlertDialog
 │   │   ├── room-filters.tsx         # debounced search + status select
 │   │   └── room-pagination.tsx      # page controls
 │   └── ui/
+│       ├── sidebar.tsx              # installed by sidebar-07
+│       ├── dropdown-menu.tsx        # installed by sidebar-07
+│       ├── collapsible.tsx          # installed by sidebar-07
+│       ├── avatar.tsx               # installed by sidebar-07
+│       ├── separator.tsx            # installed by sidebar-07
+│       ├── tooltip.tsx              # installed by sidebar-07
+│       ├── sheet.tsx                # installed by sidebar-07 (mobile drawer)
+│       ├── breadcrumb.tsx           # shadcn primitive used by HeaderBreadcrumbs
 │       ├── data-table.tsx           # generic <DataTable> from Lesson 17.1
 │       ├── field.tsx                # shadcn Field, FieldLabel, FieldError, etc.
 │       └── ... other shadcn pieces
@@ -1728,6 +2313,7 @@ webapp/src/
 │   ├── useRoomsFilters.ts           # URL <-> filters sync
 │   └── useImagePreviews.ts          # File state + object URL lifecycle
 ├── pages/
+│   ├── OwnerDashboardPage.tsx       # /owner/dashboard landing (welcome card for now)
 │   └── owner/
 │       ├── MyRooms.tsx              # DataTable orchestrator
 │       ├── AddRoom.tsx              # Field primitives + Controller + image upload
@@ -1746,6 +2332,20 @@ webapp/src/
 ---
 
 ## Practice Exercises
+
+### Exercise 0: Build the Owner Layout with `sidebar-07`
+1. Run `npx shadcn@latest add sidebar-07` and delete the pieces you don't need (`team-switcher.tsx`, `nav-projects.tsx`)
+2. Move the remaining block files under `src/components/owner/` and rename them (`OwnerSidebar`, `OwnerNavMain`, `OwnerNavUser`)
+3. Reshape `OwnerNavMain` so it has a collapsible **Rooms** group (with "Rooms List" and "Create Room" as children) and a flat **Bookings** item
+4. In `OwnerNavUser`, source the current owner from `useCurrentUser()` and wire the **Log out** menu item to clear `localStorage` and `navigate('/login')`
+5. Compose `OwnerLayout` with `SidebarProvider` + `OwnerSidebar` + `SidebarInset` (sticky header holding the `SidebarTrigger`) + `<Outlet />`
+6. Install `npx shadcn@latest add breadcrumb` and build `HeaderBreadcrumbs` on top of it -- `useLocation()`, strip the `/owner` prefix, prepend a "Home" crumb, shorten 24-hex ObjectIds to `#abcd`. Drop it into the layout header
+7. Mount the layout at `/owner` in `App.tsx`, add child routes for `dashboard`, `rooms`, `rooms/new`, `rooms/:id/edit`, `bookings`, and a `<Route index element={<Navigate to="dashboard" replace />} />`
+8. Confirm:
+   - Clicking the sidebar rail collapses the sidebar to icons; hovering an icon shows the item name as a tooltip
+   - Navigating straight to `/owner/rooms/new` (e.g. from a bookmark) opens the **Rooms** group and highlights "Create Room"
+   - `/owner/dashboard` now renders inside the sidebar shell (previously it was a bare page)
+   - Editing a room shows breadcrumbs like `Home / Rooms / #d6d8 / Edit` -- the ObjectId is shortened and each parent crumb is clickable
 
 ### Exercise 1: Build the Service and Hooks
 1. Create `services/roomApi.ts` with `getAll`, `getMine`, `getById`, `create`, `update`, `delete`
@@ -1781,17 +2381,20 @@ Add an "Image order" PATCH endpoint on the backend (`PATCH /api/rooms/:id/images
 ---
 
 ## Key Takeaways
-1. **Service layer first** -- `roomApi` owns HTTP, hooks own caching, components own UI
-2. **Query keys factory** (`roomKeys.all`, `roomKeys.list(filters)`, `roomKeys.detail(id)`) gives type-safe, hierarchical invalidation
-3. **One hook per action** -- `useRooms`, `useRoom`, `useCreateRoom`, `useUpdateRoom`, `useDeleteRoom`. Each owns its own toasts
-4. **Reuse `<DataTable>`** from Lesson 17.1 for any entity -- only the columns and the data hook change
-5. **URL is the source of truth** for table state via `useSearchParams` -- bookmarkable, refresh-proof, shareable
-6. **shadcn `Field` primitives** (`Field`, `FieldLabel`, `FieldError`, `FieldDescription`, `FieldGroup`) compose with React Hook Form's `Controller` -- no `Form` provider, no hidden wiring, full control over each input
-7. **Always wire `id={field.name}` and `aria-invalid={fieldState.invalid}`** on the input -- this is the small-but-essential accessibility glue that the old `Form` wrapper used to do automatically
-8. **Zod with `z.coerce.number()`** converts string inputs to numbers cleanly; `z.infer` derives types from the schema
-9. **Files live outside the schema** -- track them with a dedicated hook because Zod cannot validate `File` objects
-10. **`FormData`** is required for multipart upload; the same field name (`'images'`) can be appended multiple times for arrays of files
-11. **`URL.createObjectURL`** inside a `useEffect` with cleanup `URL.revokeObjectURL` prevents memory leaks from preview blobs
-12. **Image management is split** -- `useAddRoomImages` handles uploads, `useDeleteRoomImage` handles individual removals. The PUT form stays focused on text, the gallery stays focused on photos, and the user can do each independently.
-13. **shadcn `AlertDialog`** wraps destructive actions -- never delete without explicit confirmation
-14. **Sonner toasts inside mutation hooks** mean every component using the hook gets consistent feedback for free
+1. **Reach for a shadcn block, not a hand-rolled layout.** `sidebar-07` gives you the collapsible-icon rail, tooltips, mobile drawer, and user-menu footer for free -- so your effort goes into *your* nav shape, not into rebuilding the shell. Adapt (`AppSidebar` → `OwnerSidebar`, `NavMain` → `OwnerNavMain`, `NavUser` → `OwnerNavUser`) and delete what you don't need.
+2. **One `SidebarProvider` per layout.** It owns the collapsed / mobile state that every `useSidebar()` reads from. Mount `<OwnerLayout />` **once** at `/owner` and let nested `<Outlet />` routes render inside it -- no duplicated shells.
+3. **Route the URL, not the UI.** Active state comes from `useLocation()` in `OwnerNavMain`: top-level flat items use prefix matching (`pathname.startsWith`), sub-items use exact matching. Auto-open collapsible groups when the URL is inside them, so hard refreshes never look "wrong".
+4. **Service layer first** -- `roomApi` owns HTTP, hooks own caching, components own UI
+5. **Query keys factory** (`roomKeys.all`, `roomKeys.list(filters)`, `roomKeys.detail(id)`) gives type-safe, hierarchical invalidation
+6. **One hook per action** -- `useRooms`, `useRoom`, `useCreateRoom`, `useUpdateRoom`, `useDeleteRoom`. Each owns its own toasts
+7. **Reuse `<DataTable>`** from Lesson 17.1 for any entity -- only the columns and the data hook change
+8. **URL is the source of truth** for table state via `useSearchParams` -- bookmarkable, refresh-proof, shareable
+9. **shadcn `Field` primitives** (`Field`, `FieldLabel`, `FieldError`, `FieldDescription`, `FieldGroup`) compose with React Hook Form's `Controller` -- no `Form` provider, no hidden wiring, full control over each input
+10. **Always wire `id={field.name}` and `aria-invalid={fieldState.invalid}`** on the input -- this is the small-but-essential accessibility glue that the old `Form` wrapper used to do automatically
+11. **Zod with `z.coerce.number()`** converts string inputs to numbers cleanly; `z.infer` derives types from the schema
+12. **Files live outside the schema** -- track them with a dedicated hook because Zod cannot validate `File` objects
+13. **`FormData`** is required for multipart upload; the same field name (`'images'`) can be appended multiple times for arrays of files
+14. **`URL.createObjectURL`** inside a `useEffect` with cleanup `URL.revokeObjectURL` prevents memory leaks from preview blobs
+15. **Image management is split** -- `useAddRoomImages` handles uploads, `useDeleteRoomImage` handles individual removals. The PUT form stays focused on text, the gallery stays focused on photos, and the user can do each independently.
+16. **shadcn `AlertDialog`** wraps destructive actions -- never delete without explicit confirmation
+17. **Sonner toasts inside mutation hooks** mean every component using the hook gets consistent feedback for free
