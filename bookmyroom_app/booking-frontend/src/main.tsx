@@ -7,6 +7,7 @@ import "./index.css"
 import App from "./App.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { Toaster } from "@/components/ui/sonner"
+import { TooltipProvider } from "@/components/ui/tooltip"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -23,8 +24,10 @@ createRoot(document.getElementById("root")!).render(
     <BrowserRouter>
       <QueryClientProvider client={queryClient}>
         <ThemeProvider defaultTheme="light">
-          <App />
-          <Toaster richColors position="top-right" />
+          <TooltipProvider delayDuration={0}>
+            <App />
+            <Toaster richColors position="top-right" />
+          </TooltipProvider>
         </ThemeProvider>
       </QueryClientProvider>
     </BrowserRouter>
