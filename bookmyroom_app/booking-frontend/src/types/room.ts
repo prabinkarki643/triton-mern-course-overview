@@ -40,6 +40,16 @@ export interface RoomFilters {
   location?: string;
   status?: RoomStatus;
   sort?: string;
+  // Public-browse filters (Lesson 24) -- the backend supports these on
+  // GET /api/rooms even though the owner side (Lesson 23) doesn't set them.
+  minPrice?: number;
+  maxPrice?: number;
+  capacity?: number;
+  amenities?: string[];
+}
+
+export interface RoomResponse {
+  data: Room;
 }
 
 // Body of PUT /api/rooms/:id -- text fields only, all optional (matches L22.15)

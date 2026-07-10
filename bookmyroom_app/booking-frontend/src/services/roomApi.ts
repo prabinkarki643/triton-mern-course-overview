@@ -15,6 +15,14 @@ export const roomApi = {
     return data;
   },
 
+  // GET /api/rooms?limit=6&sort=newest -- featured rooms for the home page (Lesson 24)
+  async getFeatured(): Promise<RoomsResponse> {
+    const { data } = await api.get<RoomsResponse>("/rooms", {
+      params: { limit: 6, sort: "newest" },
+    });
+    return data;
+  },
+
   // GET /api/rooms/my-rooms -- current owner's rooms (server pulls owner from JWT)
   async getMine(filters: RoomFilters = {}): Promise<RoomsResponse> {
     const { data } = await api.get<RoomsResponse>("/rooms/my-rooms", {
