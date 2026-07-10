@@ -12,6 +12,7 @@ export const roomKeys = {
   lists: () => [...roomKeys.all, "list"] as const,
   list: (filters: RoomFilters) => [...roomKeys.lists(), filters] as const,
   mine: (filters: RoomFilters) => [...roomKeys.all, "mine", filters] as const,
+  featured: () => [...roomKeys.all, "featured"] as const,
   details: () => [...roomKeys.all, "detail"] as const,
   detail: (id: string) => [...roomKeys.details(), id] as const,
 };
@@ -42,6 +43,14 @@ export function useRoom(id: string) {
     queryKey: roomKeys.detail(id),
     queryFn: () => roomApi.getById(id),
     enabled: !!id,
+  });
+}
+
+// Featured rooms for the public Home page (Lesson 24)
+export function useFeaturedRooms() {
+  return useQuery({
+    queryKey: roomKeys.featured(),
+    queryFn: () => roomApi.getFeatured(),
   });
 }
 

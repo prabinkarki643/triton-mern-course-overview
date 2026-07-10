@@ -1191,7 +1191,7 @@ export function useRoomColumns(): ColumnDef<Room>[] {
       header: 'Price',
       cell: ({ row }) => (
         <span>
-          &pound;{row.original.price}
+          Rs{row.original.price}
           <span className="text-xs text-muted-foreground"> / night</span>
         </span>
       ),
@@ -1769,7 +1769,7 @@ function AddRoom(): JSX.Element {
               control={form.control}
               render={({ field, fieldState }) => (
                 <Field data-invalid={fieldState.invalid}>
-                  <FieldLabel htmlFor={field.name}>Price per Night (&pound;)</FieldLabel>
+                  <FieldLabel htmlFor={field.name}>Price per Night (Rs)</FieldLabel>
                   <Input
                     {...field}
                     id={field.name}
@@ -2102,7 +2102,7 @@ function EditRoom(): JSX.Element {
               control={form.control}
               render={({ field, fieldState }) => (
                 <Field data-invalid={fieldState.invalid}>
-                  <FieldLabel htmlFor={field.name}>Price per Night (&pound;)</FieldLabel>
+                  <FieldLabel htmlFor={field.name}>Price per Night (Rs)</FieldLabel>
                   <Input
                     {...field}
                     id={field.name}

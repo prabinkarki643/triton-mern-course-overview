@@ -5,6 +5,8 @@ import { HomePage } from "@/pages/HomePage"
 import { LoginPage } from "@/pages/LoginPage"
 import { RegisterPage } from "@/pages/RegisterPage"
 import { OwnerDashboardPage } from "@/pages/OwnerDashboardPage"
+import RoomListing from "@/pages/RoomListing"
+import RoomDetail from "@/pages/RoomDetail"
 import { ProtectedRoute } from "@/components/ProtectedRoute"
 import OwnerLayout from "@/components/owner/OwnerLayout"
 import MyRooms from "@/pages/owner/MyRooms"
@@ -19,6 +21,8 @@ export function App() {
     <Routes>
       <Route element={<MainLayout />}>
         <Route path="/" element={<HomePage />} />
+        <Route path="/rooms" element={<RoomListing />} />
+        <Route path="/rooms/:id" element={<RoomDetail />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
 

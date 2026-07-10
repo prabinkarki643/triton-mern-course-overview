@@ -355,7 +355,7 @@ function RoomCard({ room }: RoomCardProps): JSX.Element {
 
         <CardFooter className="flex items-centre justify-between">
           <span className="text-lg font-bold">
-            &pound;{room.price}
+            Rs{room.price}
             <span className="text-sm font-normal text-muted-foreground">/night</span>
           </span>
           <span className="flex items-centre gap-1 text-sm text-muted-foreground">
@@ -591,7 +591,7 @@ function RoomListing(): JSX.Element {
 
           {/* Price range */}
           <div className="space-y-2">
-            <Label>Price range (&pound;/night)</Label>
+            <Label>Price range (Rs/night)</Label>
             <div className="flex gap-2">
               <Input
                 type="number"
@@ -960,7 +960,7 @@ function RoomDetail(): JSX.Element {
           <Card className="sticky top-4">
             <CardHeader>
               <CardTitle className="flex items-baseline gap-1">
-                <span className="text-2xl">&pound;{room.price}</span>
+                <span className="text-2xl">Rs{room.price}</span>
                 <span className="text-sm font-normal text-muted-foreground">/night</span>
               </CardTitle>
             </CardHeader>
