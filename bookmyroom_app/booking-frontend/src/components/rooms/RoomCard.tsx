@@ -2,26 +2,26 @@
 // Matches Lesson 24 section 24.5. Reusable card shared by the Home and
 // Listing pages -- image, title/location, description, amenity badges,
 // price and capacity.
-import { Link } from "react-router-dom";
-import { MapPin, Users } from "lucide-react";
+import { Link } from "react-router-dom"
+import { MapPin, Users } from "lucide-react"
 import {
   Card,
   CardContent,
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import type { Room } from "@/types/room";
-import { API_URL } from "@/services/api";
+} from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import type { Room } from "@/types/room"
+import { API_URL } from "@/services/api"
 
 interface RoomCardProps {
-  room: Room;
+  room: Room
 }
 
 function RoomCard({ room }: RoomCardProps) {
   // Strip the trailing /api so we can hit /uploads/rooms/... directly
-  const baseUrl: string = API_URL.replace(/\/api\/?$/, "");
+  const baseUrl: string = API_URL.replace(/\/api\/?$/, "")
 
   return (
     <Link to={`/rooms/${room._id}`} className="group block">
@@ -35,7 +35,7 @@ function RoomCard({ room }: RoomCardProps) {
               className="h-full w-full object-cover transition-transform group-hover:scale-105"
             />
           ) : (
-            <div className="bg-muted text-muted-foreground flex h-full w-full items-center justify-center text-sm">
+            <div className="flex h-full w-full items-center justify-center bg-muted text-sm text-muted-foreground">
               No image
             </div>
           )}
@@ -43,14 +43,14 @@ function RoomCard({ room }: RoomCardProps) {
 
         <CardHeader className="pb-2">
           <CardTitle className="line-clamp-1 text-lg">{room.title}</CardTitle>
-          <div className="text-muted-foreground flex items-center gap-1 text-sm">
+          <div className="flex items-center gap-1 text-sm text-muted-foreground">
             <MapPin className="h-3 w-3" />
             {room.location}
           </div>
         </CardHeader>
 
         <CardContent className="pb-2">
-          <p className="text-muted-foreground line-clamp-2 text-sm">
+          <p className="line-clamp-2 text-sm text-muted-foreground">
             {room.description}
           </p>
 
@@ -72,19 +72,19 @@ function RoomCard({ room }: RoomCardProps) {
 
         <CardFooter className="flex items-center justify-between">
           <span className="text-lg font-bold">
-            £{room.price}
-            <span className="text-muted-foreground text-sm font-normal">
+            Rs{room.price}
+            <span className="text-sm font-normal text-muted-foreground">
               /night
             </span>
           </span>
-          <span className="text-muted-foreground flex items-center gap-1 text-sm">
+          <span className="flex items-center gap-1 text-sm text-muted-foreground">
             <Users className="h-3 w-3" />
             {room.capacity}
           </span>
         </CardFooter>
       </Card>
     </Link>
-  );
+  )
 }
 
-export default RoomCard;
+export default RoomCard

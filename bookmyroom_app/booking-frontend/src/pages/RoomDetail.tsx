@@ -2,41 +2,36 @@
 // Matches Lesson 24 section 24.11. Image gallery + description + amenities +
 // owner + sticky booking card. The "Book Now" button routes to /rooms/:id/book
 // (that page is built in Lesson 25 -- for now it just navigates there).
-import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Check, MapPin, Users } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
-import { useRoom } from "@/hooks/useRooms";
-import { API_URL } from "@/services/api";
+import { useState } from "react"
+import { Link, useParams } from "react-router-dom"
+import { ArrowLeft, Check, MapPin, Users } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
+import { Separator } from "@/components/ui/separator"
+import { useRoom } from "@/hooks/useRooms"
+import { API_URL } from "@/services/api"
 
 function RoomDetail() {
-  const { id } = useParams<{ id: string }>();
-  const { data: room, isLoading, error } = useRoom(id ?? "");
-  const [activeImage, setActiveImage] = useState<number>(0);
+  const { id } = useParams<{ id: string }>()
+  const { data: room, isLoading, error } = useRoom(id ?? "")
+  const [activeImage, setActiveImage] = useState<number>(0)
 
-  const baseUrl: string = API_URL.replace(/\/api\/?$/, "");
+  const baseUrl: string = API_URL.replace(/\/api\/?$/, "")
 
   if (isLoading) {
-    return <RoomDetailSkeleton />;
+    return <RoomDetailSkeleton />
   }
 
   if (error || !room) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-16 text-center">
-        <p className="text-destructive mb-4 text-lg">Room not found.</p>
+        <p className="mb-4 text-lg text-destructive">Room not found.</p>
         <Button variant="outline" asChild>
           <Link to="/rooms">Back to Rooms</Link>
         </Button>
       </div>
-    );
+    )
   }
 
   // The lesson uses room.owner.name, but the backend can return owner as
@@ -45,7 +40,7 @@ function RoomDetail() {
   const ownerName =
     typeof room.owner === "object" && room.owner !== null
       ? room.owner.name
-      : "the host";
+      : "the host"
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8">
@@ -76,7 +71,7 @@ function RoomDetail() {
                   type="button"
                   onClick={() => setActiveImage(index)}
                   className={`aspect-video overflow-hidden rounded-md ${
-                    index === activeImage ? "ring-primary ring-2" : ""
+                    index === activeImage ? "ring-2 ring-primary" : ""
                   }`}
                 >
                   <img
@@ -96,7 +91,7 @@ function RoomDetail() {
         <div className="space-y-6 lg:col-span-2">
           <div>
             <h1 className="mb-2 text-3xl font-bold">{room.title}</h1>
-            <div className="text-muted-foreground flex items-center gap-2">
+            <div className="flex items-center gap-2 text-muted-foreground">
               <MapPin className="h-4 w-4" />
               <span>{room.location}</span>
               <span className="mx-2">·</span>
@@ -109,7 +104,7 @@ function RoomDetail() {
 
           <div>
             <h2 className="mb-3 text-xl font-semibold">About This Room</h2>
-            <p className="text-muted-foreground whitespace-pre-line leading-relaxed">
+            <p className="leading-relaxed whitespace-pre-line text-muted-foreground">
               {room.description}
             </p>
           </div>
@@ -144,8 +139,8 @@ function RoomDetail() {
           <Card className="sticky top-4">
             <CardHeader>
               <CardTitle className="flex items-baseline gap-1">
-                <span className="text-2xl">£{room.price}</span>
-                <span className="text-muted-foreground text-sm font-normal">
+                <span className="text-2xl">Rs{room.price}</span>
+                <span className="text-sm font-normal text-muted-foreground">
                   /night
                 </span>
               </CardTitle>
@@ -154,7 +149,7 @@ function RoomDetail() {
               <Button className="w-full" size="lg" asChild>
                 <Link to={`/rooms/${room._id}/book`}>Book Now</Link>
               </Button>
-              <p className="text-muted-foreground text-center text-xs">
+              <p className="text-center text-xs text-muted-foreground">
                 You will not be charged yet
               </p>
             </CardContent>
@@ -162,7 +157,7 @@ function RoomDetail() {
         </div>
       </div>
     </div>
-  );
+  )
 }
 
 function RoomDetailSkeleton() {
@@ -181,7 +176,7 @@ function RoomDetailSkeleton() {
         </div>
       </div>
     </div>
-  );
+  )
 }
 
-export default RoomDetail;
+export default RoomDetail

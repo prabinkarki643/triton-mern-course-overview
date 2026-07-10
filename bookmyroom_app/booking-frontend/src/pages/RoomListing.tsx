@@ -1,24 +1,24 @@
 // src/pages/RoomListing.tsx
 // Matches Lesson 24 section 24.7. Search bar + filter sidebar + card grid,
 // all driven by useRoomFilters so the URL is the single source of truth.
-import { useEffect, useState } from "react";
-import { Search, SlidersHorizontal } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { useEffect, useState } from "react"
+import { Search, SlidersHorizontal } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
-import RoomCard from "@/components/rooms/RoomCard";
-import RoomCardSkeleton from "@/components/rooms/RoomCardSkeleton";
-import { RoomPagination } from "@/components/rooms/room-pagination";
-import { useRooms } from "@/hooks/useRooms";
-import { useRoomFilters } from "@/hooks/useRoomFilters";
+} from "@/components/ui/select"
+import { Checkbox } from "@/components/ui/checkbox"
+import RoomCard from "@/components/rooms/RoomCard"
+import RoomCardSkeleton from "@/components/rooms/RoomCardSkeleton"
+import { RoomPagination } from "@/components/rooms/room-pagination"
+import { useRooms } from "@/hooks/useRooms"
+import { useRoomFilters } from "@/hooks/useRoomFilters"
 
 const LOCATIONS: string[] = [
   "London",
@@ -29,7 +29,7 @@ const LOCATIONS: string[] = [
   "Edinburgh",
   "Glasgow",
   "Cardiff",
-];
+]
 
 const AMENITY_OPTIONS: string[] = [
   "WiFi",
@@ -40,39 +40,39 @@ const AMENITY_OPTIONS: string[] = [
   "TV Screen",
   "Kitchen",
   "Accessible",
-];
+]
 
 function RoomListing() {
-  const { filters, setFilter, setFilters, resetFilters } = useRoomFilters();
-  const { data, isLoading, isFetching } = useRooms(filters);
+  const { filters, setFilter, resetFilters } = useRoomFilters()
+  const { data, isLoading, isFetching } = useRooms(filters)
 
   // Local input state so the search box stays responsive while we debounce.
-  const [searchInput, setSearchInput] = useState<string>(filters.search ?? "");
-  const [showFilters, setShowFilters] = useState<boolean>(false);
+  const [searchInput, setSearchInput] = useState<string>(filters.search ?? "")
+  const [showFilters, setShowFilters] = useState<boolean>(false)
 
   // Debounce: 300ms after the user stops typing, push to the URL.
   useEffect(() => {
     const handle = setTimeout(() => {
       if (searchInput !== (filters.search ?? "")) {
-        setFilter("search", searchInput || undefined);
+        setFilter("search", searchInput || undefined)
       }
-    }, 300);
-    return () => clearTimeout(handle);
+    }, 300)
+    return () => clearTimeout(handle)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchInput]);
+  }, [searchInput])
 
   // Keep the input in sync if the URL changes externally (e.g. Reset).
   useEffect(() => {
-    setSearchInput(filters.search ?? "");
-  }, [filters.search]);
+    setSearchInput(filters.search ?? "")
+  }, [filters.search])
 
   const toggleAmenity = (amenity: string): void => {
-    const current = filters.amenities ?? [];
+    const current = filters.amenities ?? []
     const next = current.includes(amenity)
       ? current.filter((a) => a !== amenity)
-      : [...current, amenity];
-    setFilter("amenities", next.length ? next : undefined);
-  };
+      : [...current, amenity]
+    setFilter("amenities", next.length ? next : undefined)
+  }
 
   const hasActiveFilters: boolean =
     !!filters.search ||
@@ -80,17 +80,17 @@ function RoomListing() {
     filters.minPrice !== undefined ||
     filters.maxPrice !== undefined ||
     filters.capacity !== undefined ||
-    (filters.amenities?.length ?? 0) > 0;
+    (filters.amenities?.length ?? 0) > 0
 
-  const rooms = data?.data ?? [];
-  const meta = data?.meta;
+  const rooms = data?.data ?? []
+  const meta = data?.meta
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8">
       {/* Search bar */}
       <div className="mb-6 flex gap-2">
         <div className="relative flex-1">
-          <Search className="text-muted-foreground absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" />
+          <Search className="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Search rooms by name or description..."
             value={searchInput}
@@ -148,7 +148,7 @@ function RoomListing() {
 
           {/* Price range */}
           <div className="space-y-2">
-            <Label>Price range (£/night)</Label>
+            <Label>Price range (Rs/night)</Label>
             <div className="flex gap-2">
               <Input
                 type="number"
@@ -251,20 +251,20 @@ function RoomListing() {
         </div>
       </div>
     </div>
-  );
+  )
 }
 
 function EmptyState({
   onReset,
   hasFilters,
 }: {
-  onReset: () => void;
-  hasFilters: boolean;
+  onReset: () => void
+  hasFilters: boolean
 }) {
   return (
     <div className="rounded-lg border py-16 text-center">
       <p className="mb-2 text-lg font-medium">No rooms found</p>
-      <p className="text-muted-foreground mb-4">
+      <p className="mb-4 text-muted-foreground">
         {hasFilters
           ? "Try adjusting your filters or search terms."
           : "There are no rooms available yet -- check back soon."}
@@ -275,7 +275,7 @@ function EmptyState({
         </Button>
       )}
     </div>
-  );
+  )
 }
 
-export default RoomListing;
+export default RoomListing

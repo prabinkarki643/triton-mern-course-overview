@@ -1,45 +1,45 @@
 // src/pages/owner/EditRoom.tsx
 // Matches Lesson 23 section 23.17. Text fields save as JSON via useUpdateRoom;
 // the image gallery uses useAddRoomImages / useDeleteRoomImage independently.
-import { useEffect } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { Controller, useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { X } from "lucide-react";
+import { useEffect } from "react"
+import { useNavigate, useParams } from "react-router-dom"
+import { Controller, useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { X } from "lucide-react"
 import {
   Field,
   FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
-} from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Skeleton } from "@/components/ui/skeleton";
+} from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   useRoom,
   useUpdateRoom,
   useAddRoomImages,
   useDeleteRoomImage,
-} from "@/hooks/useRooms";
-import { useImagePreviews } from "@/hooks/useImagePreviews";
-import { API_URL } from "@/services/api";
+} from "@/hooks/useRooms"
+import { useImagePreviews } from "@/hooks/useImagePreviews"
+import { API_URL } from "@/services/api"
 import {
   roomFormSchema,
   AMENITY_OPTIONS,
   type RoomFormData,
-} from "@/schemas/roomSchema";
+} from "@/schemas/roomSchema"
 
 function EditRoom() {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const { data: room, isLoading } = useRoom(id ?? "");
-  const { mutate: updateRoom, isPending: isSaving } = useUpdateRoom();
-  const { mutate: addImages, isPending: isUploading } = useAddRoomImages();
-  const { mutate: deleteImage } = useDeleteRoomImage();
-  const { files, previews, onSelect, clear: clearPreviews } = useImagePreviews();
+  const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const { data: room, isLoading } = useRoom(id ?? "")
+  const { mutate: updateRoom, isPending: isSaving } = useUpdateRoom()
+  const { mutate: addImages, isPending: isUploading } = useAddRoomImages()
+  const { mutate: deleteImage } = useDeleteRoomImage()
+  const { files, previews, onSelect, clear: clearPreviews } = useImagePreviews()
 
   const form = useForm<RoomFormData>({
     resolver: zodResolver(roomFormSchema),
@@ -51,7 +51,7 @@ function EditRoom() {
       capacity: 1,
       amenities: [],
     },
-  });
+  })
 
   // Pre-fill the form once the room data arrives
   useEffect(() => {
@@ -63,35 +63,32 @@ function EditRoom() {
         price: room.price,
         capacity: room.capacity,
         amenities: room.amenities,
-      });
+      })
     }
-  }, [room, form]);
+  }, [room, form])
 
   // Save text fields -- plain JSON, no FormData
   const onSubmit = (data: RoomFormData): void => {
-    if (!id) return;
+    if (!id) return
     updateRoom(
       { id, payload: data },
       { onSuccess: () => navigate("/owner/rooms") }
-    );
-  };
+    )
+  }
 
   // Upload the picked images, then clear the previews
   const handleUploadImages = (): void => {
-    if (!id || files.length === 0) return;
-    const formData = new FormData();
-    files.forEach((file) => formData.append("images", file));
-    addImages(
-      { id, formData },
-      { onSuccess: () => clearPreviews() }
-    );
-  };
+    if (!id || files.length === 0) return
+    const formData = new FormData()
+    files.forEach((file) => formData.append("images", file))
+    addImages({ id, formData }, { onSuccess: () => clearPreviews() })
+  }
 
   // Remove a single image straight from the gallery
   const handleDeleteImage = (imageName: string): void => {
-    if (!id) return;
-    deleteImage({ id, imageName });
-  };
+    if (!id) return
+    deleteImage({ id, imageName })
+  }
 
   if (isLoading) {
     return (
@@ -100,15 +97,15 @@ function EditRoom() {
         <Skeleton className="h-32 w-full" />
         <Skeleton className="h-32 w-full" />
       </div>
-    );
+    )
   }
 
   if (!room) {
-    return <div className="text-destructive">Room not found.</div>;
+    return <div className="text-destructive">Room not found.</div>
   }
 
   // Strip the trailing /api from the base URL so we can point at /uploads/rooms/...
-  const baseUrl: string = API_URL.replace(/\/api\/?$/, "");
+  const baseUrl: string = API_URL.replace(/\/api\/?$/, "")
 
   return (
     <div className="max-w-2xl">
@@ -178,7 +175,7 @@ function EditRoom() {
               render={({ field, fieldState }) => (
                 <Field data-invalid={fieldState.invalid}>
                   <FieldLabel htmlFor={field.name}>
-                    Price per Night (£)
+                    Price per Night (Rs)
                   </FieldLabel>
                   <Input
                     {...field}
@@ -233,8 +230,8 @@ function EditRoom() {
                             ? [...(field.value ?? []), amenity]
                             : (field.value ?? []).filter(
                                 (a: string) => a !== amenity
-                              );
-                          field.onChange(next);
+                              )
+                          field.onChange(next)
                         }}
                       />
                       <span className="text-sm">{amenity}</span>
@@ -268,7 +265,7 @@ function EditRoom() {
       <section className="mt-10 space-y-4">
         <div>
           <h2 className="text-lg font-semibold">Photos</h2>
-          <p className="text-muted-foreground text-sm">
+          <p className="text-sm text-muted-foreground">
             Hover an image to remove it, or add more below.
           </p>
         </div>
@@ -289,7 +286,7 @@ function EditRoom() {
                   type="button"
                   variant="destructive"
                   size="icon"
-                  className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100"
+                  className="absolute top-2 right-2 opacity-0 transition-opacity group-hover:opacity-100"
                   onClick={() => handleDeleteImage(image)}
                   aria-label="Delete image"
                 >
@@ -299,7 +296,7 @@ function EditRoom() {
             ))}
           </div>
         ) : (
-          <p className="text-muted-foreground text-sm">No photos yet.</p>
+          <p className="text-sm text-muted-foreground">No photos yet.</p>
         )}
 
         <div className="space-y-3">
@@ -340,7 +337,7 @@ function EditRoom() {
         </div>
       </section>
     </div>
-  );
+  )
 }
 
-export default EditRoom;
+export default EditRoom

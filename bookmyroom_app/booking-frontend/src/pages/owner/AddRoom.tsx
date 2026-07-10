@@ -1,32 +1,32 @@
 // src/pages/owner/AddRoom.tsx
 // Matches Lesson 23 section 23.16. Uses the modern shadcn Field primitives
 // together with React Hook Form's Controller -- no <Form> wrapper needed.
-import { useNavigate } from "react-router-dom";
-import { Controller, useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
+import { useNavigate } from "react-router-dom"
+import { Controller, useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
 import {
   Field,
   FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
-} from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { useCreateRoom } from "@/hooks/useRooms";
-import { useImagePreviews } from "@/hooks/useImagePreviews";
+} from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { useCreateRoom } from "@/hooks/useRooms"
+import { useImagePreviews } from "@/hooks/useImagePreviews"
 import {
   roomFormSchema,
   AMENITY_OPTIONS,
   type RoomFormData,
-} from "@/schemas/roomSchema";
+} from "@/schemas/roomSchema"
 
 function AddRoom() {
-  const navigate = useNavigate();
-  const { mutate: createRoom, isPending } = useCreateRoom();
-  const { files, previews, onSelect } = useImagePreviews();
+  const navigate = useNavigate()
+  const { mutate: createRoom, isPending } = useCreateRoom()
+  const { files, previews, onSelect } = useImagePreviews()
 
   const form = useForm<RoomFormData>({
     resolver: zodResolver(roomFormSchema),
@@ -38,32 +38,32 @@ function AddRoom() {
       capacity: 1,
       amenities: [],
     },
-  });
+  })
 
   const onSubmit = (data: RoomFormData): void => {
     if (files.length === 0) {
-      alert("Please select at least one image.");
-      return;
+      alert("Please select at least one image.")
+      return
     }
 
     // Build FormData for multipart upload (JSON cannot carry files)
-    const formData = new FormData();
-    formData.append("title", data.title);
-    formData.append("description", data.description);
-    formData.append("location", data.location);
-    formData.append("price", String(data.price));
-    formData.append("capacity", String(data.capacity));
+    const formData = new FormData()
+    formData.append("title", data.title)
+    formData.append("description", data.description)
+    formData.append("location", data.location)
+    formData.append("price", String(data.price))
+    formData.append("capacity", String(data.capacity))
     // Amenities travels as a single JSON string -- the backend's parseAmenities
     // helper accepts JSON, CSV or arrays, but a JSON string is the safest
     // shape for multipart forms (Express + Multer don't auto-parse repeated
     // fields into arrays like URL-encoded bodies do).
-    formData.append("amenities", JSON.stringify(data.amenities ?? []));
-    files.forEach((file) => formData.append("images", file));
+    formData.append("amenities", JSON.stringify(data.amenities ?? []))
+    files.forEach((file) => formData.append("images", file))
 
     createRoom(formData, {
       onSuccess: () => navigate("/owner/rooms"),
-    });
-  };
+    })
+  }
 
   return (
     <div className="max-w-2xl">
@@ -140,7 +140,7 @@ function AddRoom() {
               render={({ field, fieldState }) => (
                 <Field data-invalid={fieldState.invalid}>
                   <FieldLabel htmlFor={field.name}>
-                    Price per Night (£)
+                    Price per Night (Rs)
                   </FieldLabel>
                   <Input
                     {...field}
@@ -202,8 +202,8 @@ function AddRoom() {
                             ? [...(field.value ?? []), amenity]
                             : (field.value ?? []).filter(
                                 (a: string) => a !== amenity
-                              );
-                          field.onChange(next);
+                              )
+                          field.onChange(next)
                         }}
                       />
                       <span className="text-sm">{amenity}</span>
@@ -266,7 +266,7 @@ function AddRoom() {
         </div>
       </form>
     </div>
-  );
+  )
 }
 
-export default AddRoom;
+export default AddRoom
