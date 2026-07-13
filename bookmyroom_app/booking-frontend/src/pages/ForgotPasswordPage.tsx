@@ -75,7 +75,17 @@ export function ForgotPasswordPage() {
       </div>
 
       {step === "email" ? (
-        <form onSubmit={emailForm.handleSubmit(submitEmail)} className="space-y-6">
+        // The `key` is critical: when we flip step from "email" to "reset",
+        // both branches render a <form> with a <FieldGroup><Controller/>
+        // structure, and React would happily reuse the same fibers -- which
+        // means the OTP Controller would stay subscribed to emailForm.control
+        // and typing would appear to do nothing. Distinct keys force a fresh
+        // mount so each Controller binds to its own form instance.
+        <form
+          key="email-step"
+          onSubmit={emailForm.handleSubmit(submitEmail)}
+          className="space-y-6"
+        >
           <FieldGroup>
             <Controller
               name="email"
@@ -102,7 +112,11 @@ export function ForgotPasswordPage() {
           </Button>
         </form>
       ) : (
-        <form onSubmit={resetForm.handleSubmit(submitReset)} className="space-y-6">
+        <form
+          key="reset-step"
+          onSubmit={resetForm.handleSubmit(submitReset)}
+          className="space-y-6"
+        >
           <FieldGroup>
             <Controller
               name="otp"
