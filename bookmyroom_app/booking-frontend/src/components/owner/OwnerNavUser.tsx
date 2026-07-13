@@ -81,7 +81,7 @@ export function OwnerNavUser() {
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuItem asChild>
-                <Link to="/owner/dashboard">
+                <Link to="/owner/profile">
                   <User />
                   Profile
                 </Link>
