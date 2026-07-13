@@ -1,16 +1,15 @@
 // src/pages/RoomDetail.tsx
-// Matches Lesson 24 section 24.11. Image gallery + description + amenities +
-// owner + sticky booking card. The "Book Now" button routes to /rooms/:id/book
-// (that page is built in Lesson 25 -- for now it just navigates there).
+// Matches Lesson 24 section 24.11 + Lesson 25 section 25.16. The static
+// "Book Now" card from L24 is replaced with the interactive <BookingForm>.
 import { useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { ArrowLeft, Check, MapPin, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Separator } from "@/components/ui/separator"
 import { useRoom } from "@/hooks/useRooms"
 import { API_URL } from "@/services/api"
+import BookingForm from "@/components/booking/BookingForm"
 
 function RoomDetail() {
   const { id } = useParams<{ id: string }>()
@@ -134,26 +133,10 @@ function RoomDetail() {
           </div>
         </div>
 
-        {/* Right: booking card (1/3 width) -- sticky on desktop */}
+        {/* Right: booking form (1/3 width) -- sticky on desktop. Wired up
+            in Lesson 25 -- replaces the static "Book Now" link from L24. */}
         <div>
-          <Card className="sticky top-4">
-            <CardHeader>
-              <CardTitle className="flex items-baseline gap-1">
-                <span className="text-2xl">Rs{room.price}</span>
-                <span className="text-sm font-normal text-muted-foreground">
-                  /night
-                </span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Button className="w-full" size="lg" asChild>
-                <Link to={`/rooms/${room._id}/book`}>Book Now</Link>
-              </Button>
-              <p className="text-center text-xs text-muted-foreground">
-                You will not be charged yet
-              </p>
-            </CardContent>
-          </Card>
+          <BookingForm room={room} />
         </div>
       </div>
     </div>

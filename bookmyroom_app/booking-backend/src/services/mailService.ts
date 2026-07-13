@@ -74,3 +74,115 @@ function escape(s: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
+
+// --- Lesson 25: booking notifications ------------------------------------
+
+function fmtDate(d: Date): string {
+  return new Date(d).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+interface BookingCreatedOwnerParams {
+  ownerName: string;
+  guestName: string;
+  guestEmail: string;
+  roomTitle: string;
+  checkIn: Date;
+  checkOut: Date;
+  guests: number;
+  totalPrice: number;
+  bookingId: string;
+}
+
+export function bookingCreatedOwnerEmail(
+  params: BookingCreatedOwnerParams
+): { subject: string; html: string } {
+  const subject = `New booking request for ${params.roomTitle}`;
+  const html = `
+    <div style="font-family: system-ui, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; color: #111;">
+      <h2 style="margin-top:0">You've got a new booking request</h2>
+      <p>Hi ${escape(params.ownerName)},</p>
+      <p>
+        <strong>${escape(params.guestName)}</strong>
+        (${escape(params.guestEmail)}) has requested to book
+        <strong>${escape(params.roomTitle)}</strong>.
+      </p>
+      <table style="width:100%; border-collapse: collapse; margin: 16px 0;">
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Check-in</td>
+          <td style="padding: 6px 0;">${fmtDate(params.checkIn)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Check-out</td>
+          <td style="padding: 6px 0;">${fmtDate(params.checkOut)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Guests</td>
+          <td style="padding: 6px 0;">${params.guests}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Total (Rs)</td>
+          <td style="padding: 6px 0;"><strong>Rs ${params.totalPrice}</strong></td>
+        </tr>
+      </table>
+      <p>
+        Please head to your Owner Portal to review and either confirm or reject
+        the request. Booking id: <code>${params.bookingId}</code>.
+      </p>
+      <p style="color:#666; font-size: 13px;">Payment is Cash on Arrival for now -- Lesson 26 will add eSewa.</p>
+    </div>
+  `;
+  return { subject, html };
+}
+
+interface BookingStatusUpdatedGuestParams {
+  guestName: string;
+  ownerName: string;
+  roomTitle: string;
+  checkIn: Date;
+  checkOut: Date;
+  status: "confirmed" | "cancelled";
+  bookingId: string;
+}
+
+export function bookingStatusUpdatedGuestEmail(
+  params: BookingStatusUpdatedGuestParams
+): { subject: string; html: string } {
+  const isConfirmed = params.status === "confirmed";
+  const subject = isConfirmed
+    ? `Your booking for ${params.roomTitle} is confirmed`
+    : `Your booking for ${params.roomTitle} was cancelled`;
+  const heading = isConfirmed
+    ? "Your booking is confirmed"
+    : "Your booking was cancelled";
+  const lede = isConfirmed
+    ? `Great news -- ${escape(params.ownerName)} has confirmed your booking. See you soon!`
+    : `${escape(params.ownerName)} has cancelled your booking. If this was unexpected, please reach out to them directly.`;
+
+  const html = `
+    <div style="font-family: system-ui, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; color: #111;">
+      <h2 style="margin-top:0">${heading}</h2>
+      <p>Hi ${escape(params.guestName)},</p>
+      <p>${lede}</p>
+      <table style="width:100%; border-collapse: collapse; margin: 16px 0;">
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Room</td>
+          <td style="padding: 6px 0;">${escape(params.roomTitle)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Check-in</td>
+          <td style="padding: 6px 0;">${fmtDate(params.checkIn)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Check-out</td>
+          <td style="padding: 6px 0;">${fmtDate(params.checkOut)}</td>
+        </tr>
+      </table>
+      <p style="color:#666; font-size: 13px;">Booking id: <code>${params.bookingId}</code></p>
+    </div>
+  `;
+  return { subject, html };
+}

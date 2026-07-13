@@ -13,7 +13,8 @@
 - Building a typed **`bookingApi`** service layer + **React Query hooks** with a query keys factory
 - A real-time price preview powered by `form.watch()`
 - Building the booking creation form with the **shadcn `Field` family + Zod** (`Field` / `FieldLabel` / `FieldError` / `FieldDescription` / `FieldGroup`) driven by React Hook Form `Controller`
-- Reusing the generic **`<DataTable>`** from Lesson 17.1 for "My Bookings" and the owner's "Booking Requests" view, complete with status filters, URL-driven pagination and row actions
+- Displaying "My Bookings" as a **card list** (matching the guest browsing experience from Lesson 24) and the owner's "Booking Requests" as the generic **`<DataTable>`** from Lesson 17.1, complete with status filters, URL-driven pagination and row actions
+- Building a **detail page** for each booking on both sides (`/bookings/:id` for guests, `/owner/bookings/:id` for owners) that shares a `<BookingSummary>` component so info doesn't drift between views. Guest actions: Cancel (pending only), View room. Owner actions: Confirm + Cancel (pending only), a guest-contact block, View room -- and the reserved spot where Lesson 26 will add "Pay Now", receipt blocks, and "Mark cash received"
 - Wiring **Sonner toasts** into every mutation so users always know what happened
 
 ---
@@ -386,6 +387,42 @@ async function notifyOwnerOfNewBooking(
   await sendMail({ to: owner.email, subject, html });
 }
 
+// GET /api/bookings/:id  -- fetch one booking (guest OR room owner only)
+// Third parties get 404 (not 403) so we never leak whether a booking
+// with that id exists at all.
+export const getBookingById = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const booking = await Booking.findById(req.params.id)
+      .populate("room", "title location price images owner")
+      .populate("user", "name email");
+
+    if (!booking) {
+      res.status(404).json({ message: "Booking not found" });
+      return;
+    }
+
+    const room = booking.room as unknown as IRoom;
+    const guest = booking.user as unknown as { _id: mongoose.Types.ObjectId };
+    const currentUserId = req.user!.userId;
+    const isOwner = room.owner.toString() === currentUserId;
+    const isGuest = guest._id.toString() === currentUserId;
+
+    if (!isOwner && !isGuest) {
+      // Same 404 for "not yours" as "not found" -- never confirm existence.
+      res.status(404).json({ message: "Booking not found" });
+      return;
+    }
+
+    res.json({ data: booking });
+  } catch (error: unknown) {
+    console.error("getBookingById error:", error);
+    res.status(500).json({ message: "Failed to fetch booking" });
+  }
+};
+
 // GET /api/bookings/my  -- paginated list of the current user's bookings
 export const getMyBookings = async (
   req: Request,
@@ -607,6 +644,7 @@ async function notifyGuestOfStatusChange(
 - Validation has already run. We never write `if (!checkIn)` checks in the controller.
 - We populate room and user so the frontend can render rich rows without a second request. Notice we ask for `owner` on the room's populate so the notification email helper can find the owner without an extra query.
 - `req.user!.userId` is the id embedded in the JWT (see Lesson 20's `requireAuth` middleware). `req.user!._id` would be `undefined` -- watch for this if you paste code from other frameworks.
+- `getBookingById` returns a **404 (not 403) for third parties**. This is deliberate: if we returned 403 the response would silently confirm "yes, this id exists, you just can't see it," which is a mild information leak. Returning the same 404 as "no such id" keeps existence private.
 - The email is fired via `void notifyOwnerOfNewBooking(...).catch(...)` -- a **fire-and-forget** pattern with its own try/catch so a Mailtrap outage cannot fail the booking. The guest still gets a `201` even if the email never arrives; the failure is logged for the developer.
 
 ---
@@ -826,14 +864,16 @@ import { requireAuth } from "../middleware/auth";
 import { validateResult } from "../middleware/validate";
 import {
   createBooking,
+  getBookingById,
   getMyBookings,
   getOwnerBookings,
   updateBookingStatus,
 } from "../controllers/bookingController";
 import {
+  bookingIdValidator,
   createBookingValidator,
-  updateBookingStatusValidator,
   listBookingsValidator,
+  updateBookingStatusValidator,
 } from "../validators/booking.validator";
 
 const router: Router = Router();
@@ -867,6 +907,16 @@ router.patch(
   updateBookingStatus
 );
 
+// /:id must sit AFTER /my and /owner so those literal segments aren't
+// misparsed as ids.
+router.get(
+  "/:id",
+  requireAuth,
+  bookingIdValidator,
+  validateResult,
+  getBookingById
+);
+
 export default router;
 ```
 
@@ -888,6 +938,7 @@ app.use("/api/bookings", bookingRoutes);
 | POST | `/api/bookings` | `{ room, checkIn, checkOut, guests, paymentMethod: "cod" }` | `{ data }` | Create a booking request (emails the owner) |
 | GET | `/api/bookings/my` | `?status=&page=&limit=` | `{ data, meta }` | Current user's bookings (paginated) |
 | GET | `/api/bookings/owner` | `?status=&page=&limit=` | `{ data, meta }` | Bookings for the owner's rooms (paginated) |
+| GET | `/api/bookings/:id` | -- | `{ data }` | Fetch one booking (**guest OR room owner only**; anyone else gets 404 to avoid leaking existence) |
 | PATCH | `/api/bookings/:id/status` | `{ status }` | `{ data }` | Confirm or cancel a booking (emails the guest when the owner is the actor) |
 
 ---
@@ -1446,24 +1497,31 @@ Individual Zod rules can only check one field at a time. `refine` runs after the
 
 ---
 
-## 25.13 "My Bookings" Page (Guest View with `<DataTable>`)
+## 25.13 "My Bookings" Page (Guest View -- Card List)
 
-We replace the card list from earlier drafts of the lesson with the **generic `<DataTable>` from Lesson 17.1**. The DataTable handles loading skeletons, empty states, and server-driven pagination -- we just provide columns and the data.
+Guests see a **card list**, not a table. Cards match the browsing experience they already know from Lesson 24's `/rooms` page: the room image is the emotional anchor ("ah yes, that Bristol pod on those dates"), status + dates + total sit next to it, and the whole card links to `/bookings/:id` where the Cancel action lives. Owners get the DataTable in §25.14 because their job is scanning many bookings at once -- a job cards are wrong for.
 
-### Column Definitions
-
-Columns go in a custom hook so the page component stays focused. Cells can be plain text or JSX:
+### The Booking Card
 
 ```tsx
-// booking-frontend/src/components/booking/my-booking-columns.tsx
-import type { ColumnDef } from "@tanstack/react-table";
+// booking-frontend/src/components/booking/BookingCard.tsx
+import { Link } from "react-router-dom";
+import { MapPin, Users, CalendarDays } from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { useUpdateBookingStatus } from "@/hooks/useBookings";
 import { API_URL } from "@/services/api";
 import type { Booking, BookingStatus } from "@/types/booking";
 
-const statusVariant: Record<BookingStatus, "default" | "secondary" | "destructive"> = {
+const statusVariant: Record<
+  BookingStatus,
+  "default" | "secondary" | "destructive"
+> = {
   pending: "secondary",
   confirmed: "default",
   cancelled: "destructive",
@@ -1477,98 +1535,116 @@ function formatDate(iso: string): string {
   });
 }
 
-export function useMyBookingColumns(): ColumnDef<Booking>[] {
-  const { mutate: updateStatus, isPending } = useUpdateBookingStatus();
-  const baseUrl = API_URL.replace("/api", "");
-
-  return [
-    {
-      id: "room",
-      header: "Room",
-      cell: ({ row }) => {
-        const { room } = row.original;
-        return (
-          <div className="flex items-center gap-3">
-            {room.images?.[0] && (
-              <img
-                src={`${baseUrl}/uploads/rooms/${room.images[0]}`}
-                alt={room.title}
-                className="h-12 w-12 rounded-md object-cover"
-              />
-            )}
-            <div>
-              <p className="font-medium leading-tight">{room.title}</p>
-              <p className="text-xs text-muted-foreground">{room.location}</p>
-            </div>
-          </div>
-        );
-      },
-    },
-    {
-      id: "dates",
-      header: "Dates",
-      cell: ({ row }) => (
-        <span className="text-sm">
-          {formatDate(row.original.checkIn)} &rarr;{" "}
-          {formatDate(row.original.checkOut)}
-        </span>
-      ),
-    },
-    {
-      accessorKey: "guests",
-      header: "Guests",
-      cell: ({ row }) => row.original.guests,
-    },
-    {
-      accessorKey: "totalPrice",
-      header: "Total",
-      cell: ({ row }) => (
-        <span className="font-semibold">Rs{row.original.totalPrice}</span>
-      ),
-    },
-    {
-      accessorKey: "status",
-      header: "Status",
-      cell: ({ row }) => (
-        <Badge variant={statusVariant[row.original.status]} className="capitalize">
-          {row.original.status}
-        </Badge>
-      ),
-    },
-    {
-      accessorKey: "paymentMethod",
-      header: "Payment",
-      cell: ({ row }) => (
-        <span className="text-sm">
-          {row.original.paymentMethod === "cod" ? "Cash on arrival" : "-"}
-        </span>
-      ),
-    },
-    {
-      id: "actions",
-      header: "",
-      cell: ({ row }) => {
-        // A guest may cancel their own booking only while it is still pending
-        if (row.original.status !== "pending") return null;
-        return (
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={isPending}
-            onClick={() =>
-              updateStatus({ id: row.original._id, status: "cancelled" })
-            }
-          >
-            Cancel
-          </Button>
-        );
-      },
-    },
-  ];
+interface BookingCardProps {
+  booking: Booking;
 }
+
+function BookingCard({ booking }: BookingCardProps) {
+  const baseUrl = API_URL.replace(/\/api\/?$/, "");
+  const { room } = booking;
+
+  return (
+    <Link to={`/bookings/${booking._id}`} className="group block">
+      <Card className="overflow-hidden py-0 pb-4 transition-shadow hover:shadow-lg">
+        <div className="aspect-video overflow-hidden">
+          {room.images?.[0] ? (
+            <img
+              src={`${baseUrl}/uploads/rooms/${room.images[0]}`}
+              alt={room.title}
+              className="h-full w-full object-cover transition-transform group-hover:scale-105"
+            />
+          ) : (
+            <div className="bg-muted text-muted-foreground flex h-full w-full items-center justify-center text-sm">
+              No image
+            </div>
+          )}
+        </div>
+
+        <CardHeader className="pb-2">
+          <div className="flex items-start justify-between gap-2">
+            <CardTitle className="line-clamp-1 text-lg">{room.title}</CardTitle>
+            <Badge
+              variant={statusVariant[booking.status]}
+              className="capitalize shrink-0"
+            >
+              {booking.status}
+            </Badge>
+          </div>
+          <div className="text-muted-foreground flex items-center gap-1 text-sm">
+            <MapPin className="h-3 w-3" />
+            {room.location}
+          </div>
+        </CardHeader>
+
+        <CardContent className="pb-2 text-sm">
+          <div className="flex items-center gap-1">
+            <CalendarDays className="text-muted-foreground h-3 w-3" />
+            {formatDate(booking.checkIn)} → {formatDate(booking.checkOut)}
+          </div>
+          <div className="text-muted-foreground mt-1 flex items-center gap-1 text-sm">
+            <Users className="h-3 w-3" />
+            {booking.guests} guest{booking.guests === 1 ? "" : "s"}
+          </div>
+        </CardContent>
+
+        <CardFooter className="flex items-center justify-between">
+          <span className="text-lg font-bold">
+            Rs{booking.totalPrice}
+            <span className="text-muted-foreground ml-1 text-xs font-normal">
+              total
+            </span>
+          </span>
+          <span className="text-muted-foreground text-xs">
+            {booking.paymentMethod === "cod" ? "Cash on arrival" : "-"}
+          </span>
+        </CardFooter>
+      </Card>
+    </Link>
+  );
+}
+
+export default BookingCard;
 ```
 
-### The Filter Bar
+**Why the whole card is a `<Link to={/bookings/:id}>`:**
+- One tap navigates to the detail page (§25.15) where the guest can Cancel or open the room again.
+- No small "click me" affordances competing with each other -- the whole tile is the target, matching phone-scale expectations.
+
+### The Booking Card Skeleton
+
+The skeleton mirrors the card's layout so the grid doesn't jump when data arrives:
+
+```tsx
+// booking-frontend/src/components/booking/BookingCardSkeleton.tsx
+import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+
+function BookingCardSkeleton() {
+  return (
+    <Card className="overflow-hidden py-0 pb-4">
+      <Skeleton className="aspect-video w-full rounded-none" />
+      <CardHeader className="pb-2">
+        <Skeleton className="h-5 w-3/4" />
+        <Skeleton className="mt-1 h-4 w-1/2" />
+      </CardHeader>
+      <CardContent className="pb-2 space-y-2">
+        <Skeleton className="h-4 w-2/3" />
+        <Skeleton className="h-4 w-1/3" />
+      </CardContent>
+      <CardFooter className="flex items-center justify-between">
+        <Skeleton className="h-6 w-20" />
+        <Skeleton className="h-4 w-24" />
+      </CardFooter>
+    </Card>
+  );
+}
+
+export default BookingCardSkeleton;
+```
+
+Skip this file if you'd rather show a spinner -- but a matching skeleton is a small nice touch that stops layout thrash when the first fetch resolves.
+
+### The Filter Bar (shared with the owner view)
 
 We reuse the URL-driven filter hook. A `<Select>` drives the status filter; changing it resets to page 1:
 
@@ -1723,39 +1799,62 @@ export function BookingPagination({ meta }: Props) {
 
 ### The Page Itself
 
-The page is now tiny -- just the orchestration:
+Filter bar at the top, a grid of cards in the middle (with skeleton placeholders while loading), and the pagination bar at the bottom. On mobile a single column, on tablet+ two columns.
 
 ```tsx
 // booking-frontend/src/pages/MyBookings.tsx
-import { DataTable } from "@/components/ui/data-table";
+import BookingCard from "@/components/booking/BookingCard";
+import BookingCardSkeleton from "@/components/booking/BookingCardSkeleton";
 import { BookingFilters } from "@/components/booking/booking-filters";
 import { BookingPagination } from "@/components/booking/booking-pagination";
-import { useMyBookingColumns } from "@/components/booking/my-booking-columns";
 import { useMyBookings } from "@/hooks/useBookings";
 import { useBookingFilters } from "@/hooks/useBookingFilters";
 
-function MyBookings(): JSX.Element {
+function MyBookings() {
   const { filters } = useBookingFilters();
-  const columns = useMyBookingColumns();
-  const { data, isLoading } = useMyBookings(filters);
+  const { data, isLoading, isFetching } = useMyBookings(filters);
+
+  const bookings = data?.data ?? [];
+  const meta = data?.meta;
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 space-y-4">
-      <h1 className="text-2xl font-bold">My Bookings</h1>
+    <div className="mx-auto max-w-5xl space-y-6 px-4 py-8">
+      <div>
+        <h1 className="text-2xl font-bold">My Bookings</h1>
+        <p className="text-muted-foreground text-sm">
+          Tap any booking to see full details, contact the host, or cancel while
+          it is still pending.
+        </p>
+      </div>
 
       <BookingFilters />
 
-      <DataTable
-        columns={columns}
-        data={data?.data ?? []}
-        isLoading={isLoading}
-        emptyMessage="You have not made any bookings yet."
-        pageCount={data?.meta.totalPages ?? 1}
-        pageIndex={(filters.page ?? 1) - 1}
-        pageSize={filters.limit ?? 10}
-      />
+      {isLoading ? (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <BookingCardSkeleton key={i} />
+          ))}
+        </div>
+      ) : bookings.length > 0 ? (
+        <div
+          className={`grid grid-cols-1 gap-4 transition-opacity md:grid-cols-2 ${
+            isFetching ? "opacity-60" : "opacity-100"
+          }`}
+        >
+          {bookings.map((booking) => (
+            <BookingCard key={booking._id} booking={booking} />
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-lg border py-16 text-center">
+          <p className="mb-1 text-lg font-medium">No bookings yet</p>
+          <p className="text-muted-foreground text-sm">
+            Browse rooms and send a booking request -- the owner will confirm it.
+          </p>
+        </div>
+      )}
 
-      <BookingPagination meta={data?.meta} />
+      <BookingPagination meta={meta} />
     </div>
   );
 }
@@ -1763,15 +1862,28 @@ function MyBookings(): JSX.Element {
 export default MyBookings;
 ```
 
+**What the page is doing:**
+
+- `isLoading` (the very first fetch) renders **four skeleton cards** so the shape of the grid is in place before real data arrives.
+- `isFetching` (a subsequent fetch triggered by a filter or page change) dims the current cards to `opacity-60` while React Query fetches the next page in the background. `placeholderData` on `useMyBookings` keeps the previous page's data on screen, so nothing flickers.
+- The empty state gets its own block (guests with no bookings need onboarding, not an empty grid).
+
 ---
 
-## 25.14 Owner "Booking Requests" Page (DataTable + Confirm/Cancel Actions)
+## 25.14 Owner "Booking Requests" Page (DataTable + Row Actions)
 
-The owner view uses the **same `<DataTable>`** with different columns. The key addition is a row action component for confirm / cancel, wrapped in shadcn `AlertDialog` confirmations so an accidental click cannot cancel a booking:
+Owners get the DataTable -- density and per-row actions matter when you're triaging 20 requests. Each row carries three actions:
+
+1. **Confirm** (pending only) -- AlertDialog-guarded, fires `updateBookingStatus({ status: "confirmed" })`.
+2. **Cancel** (pending only) -- AlertDialog-guarded, fires `updateBookingStatus({ status: "cancelled" })`.
+3. **View** -- always shown, routes to `/owner/bookings/:id` (see §25.15) for the full picture: guest contact info, and the reserved spot where Lesson 26 will drop "Mark cash received" and the eSewa receipt.
+
+Row-level Confirm/Cancel stays because most decisions are one-tap. `View` sits alongside them as an escape hatch for "I want the full picture before I decide".
 
 ```tsx
 // booking-frontend/src/components/booking/owner-row-actions.tsx
-import { Check, X } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Check, Eye, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -1794,12 +1906,21 @@ interface Props {
 export function OwnerBookingActions({ booking }: Props) {
   const { mutate: updateStatus, isPending } = useUpdateBookingStatus();
 
-  // Only pending bookings have actions
-  if (booking.status !== "pending") return null;
-
   return (
     <div className="flex items-center justify-end gap-1">
-      {/* Confirm */}
+      {/* View -- always shown, routes to the detail page */}
+      <Button variant="ghost" size="sm" asChild>
+        <Link
+          to={`/owner/bookings/${booking._id}`}
+          aria-label="View booking details"
+        >
+          <Eye className="h-3 w-3" />
+        </Link>
+      </Button>
+
+      {booking.status === "pending" && (
+        <>
+          {/* Confirm */}
       <AlertDialog>
         <AlertDialogTrigger asChild>
           <Button size="sm" disabled={isPending}>
@@ -1856,6 +1977,8 @@ export function OwnerBookingActions({ booking }: Props) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+        </>
+      )}
     </div>
   );
 }
@@ -1992,24 +2115,550 @@ The page is almost identical to "My Bookings". That is the whole point of the re
 
 ---
 
-## 25.15 Adding the Booking Routes to the Frontend
+## 25.15 The Detail Pages (Guest + Owner)
 
-The owner route tree was defined in Lesson 23 (§23.8.7). We keep that shape here -- the only new child route is `bookings`, which the L23 lesson already had as a placeholder page. Nothing else moves.
+Both the guest and the owner get a dedicated **detail page** for a single booking. They share a `<BookingSummary>` component so the room hero, dates, guests, total, payment method and booking id can never drift between the two views. The pages differ only in:
+
+- Which layout they live inside (`MainLayout` vs `OwnerLayout`)
+- The **actions** block (guest can Cancel; owner can Confirm/Cancel)
+- The **guest contact block**, which only the owner sees (a guest already knows their own contact info)
+- Lesson 26 will add payment blocks to both -- Pay Now / receipt / retry on the guest side, and Mark cash received on the owner side.
+
+### 25.15.1 `useBooking(id)` + the `GET /bookings/:id` service call
+
+We already added `getBookingById` on the backend in §25.4. The frontend side is a service method + one React Query hook, right next to the ones from §25.9 and §25.10:
+
+```ts
+// booking-frontend/src/services/bookingApi.ts (append inside `bookingApi`)
+async getById(id: string): Promise<Booking> {
+  const { data } = await api.get<{ data: Booking }>(`/bookings/${id}`);
+  return data.data;
+},
+```
+
+```ts
+// booking-frontend/src/hooks/useBookings.ts (append)
+export function useBooking(id: string) {
+  return useQuery({
+    queryKey: bookingKeys.detail(id),
+    queryFn: () => bookingApi.getById(id),
+    enabled: !!id,
+  });
+}
+```
+
+The backend enforces "guest OR room owner", returning a **404 for anyone else** to avoid leaking existence. That means **the same hook is safe from both routes** -- we don't need per-role guards on the frontend beyond the `ProtectedRoute` already wrapping the pages.
+
+### 25.15.2 `BookingSummary` -- the shared middle
+
+Everything the two pages render identically lives here. Room hero + facts grid + booking id.
+
+```tsx
+// booking-frontend/src/components/booking/BookingSummary.tsx
+import { MapPin, Users, CalendarDays, Wallet } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { API_URL } from "@/services/api";
+import type { Booking, BookingStatus } from "@/types/booking";
+
+const statusVariant: Record<
+  BookingStatus,
+  "default" | "secondary" | "destructive"
+> = {
+  pending: "secondary",
+  confirmed: "default",
+  cancelled: "destructive",
+};
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function nightsBetween(a: string, b: string): number {
+  const ms = new Date(b).getTime() - new Date(a).getTime();
+  return Math.max(0, Math.ceil(ms / (1000 * 60 * 60 * 24)));
+}
+
+export function BookingSummary({ booking }: { booking: Booking }) {
+  const baseUrl = API_URL.replace(/\/api\/?$/, "");
+  const { room } = booking;
+  const nights = nightsBetween(booking.checkIn, booking.checkOut);
+
+  return (
+    <div className="space-y-6">
+      {/* Room hero */}
+      <div className="overflow-hidden rounded-lg border">
+        {room.images?.[0] ? (
+          <div className="aspect-video overflow-hidden">
+            <img
+              src={`${baseUrl}/uploads/rooms/${room.images[0]}`}
+              alt={room.title}
+              className="h-full w-full object-cover"
+            />
+          </div>
+        ) : (
+          <div className="bg-muted text-muted-foreground flex aspect-video items-center justify-center text-sm">
+            No image
+          </div>
+        )}
+        <div className="space-y-1 p-4">
+          <div className="flex items-start justify-between gap-4">
+            <h2 className="text-xl font-semibold leading-tight">{room.title}</h2>
+            <Badge variant={statusVariant[booking.status]} className="capitalize">
+              {booking.status}
+            </Badge>
+          </div>
+          <div className="text-muted-foreground flex items-center gap-1 text-sm">
+            <MapPin className="h-3 w-3" />
+            {room.location}
+          </div>
+        </div>
+      </div>
+
+      {/* Facts grid */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <SummaryField icon={<CalendarDays className="h-4 w-4" />} label="Dates">
+          {formatDate(booking.checkIn)} → {formatDate(booking.checkOut)}
+          <span className="text-muted-foreground ml-2 text-xs">
+            ({nights} night{nights === 1 ? "" : "s"})
+          </span>
+        </SummaryField>
+        <SummaryField icon={<Users className="h-4 w-4" />} label="Guests">
+          {booking.guests}
+        </SummaryField>
+        <SummaryField icon={<Wallet className="h-4 w-4" />} label="Total">
+          <span className="font-semibold">Rs{booking.totalPrice}</span>
+        </SummaryField>
+        <SummaryField
+          icon={<Wallet className="h-4 w-4" />}
+          label="Payment method"
+        >
+          {booking.paymentMethod === "cod" ? "Cash on arrival" : "-"}
+        </SummaryField>
+      </div>
+
+      <Separator />
+
+      <div className="text-muted-foreground text-xs">
+        Booking id: <code className="font-mono">{booking._id}</code>
+      </div>
+    </div>
+  );
+}
+
+function SummaryField({
+  icon,
+  label,
+  children,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="text-muted-foreground flex items-center gap-1 text-xs uppercase tracking-wide">
+        {icon}
+        {label}
+      </div>
+      <div className="text-sm">{children}</div>
+    </div>
+  );
+}
+```
+
+### 25.15.3 `BookingDetail` -- the guest page
+
+Sticky Actions card on the right. Cancel appears only while the booking is `pending`. `View room` is always there so the guest can jump back to `/rooms/:id` to reminisce or plan.
+
+```tsx
+// booking-frontend/src/pages/BookingDetail.tsx
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { BookingSummary } from "@/components/booking/BookingSummary";
+import { useBooking, useUpdateBookingStatus } from "@/hooks/useBookings";
+
+function BookingDetail() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { data: booking, isLoading, error } = useBooking(id ?? "");
+  const { mutate: updateStatus, isPending } = useUpdateBookingStatus();
+
+  if (isLoading) return <BookingDetailSkeleton />;
+  if (error || !booking) {
+    return (
+      <div className="mx-auto max-w-4xl px-4 py-16 text-center">
+        <p className="text-destructive mb-4 text-lg">Booking not found.</p>
+        <Button variant="outline" asChild>
+          <Link to="/bookings">Back to My Bookings</Link>
+        </Button>
+      </div>
+    );
+  }
+
+  const canCancel = booking.status === "pending";
+
+  return (
+    <div className="mx-auto max-w-4xl px-4 py-8">
+      <Button variant="ghost" size="sm" className="mb-4" asChild>
+        <Link to="/bookings">
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          Back to My Bookings
+        </Link>
+      </Button>
+
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <BookingSummary booking={booking} />
+        </div>
+
+        <div>
+          <Card className="sticky top-4">
+            <CardHeader>
+              <CardTitle className="text-base">Actions</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {canCancel ? (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      className="w-full"
+                      variant="destructive"
+                      disabled={isPending}
+                    >
+                      Cancel booking
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Cancel this booking?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        The room will be released for other guests to book.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Keep booking</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() =>
+                          updateStatus(
+                            { id: booking._id, status: "cancelled" },
+                            { onSuccess: () => navigate("/bookings") }
+                          )
+                        }
+                      >
+                        Cancel booking
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              ) : (
+                <p className="text-muted-foreground text-sm">
+                  {booking.status === "confirmed"
+                    ? "This booking is confirmed. Contact the host if you need to change anything."
+                    : "This booking has been cancelled."}
+                </p>
+              )}
+
+              <Button variant="outline" className="w-full" asChild>
+                <Link to={`/rooms/${booking.room._id}`}>View room</Link>
+              </Button>
+
+              {/* Lesson 26 will add payment blocks here:
+                  - Pay Now (paymentMethod === "esewa" && paymentStatus === "pending")
+                  - Receipt (paymentStatus === "paid")
+                  - Retry (paymentStatus === "failed") */}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BookingDetailSkeleton() {
+  return (
+    <div className="mx-auto max-w-4xl px-4 py-8">
+      <Skeleton className="mb-4 h-8 w-40" />
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          <Skeleton className="aspect-video w-full rounded-lg" />
+          <Skeleton className="h-6 w-2/3" />
+          <Skeleton className="h-4 w-1/3" />
+        </div>
+        <div>
+          <Skeleton className="h-48 w-full rounded-lg" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default BookingDetail;
+```
+
+### 25.15.4 `OwnerBookingDetail` -- the owner page
+
+Same `BookingSummary` in the middle, plus a **Guest contact card** underneath and **Confirm + Cancel** buttons in the sticky Actions rail. This page renders inside `OwnerLayout` (the sidebar shell from Lesson 23), so we don't add our own outer padding.
+
+```tsx
+// booking-frontend/src/pages/owner/OwnerBookingDetail.tsx
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { ArrowLeft, Mail } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { BookingSummary } from "@/components/booking/BookingSummary";
+import { useBooking, useUpdateBookingStatus } from "@/hooks/useBookings";
+
+function OwnerBookingDetail() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { data: booking, isLoading, error } = useBooking(id ?? "");
+  const { mutate: updateStatus, isPending } = useUpdateBookingStatus();
+
+  if (isLoading) return <OwnerBookingDetailSkeleton />;
+  if (error || !booking) {
+    return (
+      <div className="max-w-4xl py-16 text-center">
+        <p className="text-destructive mb-4 text-lg">Booking not found.</p>
+        <Button variant="outline" asChild>
+          <Link to="/owner/bookings">Back to Booking Requests</Link>
+        </Button>
+      </div>
+    );
+  }
+
+  const canDecide = booking.status === "pending";
+
+  return (
+    <div className="max-w-4xl">
+      <Button variant="ghost" size="sm" className="mb-4" asChild>
+        <Link to="/owner/bookings">
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          Back to Booking Requests
+        </Link>
+      </Button>
+
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+        <div className="lg:col-span-2 space-y-6">
+          <BookingSummary booking={booking} />
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Guest</CardTitle>
+              <CardDescription>
+                Reach out if you need any extra information before deciding.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div>
+                <span className="text-muted-foreground">Name: </span>
+                {booking.user.name}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Email: </span>
+                <a
+                  href={`mailto:${booking.user.email}`}
+                  className="inline-flex items-center gap-1 underline"
+                >
+                  <Mail className="h-3 w-3" />
+                  {booking.user.email}
+                </a>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div>
+          <Card className="sticky top-4">
+            <CardHeader>
+              <CardTitle className="text-base">Actions</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {canDecide ? (
+                <>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button className="w-full" disabled={isPending}>
+                        Confirm booking
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Confirm this booking?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          {booking.user.name} will be emailed that their booking
+                          for "{booking.room.title}" is confirmed.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Back</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={() =>
+                            updateStatus(
+                              { id: booking._id, status: "confirmed" },
+                              { onSuccess: () => navigate("/owner/bookings") }
+                            )
+                          }
+                        >
+                          Confirm booking
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        className="w-full"
+                        variant="destructive"
+                        disabled={isPending}
+                      >
+                        Cancel booking
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Cancel this booking?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          {booking.user.name} will be emailed that their booking
+                          was cancelled, and the dates will be released.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Back</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={() =>
+                            updateStatus(
+                              { id: booking._id, status: "cancelled" },
+                              { onSuccess: () => navigate("/owner/bookings") }
+                            )
+                          }
+                        >
+                          Cancel booking
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </>
+              ) : (
+                <p className="text-muted-foreground text-sm">
+                  {booking.status === "confirmed"
+                    ? "This booking is confirmed."
+                    : "This booking has been cancelled."}
+                </p>
+              )}
+
+              <Button variant="outline" className="w-full" asChild>
+                <Link to={`/rooms/${booking.room._id}`}>View room</Link>
+              </Button>
+
+              {/* Lesson 26 will add "Mark cash received" here for COD
+                  bookings whose paymentStatus is still "pending". */}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OwnerBookingDetailSkeleton() {
+  return (
+    <div className="max-w-4xl">
+      <Skeleton className="mb-4 h-8 w-52" />
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          <Skeleton className="aspect-video w-full rounded-lg" />
+          <Skeleton className="h-6 w-2/3" />
+          <Skeleton className="h-4 w-1/3" />
+          <Skeleton className="h-24 w-full rounded-lg" />
+        </div>
+        <div>
+          <Skeleton className="h-56 w-full rounded-lg" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default OwnerBookingDetail;
+```
+
+---
+
+## 25.16 Adding the Booking Routes to the Frontend
+
+Four new routes total: two list pages, and two detail pages (`/bookings/:id` for guests and `/owner/bookings/:id` inside the owner shell). The owner route tree from Lesson 23 (§23.8.7) grows by two child routes; nothing else moves.
 
 ```tsx
 // booking-frontend/src/App.tsx (additional routes)
 import { Navigate, Route, Routes } from "react-router-dom";
 import MyBookings from "./pages/MyBookings";
+import BookingDetail from "./pages/BookingDetail";
 import OwnerBookings from "./pages/owner/OwnerBookings";
+import OwnerBookingDetail from "./pages/owner/OwnerBookingDetail";
 
 <Routes>
-  {/* Public routes */}
-  <Route path="/" element={<Home />} />
-  <Route path="/rooms" element={<RoomListing />} />
-  <Route path="/rooms/:id" element={<RoomDetail />} />
+  {/* Public + guest routes inside MainLayout */}
+  <Route element={<MainLayout />}>
+    <Route path="/" element={<Home />} />
+    <Route path="/rooms" element={<RoomListing />} />
+    <Route path="/rooms/:id" element={<RoomDetail />} />
 
-  {/* Guest routes (authenticated) */}
-  <Route path="/bookings" element={<MyBookings />} />
+    {/* Guest routes (authenticated) */}
+    <Route
+      path="/bookings"
+      element={
+        <ProtectedRoute>
+          <MyBookings />
+        </ProtectedRoute>
+      }
+    />
+    <Route
+      path="/bookings/:id"
+      element={
+        <ProtectedRoute>
+          <BookingDetail />
+        </ProtectedRoute>
+      }
+    />
+  </Route>
 
   {/* Owner routes -- same shape as Lesson 23.8.7 */}
   <Route
@@ -2026,15 +2675,16 @@ import OwnerBookings from "./pages/owner/OwnerBookings";
     <Route path="rooms/new" element={<AddRoom />} />
     <Route path="rooms/:id/edit" element={<EditRoom />} />
     <Route path="bookings" element={<OwnerBookings />} />
+    <Route path="bookings/:id" element={<OwnerBookingDetail />} />
   </Route>
 </Routes>
 ```
 
-> The `bookings` route now points at the real `OwnerBookings` page you build in section 25.14 -- previously it was a "Coming in Lesson 25" placeholder from L23.
+> The `/bookings` and `/owner/bookings` routes now point at the real pages you build in §25.13 and §25.14. The detail routes from §25.15 pick up the same backend endpoint but are wrapped in the layout their user lives inside.
 
 ---
 
-## 25.16 Integrating the Booking Form into Room Detail
+## 25.17 Integrating the Booking Form into Room Detail
 
 Replace the static "Book Now" card from Lesson 24 with the interactive booking form:
 
@@ -2050,7 +2700,7 @@ import BookingForm from "@/components/booking/BookingForm";
 
 ---
 
-## 25.17 Complete File Summary
+## 25.18 Complete File Summary
 
 ```
 Backend (booking-backend/src/):
@@ -2073,15 +2723,19 @@ Frontend (booking-frontend/src/):
 ├── components/
 │   └── booking/
 │       ├── BookingForm.tsx                # shadcn Field + Controller + Zod + price preview
-│       ├── booking-filters.tsx            # URL-driven status filter
+│       ├── BookingCard.tsx                # NEW (guest list card, links to /bookings/:id)
+│       ├── BookingCardSkeleton.tsx        # NEW (matching loading placeholder)
+│       ├── BookingSummary.tsx             # NEW (shared middle for both detail pages)
+│       ├── booking-filters.tsx            # URL-driven status filter (shared)
 │       ├── booking-pagination.tsx         # shared pagination bar
-│       ├── my-booking-columns.tsx         # ColumnDef[] for guest view
 │       ├── owner-booking-columns.tsx      # ColumnDef[] for owner view
-│       └── owner-row-actions.tsx          # Confirm/Cancel with AlertDialog
+│       └── owner-row-actions.tsx          # Confirm/Cancel with AlertDialog + View link
 ├── pages/
-│   ├── MyBookings.tsx                     # Guest's bookings (DataTable)
+│   ├── MyBookings.tsx                     # Guest's bookings (card list)
+│   ├── BookingDetail.tsx                  # NEW (guest detail page)
 │   └── owner/
-│       └── OwnerBookings.tsx              # Owner's bookings (DataTable)
+│       ├── OwnerBookings.tsx              # Owner's bookings (DataTable)
+│       └── OwnerBookingDetail.tsx         # NEW (owner detail page inside OwnerLayout)
 ├── hooks/
 │   ├── useBookings.ts                     # query keys + one hook per action + toasts
 │   └── useBookingFilters.ts               # URL <-> filter state sync
@@ -2126,20 +2780,24 @@ Frontend (booking-frontend/src/):
 4. Submit a booking and confirm the toast appears and you are redirected to `/bookings`
 5. Try an invalid range (check-out before check-in) -- the error must appear under `checkOut`
 
-### Exercise 4: DataTable Views with URL Filters
+### Exercise 4: Guest Card List + Owner DataTable
 1. Implement `useBookingFilters` reading `status`, `page`, `limit` from the URL
-2. Build `useMyBookingColumns()` and `useOwnerBookingColumns()` returning `ColumnDef<Booking>[]`
-3. Wire both pages to `<DataTable>` with `manualPagination` and `pageCount = data?.meta.totalPages`
+2. Build `BookingCard`, `BookingCardSkeleton`, and wire them into `MyBookings.tsx` as a 1-col / 2-col responsive grid
+3. Build `useOwnerBookingColumns()` returning `ColumnDef<Booking>[]` and wire the owner page to `<DataTable>` with `manualPagination` and `pageCount = data?.meta.totalPages`
 4. Confirm that:
-   - The status filter updates the URL and resets to page 1
+   - The status filter updates the URL and resets to page 1 on both sides
    - The pagination buttons disable correctly at the edges
    - Refreshing the page keeps your filters
+   - The card grid dims to `opacity-60` while `isFetching` is true (thanks to `placeholderData` on `useMyBookings`)
 
-### Exercise 5: Confirm / Cancel Flow
-1. Add `OwnerBookingActions` with two `AlertDialog` confirmations (Confirm / Cancel)
-2. As a guest, cancel a pending booking from "My Bookings"
-3. As the owner, confirm the same booking type from "Booking Requests" -- it should move out of the pending list
-4. Try to cancel a `confirmed` booking from the guest view -- the action button should not appear
+### Exercise 5: Detail Pages + Confirm / Cancel Flow
+1. Add `getBookingById` on the backend with the 404-for-third-parties authorization
+2. Add `bookingApi.getById` and the `useBooking(id)` hook
+3. Build `BookingSummary`, then wire it into both `BookingDetail` (guest) and `OwnerBookingDetail` (owner)
+4. Owner row actions: add a **View** link alongside Confirm/Cancel that routes to `/owner/bookings/:id`
+5. As a guest, tap a card in `/bookings` -- the detail page opens. Cancel from there while the booking is pending
+6. As the owner, click **View** on a row -- `/owner/bookings/:id` opens with the guest contact info + Confirm/Cancel buttons
+7. Log in as a third party (fresh user) and try to GET a booking that isn't theirs -- the API must return **404**, not 403
 
 ### Exercise 6: Edge Cases
 1. Book 0 nights (same check-in and check-out) -- Zod `refine` rejects it
@@ -2158,14 +2816,16 @@ Frontend (booking-frontend/src/):
 5. **Date conflict detection** uses one elegant query: `checkIn < newCheckOut AND checkOut > newCheckIn`, excluding `cancelled`
 6. **`populate`** inlines room and user data so the frontend can render rich rows without extra requests
 7. **Email notifications on both sides** live in `services/mailService.ts` next to the OTP template from Lesson 21.1. `createBooking` fires `bookingCreatedOwnerEmail` to the room owner, and `updateBookingStatus` fires `bookingStatusUpdatedGuestEmail` to the guest -- but **only when the owner is the actor** (a guest cancelling their own pending booking doesn't need a self-email). Both calls run inside `void ...catch(logger)` fire-and-forget wrappers so an SMTP outage never fails a booking.
-8. **`{ message }` shape for errors**, matching the auth and rooms controllers -- the frontend's Axios interceptor unwraps `error.response.data.message` into `error.message` so Sonner toasts read the friendly server text
-9. **`paymentMethod`** ships in Lesson 25 with the single-option enum `["cod"]`. Lesson 26 widens it to `["cod", "esewa"]` and adds `paymentStatus` + `transactionId` -- widening an enum is a safe migration
-10. **`bookingApi` + a query keys factory** keep React Query caches predictable and invalidations type-safe
-11. **One hook per action** (`useCreateBooking`, `useUpdateBookingStatus`, ...) keeps re-renders local and toasts consistent
-12. The booking form uses the **shadcn `Field` family** (`Field` / `FieldLabel` / `FieldDescription` / `FieldError` / `FieldGroup`) driven by React Hook Form `Controller` -- the same accessible pattern as auth and room forms
-13. **`form.watch()` + `useMemo`** drive the real-time price preview without extra state
-14. **Zod `refine`** handles cross-field rules (check-out must be after check-in) that single-field rules cannot
-15. The **generic `<DataTable>`** from Lesson 17.1 is reused for both "My Bookings" and "Booking Requests" -- swap columns and a hook, keep everything else
-16. **`useBookingFilters`** stores status/page/limit in the URL so views are bookmarkable, shareable, and refresh-proof
-17. **`AlertDialog` confirmations** prevent accidental confirm/cancel actions on the owner side
-18. **Sonner toasts in every mutation** mean the user always knows whether their action succeeded or failed
+8. **Guest list = cards, owner list = table.** Different audiences, different UI. Guests scan a handful of bookings and care about the room image; owners triage many bookings and care about density + row actions. `BookingCard` links the whole tile to `/bookings/:id`; the owner row's small `Eye` button links to `/owner/bookings/:id`.
+9. **Both detail pages share `<BookingSummary>`.** The summary (room hero + facts grid + booking id) is identical for guests and owners, so extracting it means fields can never drift between views. The pages differ only in their **actions block** (guest: Cancel; owner: Confirm + Cancel), a **guest contact card** (owner only), and the layout shell.
+10. **Existence-safe 404.** `GET /api/bookings/:id` returns 404 for both "no such id" and "not yours". A 403 would silently confirm the id exists to anyone able to guess one -- a mild but avoidable information leak.
+11. **`{ message }` shape for errors**, matching the auth and rooms controllers -- the frontend's Axios interceptor unwraps `error.response.data.message` into `error.message` so Sonner toasts read the friendly server text
+12. **`paymentMethod`** ships in Lesson 25 with the single-option enum `["cod"]`. Lesson 26 widens it to `["cod", "esewa"]` and adds `paymentStatus` + `transactionId` -- widening an enum is a safe migration
+13. **`bookingApi` + a query keys factory** keep React Query caches predictable and invalidations type-safe
+14. **One hook per action** (`useCreateBooking`, `useUpdateBookingStatus`, `useBooking`, ...) keeps re-renders local and toasts consistent
+15. The booking form uses the **shadcn `Field` family** (`Field` / `FieldLabel` / `FieldDescription` / `FieldError` / `FieldGroup`) driven by React Hook Form `Controller` -- the same accessible pattern as auth and room forms
+16. **`form.watch()` + `useMemo`** drive the real-time price preview without extra state
+17. **Zod `refine`** handles cross-field rules (check-out must be after check-in) that single-field rules cannot
+18. **`useBookingFilters`** stores status/page/limit in the URL so views are bookmarkable, shareable, and refresh-proof
+19. **`AlertDialog` confirmations** prevent accidental confirm/cancel actions on the owner side (and on both detail pages)
+20. **Sonner toasts in every mutation** mean the user always knows whether their action succeeded or failed

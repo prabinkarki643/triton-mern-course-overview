@@ -1,20 +1,25 @@
-// booking-frontend/src/types/booking.ts
+// src/types/booking.ts
+// Matches Lesson 25 section 25.8.
+import type { PaginationMeta, Room } from "./room";
 
-import type { Room } from "./room";
-import type { User } from "./user";
+export type BookingStatus = "pending" | "confirmed" | "cancelled";
+// Only "cod" for Lesson 25. Lesson 26 will widen this to `"cod" | "esewa"`.
+export type PaymentMethod = "cod";
 
 export interface Booking {
   _id: string;
-  room: string | Room;
-  user: string | User;
+  room: Room;
+  user: {
+    _id: string;
+    name: string;
+    email: string;
+  };
   checkIn: string;
   checkOut: string;
   guests: number;
   totalPrice: number;
-  status: "pending" | "confirmed" | "cancelled";
-  paymentMethod: "esewa" | "cod";
-  paymentStatus: "pending" | "paid";
-  esewaRefId?: string;
+  status: BookingStatus;
+  paymentMethod: PaymentMethod;
   createdAt: string;
   updatedAt: string;
 }
@@ -24,5 +29,20 @@ export interface CreateBookingData {
   checkIn: string;
   checkOut: string;
   guests: number;
-  paymentMethod: "esewa" | "cod";
+  paymentMethod: PaymentMethod;
+}
+
+export interface BookingFilters {
+  status?: BookingStatus;
+  page?: number;
+  limit?: number;
+}
+
+export interface BookingsResponse {
+  data: Booking[];
+  meta: PaginationMeta;
+}
+
+export interface BookingResponse {
+  data: Booking;
 }

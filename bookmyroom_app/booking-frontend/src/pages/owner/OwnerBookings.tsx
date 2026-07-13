@@ -1,15 +1,35 @@
 // src/pages/owner/OwnerBookings.tsx
-// Placeholder for Lesson 25. The Owner sidebar links here so students can
-// see the route wiring works today; the real booking-management UI is built
-// in the bookings lesson.
+// Matches Lesson 25 section 25.14. Owner view -- same DataTable as MyBookings,
+// swapped columns + hook + row actions.
+import { DataTable } from "@/components/ui/data-table";
+import { BookingFilters } from "@/components/booking/booking-filters";
+import { BookingPagination } from "@/components/booking/booking-pagination";
+import { useOwnerBookingColumns } from "@/components/booking/owner-booking-columns";
+import { useOwnerBookings } from "@/hooks/useBookings";
+import { useBookingFilters } from "@/hooks/useBookingFilters";
+
 function OwnerBookings() {
+  const { filters } = useBookingFilters();
+  const columns = useOwnerBookingColumns();
+  const { data, isLoading } = useOwnerBookings(filters);
+
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">Booking Requests</h1>
-      <p className="text-muted-foreground text-sm">
-        Coming in Lesson 25 -- once guests can book, this is where owners will
-        approve or reject their requests.
-      </p>
+
+      <BookingFilters />
+
+      <DataTable
+        columns={columns}
+        data={data?.data ?? []}
+        isLoading={isLoading}
+        emptyMessage="No booking requests yet."
+        pageCount={data?.meta.totalPages ?? 1}
+        pageIndex={(filters.page ?? 1) - 1}
+        pageSize={filters.limit ?? 10}
+      />
+
+      <BookingPagination meta={data?.meta} />
     </div>
   );
 }
