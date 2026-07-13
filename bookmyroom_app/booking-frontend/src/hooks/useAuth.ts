@@ -3,7 +3,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { authApi } from "@/services/authApi";
-import type { LoginData, RegisterData, User } from "@/types/user";
+import type {
+  ChangePasswordData,
+  ForgotPasswordData,
+  LoginData,
+  RegisterData,
+  ResetPasswordData,
+  User,
+  VerifyEmailData,
+} from "@/types/user";
 
 // Centralised query keys for everything auth-related
 export const authKeys = {
@@ -71,4 +79,57 @@ export function useLogout() {
     toast.success("Logged out");
     navigate("/login");
   };
+}
+
+// --- Lesson 21.1: OTP-based recovery + email verification -----------------
+
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: (payload: ForgotPasswordData) => authApi.forgotPassword(payload),
+    onSuccess: (data) => toast.success(data.message),
+    onError: (error: Error) =>
+      toast.error(error.message || "Failed to send reset code"),
+  });
+}
+
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: (payload: ResetPasswordData) => authApi.resetPassword(payload),
+    onSuccess: (data) => toast.success(data.message),
+    onError: (error: Error) =>
+      toast.error(error.message || "Failed to reset password"),
+  });
+}
+
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: (payload: ChangePasswordData) =>
+      authApi.changePassword(payload),
+    onSuccess: (data) => toast.success(data.message),
+    onError: (error: Error) =>
+      toast.error(error.message || "Failed to change password"),
+  });
+}
+
+export function useSendEmailVerifyOtp() {
+  return useMutation({
+    mutationFn: () => authApi.sendEmailVerifyOtp(),
+    onSuccess: (data) => toast.success(data.message),
+    onError: (error: Error) =>
+      toast.error(error.message || "Failed to send verification code"),
+  });
+}
+
+export function useVerifyEmail() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: VerifyEmailData) => authApi.verifyEmail(payload),
+    onSuccess: (data) => {
+      toast.success(data.message);
+      // Refresh emailVerified everywhere it's rendered (profile badge, etc.)
+      queryClient.invalidateQueries({ queryKey: authKeys.user() });
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || "Failed to verify email"),
+  });
 }

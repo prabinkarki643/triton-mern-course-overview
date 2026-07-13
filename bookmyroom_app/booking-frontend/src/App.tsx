@@ -4,7 +4,9 @@ import { MainLayout } from "@/layouts/MainLayout"
 import { HomePage } from "@/pages/HomePage"
 import { LoginPage } from "@/pages/LoginPage"
 import { RegisterPage } from "@/pages/RegisterPage"
+import { ForgotPasswordPage } from "@/pages/ForgotPasswordPage"
 import { OwnerDashboardPage } from "@/pages/OwnerDashboardPage"
+import { ProfilePage } from "@/pages/ProfilePage"
 import RoomListing from "@/pages/RoomListing"
 import RoomDetail from "@/pages/RoomDetail"
 import { ProtectedRoute } from "@/components/ProtectedRoute"
@@ -42,11 +44,13 @@ export function App() {
         <Route path="rooms/new" element={<AddRoom />} />
         <Route path="rooms/:id/edit" element={<EditRoom />} />
         <Route path="bookings" element={<OwnerBookings />} />
+        <Route path="profile" element={<ProfilePage />} />
       </Route>
 
       <Route element={<AuthLayout />}>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       </Route>
     </Routes>
   )

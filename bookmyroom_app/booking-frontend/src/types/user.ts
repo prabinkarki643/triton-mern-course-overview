@@ -7,6 +7,7 @@ export interface User {
   phone: string;
   role: "owner" | "user";
   avatar?: string;
+  emailVerified: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -27,4 +28,29 @@ export interface RegisterData {
 export interface AuthResponse {
   token: string;
   user: User;
+}
+
+// Lesson 21.1 additions ----------------------------------------------------
+
+export interface ForgotPasswordData {
+  email: string;
+}
+
+export interface ResetPasswordData {
+  email: string;
+  otp: string;
+  newPassword: string;
+}
+
+export interface ChangePasswordData {
+  currentPassword: string;
+  newPassword: string;
+}
+
+export interface VerifyEmailData {
+  otp: string;
+}
+
+export interface MessageResponse {
+  message: string;
 }

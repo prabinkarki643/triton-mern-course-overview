@@ -3,6 +3,8 @@ import { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import jwt, { type SignOptions } from "jsonwebtoken";
 import User, { IUser } from "../models/User";
+import { issueOtp, verifyOtp, otpTtlMinutes } from "../services/otpService";
+import { sendMail, otpEmail } from "../services/mailService";
 
 const JWT_SECRET: string = process.env.JWT_SECRET || "fallback-secret";
 const JWT_OPTIONS: SignOptions = { expiresIn: "7d" };
@@ -29,6 +31,7 @@ const toPublicUser = (user: IUser) => ({
   phone: user.phone,
   role: user.role,
   avatar: user.avatar,
+  emailVerified: user.emailVerified,
   createdAt: user.createdAt,
   updatedAt: user.updatedAt,
 });
@@ -134,5 +137,194 @@ export const getMe = async (req: Request, res: Response): Promise<void> => {
   } catch (error: unknown) {
     console.error("getMe error:", error);
     res.status(500).json({ message: "Failed to fetch current user" });
+  }
+};
+
+// Shared: map otpService verify failure reasons to user-safe messages.
+// Every branch that isn't "too_many_attempts" collapses to the same
+// generic message so attackers can't tell "unknown user" from "wrong code".
+const VERIFY_ERRORS: Record<string, string> = {
+  not_found: "Invalid or expired code",
+  expired: "Invalid or expired code",
+  too_many_attempts: "Too many attempts. Request a new code and try again.",
+  mismatch: "Invalid or expired code",
+};
+
+// POST /api/auth/forgot-password (public)
+// Always responds identically, whether the email exists or not.
+export const forgotPassword = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { email } = req.body as { email: string };
+
+    const user = await User.findOne({ email });
+    if (user) {
+      const code = await issueOtp(user.id, "password_reset");
+      const { subject, html } = otpEmail({
+        name: user.name,
+        code,
+        purpose: "password_reset",
+        expiresInMinutes: otpTtlMinutes(),
+      });
+      // Await so send failures surface as a 500; in production you'd
+      // move this onto a background queue instead.
+      await sendMail({ to: user.email, subject, html });
+    }
+
+    res.status(200).json({
+      message: "If an account exists for that email, a code has been sent.",
+    });
+  } catch (error: unknown) {
+    console.error("forgotPassword error:", error);
+    res.status(500).json({ message: "Failed to send password reset code" });
+  }
+};
+
+// POST /api/auth/reset-password (public)
+export const resetPassword = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { email, otp, newPassword } = req.body as {
+      email: string;
+      otp: string;
+      newPassword: string;
+    };
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      // Symmetric with a genuine bad code -- never confirm existence here.
+      res.status(400).json({ message: "Invalid or expired code" });
+      return;
+    }
+
+    const result = await verifyOtp(user.id, "password_reset", otp);
+    if (!result.ok) {
+      res.status(400).json({ message: VERIFY_ERRORS[result.reason!] });
+      return;
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    res.status(200).json({
+      message:
+        "Password reset successful. You can now sign in with your new password.",
+    });
+  } catch (error: unknown) {
+    console.error("resetPassword error:", error);
+    res.status(500).json({ message: "Failed to reset password" });
+  }
+};
+
+// POST /api/auth/change-password (authenticated)
+export const changePassword = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { currentPassword, newPassword } = req.body as {
+      currentPassword: string;
+      newPassword: string;
+    };
+    const userId = req.user!.userId;
+
+    // Password is `select: false` on the schema -- pull it explicitly.
+    const user = await User.findById(userId).select("+password");
+    if (!user) {
+      res.status(404).json({ message: "User not found" });
+      return;
+    }
+
+    const ok = await bcrypt.compare(currentPassword, user.password);
+    if (!ok) {
+      res.status(400).json({ message: "Current password is incorrect" });
+      return;
+    }
+    if (currentPassword === newPassword) {
+      res.status(400).json({
+        message: "New password must be different from current password",
+      });
+      return;
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    res.status(200).json({ message: "Password changed successfully" });
+  } catch (error: unknown) {
+    console.error("changePassword error:", error);
+    res.status(500).json({ message: "Failed to change password" });
+  }
+};
+
+// POST /api/auth/send-email-verify-otp (authenticated)
+export const sendEmailVerifyOtp = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+    const user = await User.findById(userId);
+    if (!user) {
+      res.status(404).json({ message: "User not found" });
+      return;
+    }
+    if (user.emailVerified) {
+      res.status(400).json({ message: "Email is already verified" });
+      return;
+    }
+
+    const code = await issueOtp(user.id, "email_verify");
+    const { subject, html } = otpEmail({
+      name: user.name,
+      code,
+      purpose: "email_verify",
+      expiresInMinutes: otpTtlMinutes(),
+    });
+    await sendMail({ to: user.email, subject, html });
+
+    res.status(200).json({ message: "Verification code sent to your email." });
+  } catch (error: unknown) {
+    console.error("sendEmailVerifyOtp error:", error);
+    res.status(500).json({ message: "Failed to send verification code" });
+  }
+};
+
+// POST /api/auth/verify-email (authenticated)
+export const verifyEmail = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const { otp } = req.body as { otp: string };
+    const userId = req.user!.userId;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      res.status(404).json({ message: "User not found" });
+      return;
+    }
+    if (user.emailVerified) {
+      res.status(400).json({ message: "Email is already verified" });
+      return;
+    }
+
+    const result = await verifyOtp(user.id, "email_verify", otp);
+    if (!result.ok) {
+      res.status(400).json({ message: VERIFY_ERRORS[result.reason!] });
+      return;
+    }
+
+    user.emailVerified = true;
+    await user.save();
+
+    res.status(200).json({ message: "Email verified successfully" });
+  } catch (error: unknown) {
+    console.error("verifyEmail error:", error);
+    res.status(500).json({ message: "Failed to verify email" });
   }
 };

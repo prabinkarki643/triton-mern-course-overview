@@ -72,7 +72,15 @@ export function LoginPage() {
                 control={form.control}
                 render={({ field, fieldState }) => (
                   <Field data-invalid={fieldState.invalid}>
-                    <FieldLabel htmlFor={field.name}>Password</FieldLabel>
+                    <div className="flex items-center justify-between">
+                      <FieldLabel htmlFor={field.name}>Password</FieldLabel>
+                      <Link
+                        to="/forgot-password"
+                        className="text-muted-foreground text-xs underline"
+                      >
+                        Forgot your password?
+                      </Link>
+                    </div>
                     <div className="relative">
                       <Lock className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
                       <Input
