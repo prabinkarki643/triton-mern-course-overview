@@ -967,7 +967,9 @@ When testing:
 
 ## 26.13 Owner: Marking COD Payments as Received
 
-On the owner's dashboard, the owner needs a button to mark COD bookings as paid. We follow the same pattern again: a service method, a React Query mutation hook, and a thin component.
+The **owner booking detail page** (`/owner/bookings/:id`, from Lesson 25.15.4) is the natural home for this action -- that's where the owner already lands to review a specific booking. We do NOT add another button on the DataTable rows in `/owner/bookings`; the row is for triage (Confirm/Cancel), and money-received is a per-booking decision the owner takes after cash has actually changed hands.
+
+We follow the same pattern as everywhere else: a service method, a React Query mutation hook, and a thin component we drop into the detail page's `Actions` block (the placeholder comment `// Lesson 26 will add "Mark cash received" here...` in `OwnerBookingDetail.tsx` marks the spot).
 
 ```typescript
 // webapp/src/services/bookingApi.ts (add to existing file)
@@ -1022,7 +1024,15 @@ export function MarkAsPaidButton({ bookingId }: MarkAsPaidButtonProps) {
 }
 ```
 
-The component is tiny because all the work -- the API call, loading state, toast, and cache invalidation -- lives inside the hook. The dashboard's booking list will automatically refresh after the mutation succeeds, thanks to `invalidateQueries`.
+The component is tiny because all the work -- the API call, loading state, toast, and cache invalidation -- lives inside the hook. Drop `<MarkAsPaidButton bookingId={booking._id} />` into `OwnerBookingDetail.tsx`'s Actions card, guarded by `booking.paymentMethod === "cod" && booking.paymentStatus === "pending"` so it only appears when it's the right decision to offer. The Owner Bookings list and the guest's own view will both refresh automatically after the mutation succeeds, thanks to `invalidateQueries({ queryKey: bookingKeys.all })`.
+
+**On the guest side**, the equivalent placeholder in `BookingDetail.tsx`'s Actions block is where you drop:
+
+- A **"Pay with eSewa"** button when `booking.paymentMethod === "esewa"` and `paymentStatus === "pending"` -- kicks off the redirect flow you built in §26.5-26.6.
+- A **receipt block** (transaction id, timestamp, status) when `paymentStatus === "paid"`.
+- A **"Retry payment"** button when `paymentStatus === "failed"` -- routes back to the eSewa initiate call.
+
+The **guest card list** (`/bookings`) gains a small `paymentStatus` chip on each card so guests can see at a glance which bookings still need paying without opening the detail page.
 
 ---
 

@@ -41,6 +41,17 @@ export function useOwnerBookings(filters: BookingFilters = {}) {
   });
 }
 
+// Single booking -- used by both BookingDetail (guest) and OwnerBookingDetail.
+// The backend authorises "guest OR room owner" and returns 404 for anyone else,
+// so this hook is safe to use from both routes without extra guards.
+export function useBooking(id: string) {
+  return useQuery({
+    queryKey: bookingKeys.detail(id),
+    queryFn: () => bookingApi.getById(id),
+    enabled: !!id,
+  });
+}
+
 // --- Mutations ---------------------------------------------------------
 
 export function useCreateBooking() {

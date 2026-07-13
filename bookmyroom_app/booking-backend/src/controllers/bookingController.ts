@@ -124,6 +124,41 @@ async function notifyOwnerOfNewBooking(
   await sendMail({ to: owner.email, subject, html });
 }
 
+// GET /api/bookings/:id -- fetch one booking (guest OR room owner)
+// Anyone else gets a 404 so we don't leak existence.
+export const getBookingById = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const booking = await Booking.findById(req.params.id)
+      .populate("room", "title location price images owner")
+      .populate("user", "name email");
+
+    if (!booking) {
+      res.status(404).json({ message: "Booking not found" });
+      return;
+    }
+
+    const room = booking.room as unknown as IRoom;
+    const guest = booking.user as unknown as { _id: mongoose.Types.ObjectId };
+    const currentUserId = req.user!.userId;
+    const isOwner = room.owner.toString() === currentUserId;
+    const isGuest = guest._id.toString() === currentUserId;
+
+    if (!isOwner && !isGuest) {
+      // Same 404 for "not yours" as "not found" -- never confirm existence.
+      res.status(404).json({ message: "Booking not found" });
+      return;
+    }
+
+    res.json({ data: booking });
+  } catch (error: unknown) {
+    console.error("getBookingById error:", error);
+    res.status(500).json({ message: "Failed to fetch booking" });
+  }
+};
+
 // GET /api/bookings/my -- paginated list of the current user's bookings
 export const getMyBookings = async (
   req: Request,

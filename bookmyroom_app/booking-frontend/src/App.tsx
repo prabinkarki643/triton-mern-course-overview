@@ -10,12 +10,14 @@ import { ProfilePage } from "@/pages/ProfilePage"
 import RoomListing from "@/pages/RoomListing"
 import RoomDetail from "@/pages/RoomDetail"
 import MyBookings from "@/pages/MyBookings"
+import BookingDetail from "@/pages/BookingDetail"
 import { ProtectedRoute } from "@/components/ProtectedRoute"
 import OwnerLayout from "@/components/owner/OwnerLayout"
 import MyRooms from "@/pages/owner/MyRooms"
 import AddRoom from "@/pages/owner/AddRoom"
 import EditRoom from "@/pages/owner/EditRoom"
 import OwnerBookings from "@/pages/owner/OwnerBookings"
+import OwnerBookingDetail from "@/pages/owner/OwnerBookingDetail"
 import AuthLayout from "./layouts/AuthLayout"
 import NotFoundPage from "./pages/NotFoundPage"
 
@@ -31,6 +33,14 @@ export function App() {
           element={
             <ProtectedRoute>
               <MyBookings />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/bookings/:id"
+          element={
+            <ProtectedRoute>
+              <BookingDetail />
             </ProtectedRoute>
           }
         />
@@ -53,6 +63,7 @@ export function App() {
         <Route path="rooms/new" element={<AddRoom />} />
         <Route path="rooms/:id/edit" element={<EditRoom />} />
         <Route path="bookings" element={<OwnerBookings />} />
+        <Route path="bookings/:id" element={<OwnerBookingDetail />} />
         <Route path="profile" element={<ProfilePage />} />
       </Route>
 

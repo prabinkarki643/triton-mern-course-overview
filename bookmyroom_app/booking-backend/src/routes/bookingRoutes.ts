@@ -5,14 +5,16 @@ import { requireAuth } from "../middleware/auth";
 import { validateResult } from "../middleware/validate";
 import {
   createBooking,
+  getBookingById,
   getMyBookings,
   getOwnerBookings,
   updateBookingStatus,
 } from "../controllers/bookingController";
 import {
+  bookingIdValidator,
   createBookingValidator,
-  updateBookingStatusValidator,
   listBookingsValidator,
+  updateBookingStatusValidator,
 } from "../validators/booking.validator";
 
 const router: Router = Router();
@@ -44,6 +46,15 @@ router.patch(
   updateBookingStatusValidator,
   validateResult,
   updateBookingStatus
+);
+
+// /:id must be AFTER /my and /owner so those literals aren't parsed as ids.
+router.get(
+  "/:id",
+  requireAuth,
+  bookingIdValidator,
+  validateResult,
+  getBookingById
 );
 
 export default router;

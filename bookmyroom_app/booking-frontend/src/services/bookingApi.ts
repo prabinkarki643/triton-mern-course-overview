@@ -16,6 +16,11 @@ export const bookingApi = {
     return data.data;
   },
 
+  async getById(id: string): Promise<Booking> {
+    const { data } = await api.get<{ data: Booking }>(`/bookings/${id}`);
+    return data.data;
+  },
+
   async getMy(filters: BookingFilters = {}): Promise<BookingsResponse> {
     const { data } = await api.get<BookingsResponse>("/bookings/my", {
       params: filters,
