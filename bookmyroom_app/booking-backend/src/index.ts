@@ -12,6 +12,7 @@ import connectDB from "./config/database";
 import { paths } from "./config/paths";
 import authRoutes from "./routes/authRoutes";
 import roomRoutes from "./routes/roomRoutes";
+import bookingRoutes from "./routes/bookingRoutes";
 
 // Load environment variables BEFORE anything else
 dotenv.config();
@@ -34,6 +35,7 @@ app.use("/uploads", express.static(paths.uploads));
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/rooms", roomRoutes);
+app.use("/api/bookings", bookingRoutes);
 
 // Health check route
 app.get("/api/health", (_req: Request, res: Response) => {

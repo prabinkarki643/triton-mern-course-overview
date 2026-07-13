@@ -9,6 +9,7 @@ import { OwnerDashboardPage } from "@/pages/OwnerDashboardPage"
 import { ProfilePage } from "@/pages/ProfilePage"
 import RoomListing from "@/pages/RoomListing"
 import RoomDetail from "@/pages/RoomDetail"
+import MyBookings from "@/pages/MyBookings"
 import { ProtectedRoute } from "@/components/ProtectedRoute"
 import OwnerLayout from "@/components/owner/OwnerLayout"
 import MyRooms from "@/pages/owner/MyRooms"
@@ -25,6 +26,14 @@ export function App() {
         <Route path="/" element={<HomePage />} />
         <Route path="/rooms" element={<RoomListing />} />
         <Route path="/rooms/:id" element={<RoomDetail />} />
+        <Route
+          path="/bookings"
+          element={
+            <ProtectedRoute>
+              <MyBookings />
+            </ProtectedRoute>
+          }
+        />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
 
