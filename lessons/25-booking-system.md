@@ -7,7 +7,7 @@
 - Returning a consistent **`{ data }` / `{ data, meta }` envelope** -- never `{ success: true, ... }`
 - Detecting overlapping date ranges with a single MongoDB query
 - Calculating total price on the server using check-in / check-out dates
-- **Emailing the room owner** through the mail service from Lesson 21.1 as soon as a new booking arrives, so they can review it in their portal
+- **Emailing the room owner** through the mail service from Lesson 21.1 as soon as a new booking arrives, and **emailing the guest** whenever the owner confirms or cancels their request, so both sides always know where they stand
 - **Paginating** "My Bookings" and "Booking Requests" with `Promise.all([find, countDocuments])`
 - Using Mongoose **`populate`** to inline room and user data on the response
 - Building a typed **`bookingApi`** service layer + **React Query hooks** with a query keys factory
@@ -41,6 +41,11 @@ Guest                              Express API                       MongoDB
 Owner                                   |                                |
   |-- PATCH /api/bookings/:id/status -> |-- Verify owner --------------> |
   |   { status: "confirmed" }           |-- Update status -------------> |
+  |                                     |                                |
+  |                                     |-- sendMail(guest) -------> SMTP (Mailtrap)
+  |                                     |   (only when the OWNER is the  |
+  |                                     |    actor; guest self-cancels   |
+  |                                     |    don't need a self-email)    |
   |                                     |                                |
   |<-- { data: booking } ---------------|                                |
 ```
@@ -253,7 +258,11 @@ import mongoose from "mongoose";
 import Booking, { IBooking } from "../models/Booking";
 import Room, { IRoom } from "../models/Room";
 import User, { IUser } from "../models/User";
-import { sendMail, bookingCreatedOwnerEmail } from "../services/mailService";
+import {
+  sendMail,
+  bookingCreatedOwnerEmail,
+  bookingStatusUpdatedGuestEmail,
+} from "../services/mailService";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
@@ -542,8 +551,17 @@ export const updateBookingStatus = async (
     await booking.save();
 
     const updated = await Booking.findById(booking._id)
-      .populate("room", "title location price images")
+      .populate("room", "title location price images owner")
       .populate("user", "name email");
+
+    // Notify the guest when the OWNER (not the guest themselves) changes
+    // the status. A guest cancelling their own pending booking already
+    // knows about it -- self-emails are noise.
+    if (isOwner && !isGuest) {
+      void notifyGuestOfStatusChange(updated, status).catch((err) => {
+        console.error("Guest email notification failed:", err);
+      });
+    }
 
     res.json({ data: updated });
   } catch (error: unknown) {
@@ -551,6 +569,33 @@ export const updateBookingStatus = async (
     res.status(500).json({ message: "Failed to update booking status" });
   }
 };
+
+// Emails the guest when the owner confirms or cancels their booking.
+// Same fire-and-forget shape as notifyOwnerOfNewBooking above.
+async function notifyGuestOfStatusChange(
+  updated: IBooking | null,
+  status: "confirmed" | "cancelled"
+): Promise<void> {
+  if (!updated) return;
+
+  const guest = updated.user as unknown as {
+    name: string;
+    email: string;
+  };
+  const room = updated.room as unknown as IRoom;
+  const owner: IUser | null = await User.findById(room.owner);
+
+  const { subject, html } = bookingStatusUpdatedGuestEmail({
+    guestName: guest.name,
+    ownerName: owner?.name ?? "the host",
+    roomTitle: room.title,
+    checkIn: updated.checkIn,
+    checkOut: updated.checkOut,
+    status,
+    bookingId: String(updated._id),
+  });
+  await sendMail({ to: guest.email, subject, html });
+}
 ```
 
 **Things worth pointing out to students:**
@@ -566,9 +611,9 @@ export const updateBookingStatus = async (
 
 ---
 
-### 25.4.1 Extending `mailService` with a Booking Template
+### 25.4.1 Extending `mailService` with Booking Templates
 
-We already have a mail service from **Lesson 21.1** with a `sendMail` helper and an `otpEmail` template. We add one more named template alongside it -- same shape, same XSS-safe `escape()` helper -- so the booking controller stays out of MIME-body business:
+We already have a mail service from **Lesson 21.1** with a `sendMail` helper and an `otpEmail` template. We add two more named templates alongside it -- same shape, same XSS-safe `escape()` helper -- so the booking controller stays out of MIME-body business:
 
 ```ts
 // backend/src/services/mailService.ts   (append below otpEmail)
@@ -633,9 +678,72 @@ export function bookingCreatedOwnerEmail(
 }
 ```
 
-Add the export in the same barrel of exports the OTP flow already uses. That is the entire integration -- the controller imports `sendMail` and `bookingCreatedOwnerEmail`, populates the room + guest, then fires the email inside a fire-and-forget wrapper.
+The second template goes to the guest when the owner confirms or cancels their booking:
 
-**Why fire-and-forget?** Bookings must not fail because SMTP is slow or offline. If Mailtrap returns an error, we log it and move on. In production this would be a queued job (BullMQ, SQS...) so a burst of bookings doesn't back up the API; for our teaching stack, `void ...catch()` is honest and simple.
+```ts
+// backend/src/services/mailService.ts   (append below bookingCreatedOwnerEmail)
+
+interface BookingStatusUpdatedGuestParams {
+  guestName: string;
+  ownerName: string;
+  roomTitle: string;
+  checkIn: Date;
+  checkOut: Date;
+  status: "confirmed" | "cancelled";
+  bookingId: string;
+}
+
+export function bookingStatusUpdatedGuestEmail(
+  params: BookingStatusUpdatedGuestParams
+): { subject: string; html: string } {
+  const isConfirmed = params.status === "confirmed";
+  const subject = isConfirmed
+    ? `Your booking for ${params.roomTitle} is confirmed`
+    : `Your booking for ${params.roomTitle} was cancelled`;
+  const heading = isConfirmed
+    ? "Your booking is confirmed"
+    : "Your booking was cancelled";
+  const lede = isConfirmed
+    ? `Great news -- ${escape(params.ownerName)} has confirmed your booking. See you soon!`
+    : `${escape(params.ownerName)} has cancelled your booking. If this was unexpected, please reach out to them directly.`;
+  const fmt = (d: Date): string =>
+    new Date(d).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+
+  const html = `
+    <div style="font-family: system-ui, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; color: #111;">
+      <h2 style="margin-top:0">${heading}</h2>
+      <p>Hi ${escape(params.guestName)},</p>
+      <p>${lede}</p>
+      <table style="width:100%; border-collapse: collapse; margin: 16px 0;">
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Room</td>
+          <td style="padding: 6px 0;">${escape(params.roomTitle)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Check-in</td>
+          <td style="padding: 6px 0;">${fmt(params.checkIn)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Check-out</td>
+          <td style="padding: 6px 0;">${fmt(params.checkOut)}</td>
+        </tr>
+      </table>
+      <p style="color:#666; font-size: 13px;">Booking id: <code>${params.bookingId}</code></p>
+    </div>
+  `;
+  return { subject, html };
+}
+```
+
+Add both exports in the same barrel of exports the OTP flow already uses. That is the entire integration -- the controller imports `sendMail` + the two templates, populates the room + guest, then fires each email inside a fire-and-forget wrapper.
+
+**Why fire-and-forget?** Bookings and status transitions must not fail because SMTP is slow or offline. If Mailtrap returns an error, we log it and move on. In production these would be queued jobs (BullMQ, SQS...) so a burst of bookings doesn't back up the API; for our teaching stack, `void ...catch()` is honest and simple.
+
+**Why only email the guest when the owner is the actor?** In `updateBookingStatus` we guard with `if (isOwner && !isGuest)`. A guest cancelling their own pending booking already knows about it -- a self-notification email would just be noise. When the owner confirms, we always email the guest. When the owner cancels, same thing.
 
 ---
 
@@ -780,7 +888,7 @@ app.use("/api/bookings", bookingRoutes);
 | POST | `/api/bookings` | `{ room, checkIn, checkOut, guests, paymentMethod: "cod" }` | `{ data }` | Create a booking request (emails the owner) |
 | GET | `/api/bookings/my` | `?status=&page=&limit=` | `{ data, meta }` | Current user's bookings (paginated) |
 | GET | `/api/bookings/owner` | `?status=&page=&limit=` | `{ data, meta }` | Bookings for the owner's rooms (paginated) |
-| PATCH | `/api/bookings/:id/status` | `{ status }` | `{ data }` | Confirm or cancel a booking |
+| PATCH | `/api/bookings/:id/status` | `{ status }` | `{ data }` | Confirm or cancel a booking (emails the guest when the owner is the actor) |
 
 ---
 
@@ -1958,7 +2066,7 @@ Backend (booking-backend/src/):
 ├── routes/
 │   └── bookingRoutes.ts         # requireAuth -> validator -> validateResult -> controller
 ├── services/
-│   └── mailService.ts           # + bookingCreatedOwnerEmail (extends the L21.1 mailer)
+│   └── mailService.ts           # + bookingCreatedOwnerEmail + bookingStatusUpdatedGuestEmail (extend L21.1's mailer)
 └── index.ts                     # register /api/bookings + global error handler
 
 Frontend (booking-frontend/src/):
@@ -1994,12 +2102,15 @@ Frontend (booking-frontend/src/):
 2. Build the validator file with `createBookingValidator`, `updateBookingStatusValidator`, `listBookingsValidator`
 3. Implement `createBooking`, `getMyBookings`, `getOwnerBookings`, `updateBookingStatus` -- each wrapped in its own `try/catch`, all returning `{ data }` or `{ data, meta }`
 4. Wire each route as `requireAuth -> validator -> validateResult -> controller`
-5. Extend `services/mailService.ts` with `bookingCreatedOwnerEmail` and call it from inside `createBooking` behind a `void ...catch()` wrapper
+5. Extend `services/mailService.ts` with **two** templates -- `bookingCreatedOwnerEmail` and `bookingStatusUpdatedGuestEmail` -- and call each from its controller inside a `void ...catch()` fire-and-forget wrapper
 6. Test that:
    - Missing fields return a 400 with a structured `details` array (not a generic message)
    - Conflicting dates return a 409 whose `message` field carries the friendly string
    - `GET /api/bookings/my?status=pending&page=2&limit=5` paginates correctly
    - Creating a booking as a guest lands one message in the Mailtrap inbox addressed to the room's owner
+   - Owner confirming a booking lands one Mailtrap message addressed to the guest with the "confirmed" subject
+   - Owner cancelling a booking lands one Mailtrap message addressed to the guest with the "cancelled" subject
+   - A guest cancelling their **own** pending booking lands **no** email in Mailtrap (self-emails would be noise)
    - Stopping Mailtrap (block the port) and creating a booking still returns `201` -- the failure only appears in the server log
 
 ### Exercise 2: React Query Hooks + Toasts
@@ -2046,7 +2157,7 @@ Frontend (booking-frontend/src/):
 4. **`Promise.all([find, countDocuments])`** runs the page query and the total count in parallel for fewer round trips
 5. **Date conflict detection** uses one elegant query: `checkIn < newCheckOut AND checkOut > newCheckIn`, excluding `cancelled`
 6. **`populate`** inlines room and user data so the frontend can render rich rows without extra requests
-7. **Owner email notification** is fired inside `createBooking` via `void notifyOwnerOfNewBooking(...).catch(logger)` -- fire-and-forget so an SMTP outage never fails a booking. The template lives in `services/mailService.ts` next to the OTP template from Lesson 21.1.
+7. **Email notifications on both sides** live in `services/mailService.ts` next to the OTP template from Lesson 21.1. `createBooking` fires `bookingCreatedOwnerEmail` to the room owner, and `updateBookingStatus` fires `bookingStatusUpdatedGuestEmail` to the guest -- but **only when the owner is the actor** (a guest cancelling their own pending booking doesn't need a self-email). Both calls run inside `void ...catch(logger)` fire-and-forget wrappers so an SMTP outage never fails a booking.
 8. **`{ message }` shape for errors**, matching the auth and rooms controllers -- the frontend's Axios interceptor unwraps `error.response.data.message` into `error.message` so Sonner toasts read the friendly server text
 9. **`paymentMethod`** ships in Lesson 25 with the single-option enum `["cod"]`. Lesson 26 widens it to `["cod", "esewa"]` and adds `paymentStatus` + `transactionId` -- widening an enum is a safe migration
 10. **`bookingApi` + a query keys factory** keep React Query caches predictable and invalidations type-safe
