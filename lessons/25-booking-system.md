@@ -1,12 +1,13 @@
 # Lesson 25: Booking System
 
 ## What You Will Learn
-- Designing a booking model with date ranges, status flow and a chosen payment method
+- Designing a booking model with date ranges, a status flow, and a `paymentMethod` field seeded with a single option -- `"cod"` (Cash on Arrival). Lesson 26 will extend the enum to add `"esewa"` and introduce `paymentStatus` + `transactionId`.
 - Validating booking input with **`express-validator`** (route layer) and Mongoose schema rules
 - Writing controllers with explicit **`try/catch`** blocks (same pattern as Lesson 16) so the error path is obvious
 - Returning a consistent **`{ data }` / `{ data, meta }` envelope** -- never `{ success: true, ... }`
 - Detecting overlapping date ranges with a single MongoDB query
 - Calculating total price on the server using check-in / check-out dates
+- **Emailing the room owner** through the mail service from Lesson 21.1 as soon as a new booking arrives, so they can review it in their portal
 - **Paginating** "My Bookings" and "Booking Requests" with `Promise.all([find, countDocuments])`
 - Using Mongoose **`populate`** to inline room and user data on the response
 - Building a typed **`bookingApi`** service layer + **React Query hooks** with a query keys factory
@@ -19,17 +20,21 @@
 
 ## 25.1 The Big Picture
 
-The booking system connects guests to rooms. A guest picks dates, a guest count and a payment method, then sends a booking request. The room owner reviews it and either confirms or cancels. Here is the complete flow:
+The booking system connects guests to rooms. A guest picks dates, a guest count and a payment method, then sends a booking request. The API also emails the room owner so they know to head over to their Owner Portal and confirm (or cancel). Only one payment method is available in Lesson 25 -- **Cash on Arrival (`"cod"`)** -- so the client always sends `paymentMethod: "cod"`. Lesson 26 adds `"esewa"` alongside it (plus `paymentStatus` and `transactionId`), and the online gateway flow.
 
 ```
 Guest                              Express API                       MongoDB
   |                                     |                                |
   |-- POST /api/bookings -------------> |                                |
   |   { room, checkIn, checkOut,        |-- express-validator ---------> |
-  |     guests, paymentMethod }         |   try/catch                    |
+  |     guests, paymentMethod: "cod" }  |   try/catch                    |
   |                                     |   Check date conflicts -->     |
   |                                     |   Calculate total price        |
   |                                     |   Save booking (pending) ----> |
+  |                                     |                                |
+  |                                     |-- sendMail(owner) -------> SMTP (Mailtrap)
+  |                                     |   (best-effort; failure logs   |
+  |                                     |    but doesn't fail the booking)|
   |                                     |                                |
   |<-- { data: booking } ---------------|                                |
   |                                     |                                |
@@ -65,7 +70,10 @@ We continue with the same patterns we used in the Todo API (Lesson 16) and the a
 import mongoose, { Schema, Document } from "mongoose";
 
 export type BookingStatus = "pending" | "confirmed" | "cancelled";
-export type PaymentMethod = "esewa" | "cod";
+
+// Only one method is supported in Lesson 25. Lesson 26 will extend this
+// union to `"cod" | "esewa"` and add the gateway flow.
+export type PaymentMethod = "cod";
 
 export interface IBooking extends Document {
   room: mongoose.Types.ObjectId;
@@ -117,8 +125,11 @@ const bookingSchema = new Schema<IBooking>(
     },
     paymentMethod: {
       type: String,
-      enum: ["esewa", "cod"],
+      // Lesson 26 will grow this enum to ["cod", "esewa"] and add
+      // paymentStatus + transactionId sibling fields.
+      enum: ["cod"],
       required: [true, "Payment method is required"],
+      default: "cod",
     },
   },
   {
@@ -130,7 +141,7 @@ const Booking = mongoose.model<IBooking>("Booking", bookingSchema);
 export default Booking;
 ```
 
-We will start the payment integration properly in **Lesson 26**. For now, the booking simply records which method the guest selected (`esewa` for the gateway flow or `cod` for cash on arrival).
+We ship `paymentMethod` from the very first commit so the client / server contract is stable and Lesson 26 becomes a **one-line enum extension** plus the eSewa service, not a database migration. `default: "cod"` means the field is safe even if a client forgets to send it -- but the validator (next section) still asks for it explicitly.
 
 ---
 
@@ -179,12 +190,14 @@ export const createBookingValidator = [
     .withMessage("Guests must be at least 1")
     .toInt(),
 
+  // Cash on Arrival is the only option in Lesson 25. Lesson 26 will
+  // extend the enum here to ["cod", "esewa"] alongside the model.
   body("paymentMethod")
     .exists({ checkFalsy: true })
     .withMessage("Payment method is required")
     .bail()
-    .isIn(["esewa", "cod"])
-    .withMessage("Payment method must be esewa or cod"),
+    .isIn(["cod"])
+    .withMessage("Payment method must be cod"),
 ];
 
 // PATCH /api/bookings/:id/status
@@ -223,7 +236,7 @@ export const listBookingsValidator = [
 export const bookingIdValidator = [bookingIdParam];
 ```
 
-`.toDate()` and `.toInt()` *sanitise* the value -- the controller receives a real `Date` and a real `number`, not strings. By the time the controller runs we already know that `room` is a valid Mongo ID, `checkIn`/`checkOut` parse to dates, `guests >= 1` and `paymentMethod` is one of the allowed enum values.
+`.toDate()` and `.toInt()` *sanitise* the value -- the controller receives a real `Date` and a real `number`, not strings. By the time the controller runs we already know that `room` is a valid Mongo ID, `checkIn`/`checkOut` parse to dates, `guests >= 1` and `paymentMethod === "cod"`.
 
 The `validateResult` middleware from Lesson 16 turns any failures into a 400 with a structured `details` array -- no extra work needed.
 
@@ -235,17 +248,18 @@ Controllers stay tight and focused: the validators have already done the input c
 
 ```ts
 // backend/src/controllers/bookingController.ts
-import { Response } from "express";
+import { Request, Response } from "express";
 import mongoose from "mongoose";
 import Booking, { IBooking } from "../models/Booking";
 import Room, { IRoom } from "../models/Room";
-import { AuthRequest } from "../middleware/auth";
+import User, { IUser } from "../models/User";
+import { sendMail, bookingCreatedOwnerEmail } from "../services/mailService";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
 // POST /api/bookings  -- guest creates a booking request
 export const createBooking = async (
-  req: AuthRequest,
+  req: Request,
   res: Response
 ): Promise<void> => {
   try {
@@ -259,24 +273,24 @@ export const createBooking = async (
     const now = new Date();
 
     if (checkInDate <= now) {
-      res.status(400).json({ error: "Check-in date must be in the future" });
+      res.status(400).json({ message: "Check-in date must be in the future" });
       return;
     }
 
     if (checkOutDate <= checkInDate) {
-      res.status(400).json({ error: "Check-out must be after check-in" });
+      res.status(400).json({ message: "Check-out must be after check-in" });
       return;
     }
 
     const room: IRoom | null = await Room.findById(roomId);
     if (!room) {
-      res.status(404).json({ error: "Room not found" });
+      res.status(404).json({ message: "Room not found" });
       return;
     }
 
     if (guests > room.capacity) {
       res.status(400).json({
-        error: `This room has a maximum capacity of ${room.capacity} guests`,
+        message: `This room has a maximum capacity of ${room.capacity} guests`,
       });
       return;
     }
@@ -291,7 +305,7 @@ export const createBooking = async (
 
     if (conflictingBooking) {
       res.status(409).json({
-        error: "This room is already booked for the selected dates",
+        message: "This room is already booked for the selected dates",
       });
       return;
     }
@@ -303,29 +317,69 @@ export const createBooking = async (
 
     const booking: IBooking = await Booking.create({
       room: roomId,
-      user: req.user!._id,
+      user: req.user!.userId,
       checkIn: checkInDate,
       checkOut: checkOutDate,
       guests,
       totalPrice,
       status: "pending",
-      paymentMethod,
+      paymentMethod, // "cod" only in L25; L26 adds "esewa"
     });
 
     const populated = await Booking.findById(booking._id)
-      .populate("room", "title location price images")
+      .populate("room", "title location price images owner")
       .populate("user", "name email");
+
+    // Notify the owner. We use the mail service we built in Lesson 21.1.
+    // Wrapped in its own try/catch so an SMTP hiccup does NOT fail the
+    // booking -- from the guest's point of view the reservation is
+    // recorded successfully; the notification is best-effort.
+    void notifyOwnerOfNewBooking(populated).catch((err) => {
+      console.error("Booking email notification failed:", err);
+    });
 
     res.status(201).json({ data: populated });
   } catch (error: unknown) {
     console.error("createBooking error:", error);
-    res.status(500).json({ error: "Failed to create booking" });
+    res.status(500).json({ message: "Failed to create booking" });
   }
 };
 
+// Sends the "new booking request" email to the room owner. Splits out of
+// createBooking so the happy path stays skimmable and the mail lookup
+// (which does a second DB read for the owner) doesn't slow the API response.
+async function notifyOwnerOfNewBooking(
+  populated: IBooking | null
+): Promise<void> {
+  if (!populated) return;
+
+  // `populate("room", "... owner")` gave us the owner ObjectId, but not
+  // the owner's email/name -- so we do a small lookup here.
+  const room = populated.room as unknown as IRoom;
+  const owner: IUser | null = await User.findById(room.owner);
+  if (!owner) return;
+
+  const guest = populated.user as unknown as {
+    name: string;
+    email: string;
+  };
+  const { subject, html } = bookingCreatedOwnerEmail({
+    ownerName: owner.name,
+    guestName: guest.name,
+    guestEmail: guest.email,
+    roomTitle: room.title,
+    checkIn: populated.checkIn,
+    checkOut: populated.checkOut,
+    guests: populated.guests,
+    totalPrice: populated.totalPrice,
+    bookingId: String(populated._id),
+  });
+  await sendMail({ to: owner.email, subject, html });
+}
+
 // GET /api/bookings/my  -- paginated list of the current user's bookings
 export const getMyBookings = async (
-  req: AuthRequest,
+  req: Request,
   res: Response
 ): Promise<void> => {
   try {
@@ -335,7 +389,7 @@ export const getMyBookings = async (
       limit?: number;
     };
 
-    const filter: Record<string, unknown> = { user: req.user!._id };
+    const filter: Record<string, unknown> = { user: req.user!.userId };
     if (status) filter.status = status;
 
     const pageNum: number = page ? Number(page) : 1;
@@ -366,13 +420,13 @@ export const getMyBookings = async (
     });
   } catch (error: unknown) {
     console.error("getMyBookings error:", error);
-    res.status(500).json({ error: "Failed to fetch bookings" });
+    res.status(500).json({ message: "Failed to fetch bookings" });
   }
 };
 
 // GET /api/bookings/owner  -- paginated list of incoming bookings for the owner's rooms
 export const getOwnerBookings = async (
-  req: AuthRequest,
+  req: Request,
   res: Response
 ): Promise<void> => {
   try {
@@ -383,7 +437,9 @@ export const getOwnerBookings = async (
     };
 
     // 1) Find every room owned by the current user
-    const ownerRooms: IRoom[] = await Room.find({ owner: req.user!._id }).select("_id");
+    const ownerRooms: IRoom[] = await Room.find({
+      owner: req.user!.userId,
+    }).select("_id");
     const roomIds: mongoose.Types.ObjectId[] = ownerRooms.map(
       (r) => r._id as mongoose.Types.ObjectId
     );
@@ -421,13 +477,13 @@ export const getOwnerBookings = async (
     });
   } catch (error: unknown) {
     console.error("getOwnerBookings error:", error);
-    res.status(500).json({ error: "Failed to fetch booking requests" });
+    res.status(500).json({ message: "Failed to fetch booking requests" });
   }
 };
 
 // PATCH /api/bookings/:id/status  -- owner confirms/cancels, guest cancels own pending
 export const updateBookingStatus = async (
-  req: AuthRequest,
+  req: Request,
   res: Response
 ): Promise<void> => {
   try {
@@ -435,38 +491,50 @@ export const updateBookingStatus = async (
 
     const booking = await Booking.findById(req.params.id).populate("room");
     if (!booking) {
-      res.status(404).json({ error: "Booking not found" });
+      res.status(404).json({ message: "Booking not found" });
       return;
     }
 
     const room = booking.room as unknown as IRoom;
-    const isOwner = room.owner.toString() === req.user!._id.toString();
-    const isGuest = booking.user.toString() === req.user!._id.toString();
+    const currentUserId = req.user!.userId;
+    const isOwner = room.owner.toString() === currentUserId;
+    const isGuest = booking.user.toString() === currentUserId;
 
     // Permissions: owner can confirm or cancel. The guest may only cancel their
     // own booking while it is still pending.
     if (status === "confirmed" && !isOwner) {
-      res.status(403).json({ error: "Only the room owner can confirm a booking" });
+      res
+        .status(403)
+        .json({ message: "Only the room owner can confirm a booking" });
       return;
     }
 
     if (status === "cancelled" && !isOwner && !isGuest) {
-      res.status(403).json({ error: "You do not have permission to cancel this booking" });
+      res.status(403).json({
+        message: "You do not have permission to cancel this booking",
+      });
       return;
     }
 
-    if (status === "cancelled" && isGuest && !isOwner && booking.status !== "pending") {
-      res.status(400).json({ error: "Guests can only cancel a booking while it is still pending" });
+    if (
+      status === "cancelled" &&
+      isGuest &&
+      !isOwner &&
+      booking.status !== "pending"
+    ) {
+      res.status(400).json({
+        message: "Guests can only cancel a booking while it is still pending",
+      });
       return;
     }
 
     // Status transition rules
     if (booking.status === "cancelled") {
-      res.status(400).json({ error: "Cannot update a cancelled booking" });
+      res.status(400).json({ message: "Cannot update a cancelled booking" });
       return;
     }
     if (booking.status === "confirmed" && status === "confirmed") {
-      res.status(400).json({ error: "Booking is already confirmed" });
+      res.status(400).json({ message: "Booking is already confirmed" });
       return;
     }
 
@@ -480,7 +548,7 @@ export const updateBookingStatus = async (
     res.json({ data: updated });
   } catch (error: unknown) {
     console.error("updateBookingStatus error:", error);
-    res.status(500).json({ error: "Failed to update booking status" });
+    res.status(500).json({ message: "Failed to update booking status" });
   }
 };
 ```
@@ -488,11 +556,86 @@ export const updateBookingStatus = async (
 **Things worth pointing out to students:**
 
 - Every handler uses an explicit **`try/catch`** -- the same pattern as the Todo controller in Lesson 16. You can see exactly where errors are caught and what response goes back.
-- Each `catch` logs the error and returns a clear 500 message (`"Failed to create booking"`, `"Failed to fetch bookings"`, etc.). The **global error handler** in `index.ts` (see Lesson 16.8) is the safety net for anything that still slips through.
+- Each `catch` logs the error and returns a **`{ message }`** response (matching the auth and rooms controllers). The frontend's Axios interceptor (`src/services/api.ts`) unwraps `error.response.data.message`, so a Sonner toast shows "This room is already booked for the selected dates" instead of "Request failed with status code 409".
 - Early exits inside the `try` use `res.status(...).json(...); return;` so the rest of the block does not run.
 - Every success response uses `{ data }` (single resource) or `{ data, meta }` (paginated list). No `{ success: true }` flag is ever returned -- the HTTP status code already signals success or failure.
 - Validation has already run. We never write `if (!checkIn)` checks in the controller.
-- We populate room and user so the frontend can render rich rows without a second request.
+- We populate room and user so the frontend can render rich rows without a second request. Notice we ask for `owner` on the room's populate so the notification email helper can find the owner without an extra query.
+- `req.user!.userId` is the id embedded in the JWT (see Lesson 20's `requireAuth` middleware). `req.user!._id` would be `undefined` -- watch for this if you paste code from other frameworks.
+- The email is fired via `void notifyOwnerOfNewBooking(...).catch(...)` -- a **fire-and-forget** pattern with its own try/catch so a Mailtrap outage cannot fail the booking. The guest still gets a `201` even if the email never arrives; the failure is logged for the developer.
+
+---
+
+### 25.4.1 Extending `mailService` with a Booking Template
+
+We already have a mail service from **Lesson 21.1** with a `sendMail` helper and an `otpEmail` template. We add one more named template alongside it -- same shape, same XSS-safe `escape()` helper -- so the booking controller stays out of MIME-body business:
+
+```ts
+// backend/src/services/mailService.ts   (append below otpEmail)
+
+interface BookingCreatedOwnerParams {
+  ownerName: string;
+  guestName: string;
+  guestEmail: string;
+  roomTitle: string;
+  checkIn: Date;
+  checkOut: Date;
+  guests: number;
+  totalPrice: number;
+  bookingId: string;
+}
+
+export function bookingCreatedOwnerEmail(
+  params: BookingCreatedOwnerParams
+): { subject: string; html: string } {
+  const subject = `New booking request for ${params.roomTitle}`;
+  const fmt = (d: Date): string =>
+    new Date(d).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  const html = `
+    <div style="font-family: system-ui, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; color: #111;">
+      <h2 style="margin-top:0">You've got a new booking request</h2>
+      <p>Hi ${escape(params.ownerName)},</p>
+      <p>
+        <strong>${escape(params.guestName)}</strong>
+        (${escape(params.guestEmail)}) has requested to book
+        <strong>${escape(params.roomTitle)}</strong>.
+      </p>
+      <table style="width:100%; border-collapse: collapse; margin: 16px 0;">
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Check-in</td>
+          <td style="padding: 6px 0;">${fmt(params.checkIn)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Check-out</td>
+          <td style="padding: 6px 0;">${fmt(params.checkOut)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Guests</td>
+          <td style="padding: 6px 0;">${params.guests}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Total (Rs)</td>
+          <td style="padding: 6px 0;"><strong>Rs ${params.totalPrice}</strong></td>
+        </tr>
+      </table>
+      <p>
+        Please head to your Owner Portal to review and either confirm or reject
+        the request. Booking id: <code>${params.bookingId}</code>.
+      </p>
+      <p style="color:#666; font-size: 13px;">Payment is Cash on Arrival for now -- Lesson 26 will add eSewa.</p>
+    </div>
+  `;
+  return { subject, html };
+}
+```
+
+Add the export in the same barrel of exports the OTP flow already uses. That is the entire integration -- the controller imports `sendMail` and `bookingCreatedOwnerEmail`, populates the room + guest, then fires the email inside a fire-and-forget wrapper.
+
+**Why fire-and-forget?** Bookings must not fail because SMTP is slow or offline. If Mailtrap returns an error, we log it and move on. In production this would be a queued job (BullMQ, SQS...) so a burst of bookings doesn't back up the API; for our teaching stack, `void ...catch()` is honest and simple.
 
 ---
 
@@ -571,8 +714,8 @@ Mirroring the route style from Lessons 16 and 20 -- each route runs the **valida
 ```ts
 // backend/src/routes/bookingRoutes.ts
 import { Router } from "express";
-import { protect } from "../middleware/auth";
-import { validateResult } from "../middleware/validate-result.middleware";
+import { requireAuth } from "../middleware/auth";
+import { validateResult } from "../middleware/validate";
 import {
   createBooking,
   getMyBookings,
@@ -587,12 +730,30 @@ import {
 
 const router: Router = Router();
 
-router.post("/", protect, createBookingValidator, validateResult, createBooking);
-router.get("/my", protect, listBookingsValidator, validateResult, getMyBookings);
-router.get("/owner", protect, listBookingsValidator, validateResult, getOwnerBookings);
+router.post(
+  "/",
+  requireAuth,
+  createBookingValidator,
+  validateResult,
+  createBooking
+);
+router.get(
+  "/my",
+  requireAuth,
+  listBookingsValidator,
+  validateResult,
+  getMyBookings
+);
+router.get(
+  "/owner",
+  requireAuth,
+  listBookingsValidator,
+  validateResult,
+  getOwnerBookings
+);
 router.patch(
   "/:id/status",
-  protect,
+  requireAuth,
   updateBookingStatusValidator,
   validateResult,
   updateBookingStatus
@@ -600,6 +761,8 @@ router.patch(
 
 export default router;
 ```
+
+> The auth middleware is **`requireAuth`** (see Lesson 20). If you paste examples from other projects that use `protect`, you'll get a compile error -- rename it here.
 
 Register the routes in the main app:
 
@@ -614,7 +777,7 @@ app.use("/api/bookings", bookingRoutes);
 
 | Method | URL | Body / Query | Response | Description |
 |--------|-----|--------------|----------|-------------|
-| POST | `/api/bookings` | `{ room, checkIn, checkOut, guests, paymentMethod }` | `{ data }` | Create a booking request |
+| POST | `/api/bookings` | `{ room, checkIn, checkOut, guests, paymentMethod: "cod" }` | `{ data }` | Create a booking request (emails the owner) |
 | GET | `/api/bookings/my` | `?status=&page=&limit=` | `{ data, meta }` | Current user's bookings (paginated) |
 | GET | `/api/bookings/owner` | `?status=&page=&limit=` | `{ data, meta }` | Bookings for the owner's rooms (paginated) |
 | PATCH | `/api/bookings/:id/status` | `{ status }` | `{ data }` | Confirm or cancel a booking |
@@ -631,7 +794,8 @@ import type { Room } from "./room";
 import type { PaginationMeta } from "./room";
 
 export type BookingStatus = "pending" | "confirmed" | "cancelled";
-export type PaymentMethod = "esewa" | "cod";
+// Only "cod" for Lesson 25. Lesson 26 will widen this to `"cod" | "esewa"`.
+export type PaymentMethod = "cod";
 
 export interface Booking {
   _id: string;
@@ -888,7 +1052,8 @@ export const bookingSchema = z
       .int()
       .min(1, "At least 1 guest")
       .max(20, "Up to 20 guests"),
-    paymentMethod: z.enum(["esewa", "cod"], {
+    // Only "cod" in Lesson 25; Lesson 26 will widen this enum.
+    paymentMethod: z.enum(["cod"], {
       errorMap: () => ({ message: "Please select a payment method" }),
     }),
   })
@@ -961,7 +1126,7 @@ function BookingForm({ room }: BookingFormProps): JSX.Element {
       checkIn: "",
       checkOut: "",
       guests: 1,
-      paymentMethod: "esewa",
+      paymentMethod: "cod",
     },
   });
 
@@ -992,7 +1157,7 @@ function BookingForm({ room }: BookingFormProps): JSX.Element {
     <Card className="sticky top-4">
       <CardHeader>
         <CardTitle className="flex items-baseline gap-1">
-          <span className="text-2xl">&pound;{room.price}</span>
+          <span className="text-2xl">Rs{room.price}</span>
           <span className="text-sm font-normal text-muted-foreground">
             /night
           </span>
@@ -1085,7 +1250,9 @@ function BookingForm({ room }: BookingFormProps): JSX.Element {
                       <SelectValue placeholder="Choose a payment method" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="esewa">eSewa</SelectItem>
+                      {/* Only Cash on Arrival for now. Lesson 26 adds
+                          <SelectItem value="esewa">eSewa</SelectItem>
+                          right here as its main frontend change. */}
                       <SelectItem value="cod">Cash on arrival</SelectItem>
                     </SelectContent>
                   </Select>
@@ -1104,15 +1271,15 @@ function BookingForm({ room }: BookingFormProps): JSX.Element {
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span>
-                    &pound;{room.price} &times; {nights} night
+                    Rs{room.price} &times; {nights} night
                     {nights !== 1 ? "s" : ""}
                   </span>
-                  <span>&pound;{totalPrice}</span>
+                  <span>Rs{totalPrice}</span>
                 </div>
                 <Separator />
                 <div className="flex justify-between font-semibold text-base">
                   <span>Total</span>
-                  <span>&pound;{totalPrice}</span>
+                  <span>Rs{totalPrice}</span>
                 </div>
               </div>
             </>
@@ -1248,7 +1415,7 @@ export function useMyBookingColumns(): ColumnDef<Booking>[] {
       accessorKey: "totalPrice",
       header: "Total",
       cell: ({ row }) => (
-        <span className="font-semibold">&pound;{row.original.totalPrice}</span>
+        <span className="font-semibold">Rs{row.original.totalPrice}</span>
       ),
     },
     {
@@ -1264,8 +1431,8 @@ export function useMyBookingColumns(): ColumnDef<Booking>[] {
       accessorKey: "paymentMethod",
       header: "Payment",
       cell: ({ row }) => (
-        <span className="text-sm capitalize">
-          {row.original.paymentMethod === "cod" ? "Cash on arrival" : "eSewa"}
+        <span className="text-sm">
+          {row.original.paymentMethod === "cod" ? "Cash on arrival" : "-"}
         </span>
       ),
     },
@@ -1649,7 +1816,7 @@ export function useOwnerBookingColumns(): ColumnDef<Booking>[] {
       accessorKey: "totalPrice",
       header: "Total",
       cell: ({ row }) => (
-        <span className="font-semibold">&pound;{row.original.totalPrice}</span>
+        <span className="font-semibold">Rs{row.original.totalPrice}</span>
       ),
     },
     {
@@ -1782,14 +1949,16 @@ Backend (booking-backend/src/):
 ├── controllers/
 │   └── bookingController.ts     # try/catch handlers, returns { data } / { data, meta }
 ├── middleware/
-│   ├── auth.ts                  # from Lesson 20
-│   └── validate-result.middleware.ts   # from Lesson 16
+│   ├── auth.ts                  # requireAuth (from Lesson 20)
+│   └── validate.ts              # validateResult (from Lesson 16)
 ├── validators/
 │   └── booking.validator.ts     # express-validator chains
 ├── models/
-│   └── Booking.ts               # Schema + paymentMethod enum
+│   └── Booking.ts               # Schema + paymentMethod enum (cod-only; L26 widens)
 ├── routes/
-│   └── bookingRoutes.ts         # validator -> validateResult -> controller
+│   └── bookingRoutes.ts         # requireAuth -> validator -> validateResult -> controller
+├── services/
+│   └── mailService.ts           # + bookingCreatedOwnerEmail (extends the L21.1 mailer)
 └── index.ts                     # register /api/bookings + global error handler
 
 Frontend (booking-frontend/src/):
@@ -1821,14 +1990,17 @@ Frontend (booking-frontend/src/):
 ## Practice Exercises
 
 ### Exercise 1: Backend with express-validator and try/catch controllers
-1. Create the Booking model including the `paymentMethod` enum
+1. Create the Booking model including the `paymentMethod` enum (`["cod"]` only for now)
 2. Build the validator file with `createBookingValidator`, `updateBookingStatusValidator`, `listBookingsValidator`
 3. Implement `createBooking`, `getMyBookings`, `getOwnerBookings`, `updateBookingStatus` -- each wrapped in its own `try/catch`, all returning `{ data }` or `{ data, meta }`
-4. Wire each route as `validator -> validateResult -> controller`
-5. Test that:
+4. Wire each route as `requireAuth -> validator -> validateResult -> controller`
+5. Extend `services/mailService.ts` with `bookingCreatedOwnerEmail` and call it from inside `createBooking` behind a `void ...catch()` wrapper
+6. Test that:
    - Missing fields return a 400 with a structured `details` array (not a generic message)
-   - Conflicting dates return a 409
+   - Conflicting dates return a 409 whose `message` field carries the friendly string
    - `GET /api/bookings/my?status=pending&page=2&limit=5` paginates correctly
+   - Creating a booking as a guest lands one message in the Mailtrap inbox addressed to the room's owner
+   - Stopping Mailtrap (block the port) and creating a booking still returns `201` -- the failure only appears in the server log
 
 ### Exercise 2: React Query Hooks + Toasts
 1. Build `bookingApi.ts` so it unwraps the response envelopes
@@ -1863,6 +2035,7 @@ Frontend (booking-frontend/src/):
 2. Guest count above the room's capacity -- backend returns 400
 3. Cancel a confirmed booking, then book the same dates again -- second booking succeeds
 4. Try `POST /api/bookings` without a `paymentMethod` -- validator returns 400 with `"Payment method is required"`
+5. Try `POST /api/bookings` with `paymentMethod: "esewa"` -- validator returns 400 (`"Payment method must be cod"`). Lesson 26 will change this.
 
 ---
 
@@ -1873,12 +2046,15 @@ Frontend (booking-frontend/src/):
 4. **`Promise.all([find, countDocuments])`** runs the page query and the total count in parallel for fewer round trips
 5. **Date conflict detection** uses one elegant query: `checkIn < newCheckOut AND checkOut > newCheckIn`, excluding `cancelled`
 6. **`populate`** inlines room and user data so the frontend can render rich rows without extra requests
-7. **`bookingApi` + a query keys factory** keep React Query caches predictable and invalidations type-safe
-8. **One hook per action** (`useCreateBooking`, `useUpdateBookingStatus`, ...) keeps re-renders local and toasts consistent
-9. The booking form uses the **shadcn `Field` family** (`Field` / `FieldLabel` / `FieldDescription` / `FieldError` / `FieldGroup`) driven by React Hook Form `Controller` -- the same accessible pattern as auth and room forms
-10. **`form.watch()` + `useMemo`** drive the real-time price preview without extra state
-11. **Zod `refine`** handles cross-field rules (check-out must be after check-in) that single-field rules cannot
-12. The **generic `<DataTable>`** from Lesson 17.1 is reused for both "My Bookings" and "Booking Requests" -- swap columns and a hook, keep everything else
-13. **`useBookingFilters`** stores status/page/limit in the URL so views are bookmarkable, shareable, and refresh-proof
-14. **`AlertDialog` confirmations** prevent accidental confirm/cancel actions on the owner side
-15. **Sonner toasts in every mutation** mean the user always knows whether their action succeeded or failed
+7. **Owner email notification** is fired inside `createBooking` via `void notifyOwnerOfNewBooking(...).catch(logger)` -- fire-and-forget so an SMTP outage never fails a booking. The template lives in `services/mailService.ts` next to the OTP template from Lesson 21.1.
+8. **`{ message }` shape for errors**, matching the auth and rooms controllers -- the frontend's Axios interceptor unwraps `error.response.data.message` into `error.message` so Sonner toasts read the friendly server text
+9. **`paymentMethod`** ships in Lesson 25 with the single-option enum `["cod"]`. Lesson 26 widens it to `["cod", "esewa"]` and adds `paymentStatus` + `transactionId` -- widening an enum is a safe migration
+10. **`bookingApi` + a query keys factory** keep React Query caches predictable and invalidations type-safe
+11. **One hook per action** (`useCreateBooking`, `useUpdateBookingStatus`, ...) keeps re-renders local and toasts consistent
+12. The booking form uses the **shadcn `Field` family** (`Field` / `FieldLabel` / `FieldDescription` / `FieldError` / `FieldGroup`) driven by React Hook Form `Controller` -- the same accessible pattern as auth and room forms
+13. **`form.watch()` + `useMemo`** drive the real-time price preview without extra state
+14. **Zod `refine`** handles cross-field rules (check-out must be after check-in) that single-field rules cannot
+15. The **generic `<DataTable>`** from Lesson 17.1 is reused for both "My Bookings" and "Booking Requests" -- swap columns and a hook, keep everything else
+16. **`useBookingFilters`** stores status/page/limit in the URL so views are bookmarkable, shareable, and refresh-proof
+17. **`AlertDialog` confirmations** prevent accidental confirm/cancel actions on the owner side
+18. **Sonner toasts in every mutation** mean the user always knows whether their action succeeded or failed

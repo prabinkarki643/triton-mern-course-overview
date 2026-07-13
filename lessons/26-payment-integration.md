@@ -26,58 +26,50 @@ We will implement both in our project. COD is simpler, so we start there.
 
 ## 26.2 Database Changes: Payment Fields
 
-Before writing any payment logic, we need to store payment information on our bookings. Add these fields to your Booking model (or order model, depending on your project):
+Lesson 25 already gave the Booking a `paymentMethod` field with a single-option enum (`["cod"]`). Two changes to that schema are all we need before any payment code:
+
+1. **Widen the enum** on `paymentMethod` from `["cod"]` to `["cod", "esewa"]`.
+2. **Add two sibling fields** -- `paymentStatus` and `transactionId` -- so the eSewa flow has somewhere to record its result.
 
 ```typescript
-// backend/src/models/Booking.ts
-import { Schema, model, Document } from 'mongoose';
+// backend/src/models/Booking.ts  (diff)
+export type PaymentMethod = "cod" | "esewa";                 // was: "cod"
+export type PaymentStatus = "pending" | "paid" | "failed";   // NEW
 
 export interface IBooking extends Document {
-  user: Schema.Types.ObjectId;
-  room: Schema.Types.ObjectId;
-  checkIn: Date;
-  checkOut: Date;
-  totalPrice: number;
-  status: 'pending' | 'confirmed' | 'cancelled';
-  paymentMethod: 'esewa' | 'cod';
-  paymentStatus: 'pending' | 'paid' | 'failed';
-  transactionId?: string;
+  // ...existing fields (room, user, checkIn, checkOut, guests,
+  // totalPrice, status)...
+  paymentMethod: PaymentMethod;
+  paymentStatus: PaymentStatus;   // NEW
+  transactionId?: string;         // NEW
 }
 
-const bookingSchema = new Schema<IBooking>(
-  {
-    user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    room: { type: Schema.Types.ObjectId, ref: 'Room', required: true },
-    checkIn: { type: Date, required: true },
-    checkOut: { type: Date, required: true },
-    totalPrice: { type: Number, required: true },
-    status: {
-      type: String,
-      enum: ['pending', 'confirmed', 'cancelled'],
-      default: 'pending',
-    },
-    paymentMethod: {
-      type: String,
-      enum: ['esewa', 'cod'],
-      required: true,
-    },
-    paymentStatus: {
-      type: String,
-      enum: ['pending', 'paid', 'failed'],
-      default: 'pending',
-    },
-    transactionId: { type: String },
-  },
-  { timestamps: true }
-);
-
-export const Booking = model<IBooking>('Booking', bookingSchema);
+// inside the schema definition, adjust paymentMethod and append the
+// two new fields:
+paymentMethod: {
+  type: String,
+  enum: ["cod", "esewa"],         // was: ["cod"]
+  required: [true, "Payment method is required"],
+  default: "cod",
+},
+paymentStatus: {                  // NEW
+  type: String,
+  enum: ["pending", "paid", "failed"],
+  default: "pending",
+},
+transactionId: {                  // NEW
+  type: String,
+  default: undefined,
+},
 ```
 
-The key fields are:
-- **`paymentMethod`** -- which method the user chose (`esewa` or `cod`)
-- **`paymentStatus`** -- whether the payment has been completed (`pending`, `paid`, or `failed`)
-- **`transactionId`** -- stores the eSewa transaction identifier (only for eSewa payments)
+The three additions in one place:
+
+- **`paymentMethod`** -- widened enum so the client can pick either method
+- **`paymentStatus`** -- pending / paid / failed. COD bookings become `paid` when the owner marks cash received; eSewa bookings become `paid` after we verify the transaction with the gateway
+- **`transactionId`** -- eSewa returns a reference id after a successful payment; we store it here for reconciliation
+
+> **Widening an enum is a safe migration.** Existing bookings with `paymentMethod: "cod"` still validate, and Mongoose does not need to backfill anything. Just re-deploy the model file.
 
 ---
 
