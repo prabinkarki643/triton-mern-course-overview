@@ -186,3 +186,81 @@ export function bookingStatusUpdatedGuestEmail(
   `;
   return { subject, html };
 }
+
+// --- Lesson 26: payment-received receipts -------------------------------
+
+interface BookingPaymentReceivedGuestParams {
+  guestName: string;
+  roomTitle: string;
+  checkIn: Date;
+  checkOut: Date;
+  totalPrice: number;
+  paymentMethod: "cod" | "esewa";
+  transactionId?: string;
+  bookingId: string;
+}
+
+export function bookingPaymentReceivedGuestEmail(
+  params: BookingPaymentReceivedGuestParams
+): { subject: string; html: string } {
+  const subject = `Payment received for ${params.roomTitle}`;
+  const paymentLine =
+    params.paymentMethod === "esewa"
+      ? `Transaction id: <code>${escape(params.transactionId ?? "-")}</code>`
+      : "Cash received on arrival.";
+  const html = `
+    <div style="font-family: system-ui, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; color: #111;">
+      <h2 style="margin-top:0">Payment received</h2>
+      <p>Hi ${escape(params.guestName)},</p>
+      <p>
+        We've received your payment of
+        <strong>Rs ${params.totalPrice}</strong> for
+        <strong>${escape(params.roomTitle)}</strong>.
+      </p>
+      <p>${paymentLine}</p>
+      <table style="width:100%; border-collapse: collapse; margin: 16px 0;">
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Check-in</td>
+          <td style="padding: 6px 0;">${fmtDate(params.checkIn)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Check-out</td>
+          <td style="padding: 6px 0;">${fmtDate(params.checkOut)}</td>
+        </tr>
+      </table>
+      <p style="color:#666; font-size: 13px;">Booking id: <code>${params.bookingId}</code></p>
+    </div>
+  `;
+  return { subject, html };
+}
+
+interface BookingPaymentReceivedOwnerParams {
+  ownerName: string;
+  guestName: string;
+  roomTitle: string;
+  totalPrice: number;
+  transactionId: string;
+  bookingId: string;
+}
+
+// Only fired on eSewa. COD payments are marked received BY the owner --
+// they don't need an email about an action they just performed.
+export function bookingPaymentReceivedOwnerEmail(
+  params: BookingPaymentReceivedOwnerParams
+): { subject: string; html: string } {
+  const subject = `Payment received: ${params.roomTitle} (Rs ${params.totalPrice})`;
+  const html = `
+    <div style="font-family: system-ui, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; color: #111;">
+      <h2 style="margin-top:0">A guest just paid for their booking</h2>
+      <p>Hi ${escape(params.ownerName)},</p>
+      <p>
+        <strong>${escape(params.guestName)}</strong> has paid
+        <strong>Rs ${params.totalPrice}</strong> via eSewa for
+        <strong>${escape(params.roomTitle)}</strong>.
+      </p>
+      <p>Transaction id: <code>${escape(params.transactionId)}</code></p>
+      <p style="color:#666; font-size: 13px;">Booking id: <code>${params.bookingId}</code></p>
+    </div>
+  `;
+  return { subject, html };
+}

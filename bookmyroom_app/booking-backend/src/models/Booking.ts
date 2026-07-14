@@ -5,7 +5,8 @@
 import mongoose, { Schema, Document } from "mongoose";
 
 export type BookingStatus = "pending" | "confirmed" | "cancelled";
-export type PaymentMethod = "cod";
+export type PaymentMethod = "cod" | "esewa";
+export type PaymentStatus = "pending" | "paid" | "failed";
 
 export interface IBooking extends Document {
   room: mongoose.Types.ObjectId;
@@ -16,6 +17,9 @@ export interface IBooking extends Document {
   totalPrice: number;
   status: BookingStatus;
   paymentMethod: PaymentMethod;
+  paymentStatus: PaymentStatus;
+  transactionId?: string;
+  cancellationReason?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -57,9 +61,23 @@ const bookingSchema = new Schema<IBooking>(
     },
     paymentMethod: {
       type: String,
-      enum: ["cod"],
+      enum: ["cod", "esewa"],
       required: [true, "Payment method is required"],
       default: "cod",
+    },
+    paymentStatus: {
+      type: String,
+      enum: ["pending", "paid", "failed"],
+      default: "pending",
+    },
+    transactionId: {
+      type: String,
+      default: undefined,
+    },
+    cancellationReason: {
+      type: String,
+      default: undefined,
+      maxlength: [500, "Reason cannot exceed 500 characters"],
     },
   },
   {

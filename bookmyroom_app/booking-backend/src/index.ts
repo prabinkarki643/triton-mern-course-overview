@@ -13,6 +13,8 @@ import { paths } from "./config/paths";
 import authRoutes from "./routes/authRoutes";
 import roomRoutes from "./routes/roomRoutes";
 import bookingRoutes from "./routes/bookingRoutes";
+import paymentRoutes from "./routes/paymentRoutes";
+import { startCronJobs } from "./services/cronService";
 
 // Load environment variables BEFORE anything else
 dotenv.config();
@@ -36,6 +38,7 @@ app.use("/uploads", express.static(paths.uploads));
 app.use("/api/auth", authRoutes);
 app.use("/api/rooms", roomRoutes);
 app.use("/api/bookings", bookingRoutes);
+app.use("/api/payments", paymentRoutes);
 
 // Health check route
 app.get("/api/health", (_req: Request, res: Response) => {
@@ -88,9 +91,10 @@ app.use(
   }
 );
 
-// Connect to database, then start server
+// Connect to database, then start server + scheduled jobs
 connectDB().then(() => {
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    startCronJobs();
   });
 });

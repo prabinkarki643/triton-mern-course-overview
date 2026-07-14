@@ -8,6 +8,7 @@ import {
   getBookingById,
   getMyBookings,
   getOwnerBookings,
+  markBookingPaid,
   updateBookingStatus,
 } from "../controllers/bookingController";
 import {
@@ -46,6 +47,13 @@ router.patch(
   updateBookingStatusValidator,
   validateResult,
   updateBookingStatus
+);
+router.patch(
+  "/:id/mark-paid",
+  requireAuth,
+  bookingIdValidator,
+  validateResult,
+  markBookingPaid
 );
 
 // /:id must be AFTER /my and /owner so those literals aren't parsed as ids.

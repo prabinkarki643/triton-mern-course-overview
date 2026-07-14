@@ -12,6 +12,7 @@ import {
   sendMail,
   bookingCreatedOwnerEmail,
   bookingStatusUpdatedGuestEmail,
+  bookingPaymentReceivedGuestEmail,
 } from "../services/mailService";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
@@ -336,6 +337,78 @@ export const updateBookingStatus = async (
     res.status(500).json({ message: "Failed to update booking status" });
   }
 };
+
+// PATCH /api/bookings/:id/mark-paid -- owner marks COD cash received
+// (Lesson 26 §26.3). eSewa payments become "paid" via the callback in
+// paymentController, not through here.
+export const markBookingPaid = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  try {
+    const booking = await Booking.findById(req.params.id).populate("room");
+    if (!booking) {
+      res.status(404).json({ message: "Booking not found" });
+      return;
+    }
+
+    const room = booking.room as unknown as IRoom;
+    if (room.owner.toString() !== req.user!.userId) {
+      res
+        .status(403)
+        .json({ message: "Only the room owner can mark this as paid" });
+      return;
+    }
+
+    if (booking.paymentMethod !== "cod") {
+      res.status(400).json({
+        message: "Only COD bookings can be manually marked as paid",
+      });
+      return;
+    }
+    if (booking.paymentStatus === "paid") {
+      res.status(400).json({ message: "Booking is already marked as paid" });
+      return;
+    }
+
+    booking.paymentStatus = "paid";
+    await booking.save();
+
+    const populated = await Booking.findById(booking._id)
+      .populate("room", "title location price images owner")
+      .populate("user", "name email");
+
+    // Email the guest a receipt. NOT the owner -- they just triggered
+    // this themselves. Fire-and-forget so a mail outage never blocks
+    // the money-received update.
+    if (populated) {
+      void notifyGuestOfPayment(populated).catch((err) => {
+        console.error("Payment receipt email (guest) failed:", err);
+      });
+    }
+
+    res.json({ data: populated });
+  } catch (error: unknown) {
+    console.error("markBookingPaid error:", error);
+    res.status(500).json({ message: "Failed to mark booking as paid" });
+  }
+};
+
+async function notifyGuestOfPayment(populated: IBooking): Promise<void> {
+  const room = populated.room as unknown as IRoom;
+  const guest = populated.user as unknown as { name: string; email: string };
+  const { subject, html } = bookingPaymentReceivedGuestEmail({
+    guestName: guest.name,
+    roomTitle: room.title,
+    checkIn: populated.checkIn,
+    checkOut: populated.checkOut,
+    totalPrice: populated.totalPrice,
+    paymentMethod: populated.paymentMethod,
+    transactionId: populated.transactionId,
+    bookingId: String(populated._id),
+  });
+  await sendMail({ to: guest.email, subject, html });
+}
 
 async function notifyGuestOfStatusChange(
   updated: IBooking | null,

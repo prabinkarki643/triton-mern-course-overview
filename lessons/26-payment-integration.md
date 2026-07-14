@@ -279,6 +279,12 @@ export function generateSignature(message: string): string {
 /**
  * Build the complete form payload that will be submitted to eSewa.
  *
+ * CRITICAL: every field listed in `signed_field_names` must be stringified
+ * IDENTICALLY in the signed `message` and in the returned form field. eSewa
+ * recomputes the HMAC over the RECEIVED field values, so any mismatch --
+ * e.g. signing "60" but sending "60.00" -- returns `ES104 Invalid payload
+ * signature`. Below we use `String(amount)` on both sides so they agree.
+ *
  * @param amount       - Total amount to charge (in NPR)
  * @param transactionId - A unique identifier for this transaction
  * @param successUrl   - Where eSewa redirects after successful payment
@@ -291,12 +297,13 @@ export function buildPayload(
   failureUrl: string
 ) {
   const signedFieldNames = 'total_amount,transaction_uuid,product_code';
-  const message = `total_amount=${amount},transaction_uuid=${transactionId},product_code=${ESEWA_CONFIG.merchantId}`;
+  const totalAmount = amount;
+  const message = `total_amount=${totalAmount},transaction_uuid=${transactionId},product_code=${ESEWA_CONFIG.merchantId}`;
 
   return {
-    amount: amount.toFixed(2),
+    amount: String(amount),
     tax_amount: '0',
-    total_amount: amount.toFixed(2),
+    total_amount: String(totalAmount),
     transaction_uuid: transactionId,
     product_code: ESEWA_CONFIG.merchantId,
     product_service_charge: '0',
@@ -337,6 +344,18 @@ Let us break down each function:
 - **`generateSignature`** -- takes a message string and creates an HMAC-SHA256 hash using your secret key. This proves the payload came from you.
 - **`buildPayload`** -- assembles all the form fields eSewa expects, including the cryptographic signature.
 - **`verifyPayment`** -- calls eSewa's API to check whether a transaction was genuinely completed. This is critical for security.
+
+> **Common pitfall -- ES104 "Invalid payload signature"**
+>
+> If you sign one form of the amount but send another (for example, sign `total_amount=60` but send `total_amount="60.00"` from `.toFixed(2)`), eSewa's page will drop you at `rc-epay.esewa.com.np/api/epay/main/v2/form` with:
+>
+> ```json
+> {"code":"ES104","message":"Invalid payload signature."}
+> ```
+>
+> eSewa recomputes the HMAC over the field values it *received*, not over the ones you *think* you signed. Every field listed in `signed_field_names` must be stringified identically in both places. The `String(amount)` pattern above keeps them in lock-step.
+>
+> Full transaction flow (worth skimming before you debug): https://developer.esewa.com.np/pages/Epay#transactionflow
 
 ---
 
@@ -1082,7 +1101,9 @@ The failure path is symmetrical: `/callback/failure` sets `paymentStatus: "faile
 
 ## 26.12 eSewa Sandbox Testing
 
-eSewa provides a sandbox environment for testing. Here are the details:
+For anything not covered below (extra fields, currencies, error codes, production onboarding), the authoritative reference is the ePay developer portal: https://developer.esewa.com.np/pages/Epay#transactionflow.
+
+eSewa provides a sandbox environment for testing. Here are the details (the up-to-date list of test accounts lives at https://developer.esewa.com.np/pages/Test-credentials -- check there if the ones below stop working):
 
 | Item | Value |
 |------|-------|

@@ -2,7 +2,9 @@
 // Guest-side detail page mounted at /bookings/:id inside MainLayout.
 // Actions here: Cancel (while pending), View room. Placeholder marks the
 // spot where Lesson 26 will add "Pay Now" / receipt blocks.
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useEffect } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,12 +27,32 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { BookingSummary } from "@/components/booking/BookingSummary";
 import { useBooking, useUpdateBookingStatus } from "@/hooks/useBookings";
+import { useInitiateEsewaPayment } from "@/hooks/usePayments";
 
 function BookingDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data: booking, isLoading, error } = useBooking(id ?? "");
   const { mutate: updateStatus, isPending } = useUpdateBookingStatus();
+  const { mutate: initiateEsewa, isPending: isInitiating } =
+    useInitiateEsewaPayment();
+
+  // Read ?payment= once on mount, toast, then strip so a refresh
+  // doesn't re-fire the toast forever.
+  useEffect(() => {
+    const outcome = searchParams.get("payment");
+    if (outcome === "success") {
+      toast.success("Payment received. You're all set.");
+    } else if (outcome === "failed") {
+      toast.error("Payment didn't go through. Try again below.");
+    }
+    if (outcome) {
+      searchParams.delete("payment");
+      setSearchParams(searchParams, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (isLoading) {
     return <BookingDetailSkeleton />;
@@ -117,10 +139,54 @@ function BookingDetail() {
                 <Link to={`/rooms/${booking.room._id}`}>View room</Link>
               </Button>
 
-              {/* Lesson 26 will add payment blocks here:
-                  - Pay Now (when paymentMethod === "esewa" && paymentStatus === "pending")
-                  - Receipt (when paymentStatus === "paid")
-                  - Retry (when paymentStatus === "failed") */}
+              {/* Payment block (Lesson 26 §26.10) */}
+              {booking.paymentMethod === "esewa" && (
+                <>
+                  {booking.paymentStatus === "pending" && (
+                    <Button
+                      className="w-full"
+                      disabled={isInitiating}
+                      onClick={() => initiateEsewa(booking._id)}
+                    >
+                      {isInitiating ? "Redirecting..." : "Pay with eSewa"}
+                    </Button>
+                  )}
+
+                  {booking.paymentStatus === "failed" && (
+                    <Button
+                      className="w-full"
+                      variant="destructive"
+                      disabled={isInitiating}
+                      onClick={() => initiateEsewa(booking._id)}
+                    >
+                      {isInitiating ? "Redirecting..." : "Retry payment"}
+                    </Button>
+                  )}
+
+                  {booking.paymentStatus === "paid" && (
+                    <div className="rounded-md border p-3 text-sm">
+                      <div className="font-medium">Paid via eSewa</div>
+                      {booking.transactionId && (
+                        <div className="text-muted-foreground text-xs">
+                          Ref:{" "}
+                          <code className="font-mono">
+                            {booking.transactionId}
+                          </code>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {booking.paymentMethod === "cod" && (
+                <div className="text-muted-foreground text-sm">
+                  Payment on arrival.{" "}
+                  {booking.paymentStatus === "paid"
+                    ? "Marked received."
+                    : "Owner will mark it received after check-in."}
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
