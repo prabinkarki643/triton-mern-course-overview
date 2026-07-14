@@ -44,6 +44,16 @@ export function App() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute>
+              <div className="mx-auto max-w-3xl px-4 py-8">
+                <ProfilePage />
+              </div>
+            </ProtectedRoute>
+          }
+        />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
 
