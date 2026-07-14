@@ -45,4 +45,11 @@ export const bookingApi = {
     );
     return data.data;
   },
+
+  async markAsPaid(id: string): Promise<Booking> {
+    const { data } = await api.patch<{ data: Booking }>(
+      `/bookings/${id}/mark-paid`
+    );
+    return data.data;
+  },
 };

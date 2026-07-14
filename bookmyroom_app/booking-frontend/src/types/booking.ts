@@ -3,8 +3,8 @@
 import type { PaginationMeta, Room } from "./room";
 
 export type BookingStatus = "pending" | "confirmed" | "cancelled";
-// Only "cod" for Lesson 25. Lesson 26 will widen this to `"cod" | "esewa"`.
-export type PaymentMethod = "cod";
+export type PaymentMethod = "cod" | "esewa";
+export type PaymentStatus = "pending" | "paid" | "failed";
 
 export interface Booking {
   _id: string;
@@ -20,6 +20,9 @@ export interface Booking {
   totalPrice: number;
   status: BookingStatus;
   paymentMethod: PaymentMethod;
+  paymentStatus: PaymentStatus;
+  transactionId?: string;
+  cancellationReason?: string;
   createdAt: string;
   updatedAt: string;
 }

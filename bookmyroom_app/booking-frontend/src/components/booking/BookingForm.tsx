@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { useCreateBooking } from "@/hooks/useBookings";
+import { useInitiateEsewaPayment } from "@/hooks/usePayments";
 import { bookingSchema, type BookingFormData } from "@/schemas/bookingSchema";
 import type { Room } from "@/types/room";
 
@@ -49,6 +50,7 @@ interface BookingFormProps {
 function BookingForm({ room }: BookingFormProps) {
   const navigate = useNavigate();
   const { mutate: createBooking, isPending } = useCreateBooking();
+  const { mutate: initiateEsewa } = useInitiateEsewaPayment();
 
   const form = useForm<BookingFormData>({
     resolver: zodResolver(bookingSchema),
@@ -81,7 +83,15 @@ function BookingForm({ room }: BookingFormProps) {
         paymentMethod: data.paymentMethod,
       },
       {
-        onSuccess: () => navigate("/bookings"),
+        onSuccess: (booking) => {
+          if (data.paymentMethod === "esewa") {
+            // Kick straight into the eSewa redirect. No navigate --
+            // the browser is about to leave the SPA for eSewa's page.
+            initiateEsewa(booking._id);
+          } else {
+            navigate("/bookings");
+          }
+        },
       }
     );
   };
@@ -186,10 +196,8 @@ function BookingForm({ room }: BookingFormProps) {
                       <SelectValue placeholder="Choose a payment method" />
                     </SelectTrigger>
                     <SelectContent>
-                      {/* Only Cash on Arrival for now. Lesson 26 adds
-                          <SelectItem value="esewa">eSewa</SelectItem>
-                          right here as its main frontend change. */}
                       <SelectItem value="cod">Cash on arrival</SelectItem>
+                      <SelectItem value="esewa">eSewa</SelectItem>
                     </SelectContent>
                   </Select>
                   {fieldState.invalid && (

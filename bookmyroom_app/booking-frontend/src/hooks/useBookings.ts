@@ -69,6 +69,21 @@ export function useCreateBooking() {
   });
 }
 
+export function useMarkBookingPaid() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => bookingApi.markAsPaid(id),
+    onSuccess: () => {
+      toast.success("Payment marked as received");
+      queryClient.invalidateQueries({ queryKey: bookingKeys.all });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to mark payment as received");
+    },
+  });
+}
+
 export function useUpdateBookingStatus() {
   const queryClient = useQueryClient();
 

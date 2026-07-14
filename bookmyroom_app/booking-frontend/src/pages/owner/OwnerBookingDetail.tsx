@@ -25,13 +25,18 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BookingSummary } from "@/components/booking/BookingSummary";
-import { useBooking, useUpdateBookingStatus } from "@/hooks/useBookings";
+import {
+  useBooking,
+  useMarkBookingPaid,
+  useUpdateBookingStatus,
+} from "@/hooks/useBookings";
 
 function OwnerBookingDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: booking, isLoading, error } = useBooking(id ?? "");
   const { mutate: updateStatus, isPending } = useUpdateBookingStatus();
+  const { mutate: markPaid, isPending: isMarkingPaid } = useMarkBookingPaid();
 
   if (isLoading) {
     return <OwnerBookingDetailSkeleton />;
@@ -177,8 +182,41 @@ function OwnerBookingDetail() {
                 <Link to={`/rooms/${booking.room._id}`}>View room</Link>
               </Button>
 
-              {/* Lesson 26 will add "Mark cash received" here for COD
-                  bookings whose paymentStatus is still "pending". */}
+              {/* Lesson 26 §26.3 -- Mark cash received.
+                  Only for COD bookings whose paymentStatus is still pending. */}
+              {booking.paymentMethod === "cod" &&
+                booking.paymentStatus === "pending" && (
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    disabled={isMarkingPaid}
+                    onClick={() => markPaid(booking._id)}
+                  >
+                    {isMarkingPaid ? "Saving..." : "Mark cash received"}
+                  </Button>
+                )}
+
+              {booking.paymentMethod === "cod" &&
+                booking.paymentStatus === "paid" && (
+                  <div className="rounded-md border p-3 text-sm">
+                    Cash received.
+                  </div>
+                )}
+
+              {booking.paymentMethod === "esewa" &&
+                booking.paymentStatus === "paid" && (
+                  <div className="rounded-md border p-3 text-sm">
+                    <div className="font-medium">Paid via eSewa</div>
+                    {booking.transactionId && (
+                      <div className="text-muted-foreground text-xs">
+                        Ref:{" "}
+                        <code className="font-mono">
+                          {booking.transactionId}
+                        </code>
+                      </div>
+                    )}
+                  </div>
+                )}
             </CardContent>
           </Card>
         </div>

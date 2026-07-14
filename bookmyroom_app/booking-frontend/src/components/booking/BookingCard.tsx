@@ -91,7 +91,7 @@ function BookingCard({ booking }: BookingCardProps) {
             </span>
           </span>
           <span className="text-muted-foreground text-xs">
-            {booking.paymentMethod === "cod" ? "Cash on arrival" : "-"}
+            {booking.paymentMethod === "cod" ? "Cash on arrival" : "eSewa"}
           </span>
         </CardFooter>
       </Card>

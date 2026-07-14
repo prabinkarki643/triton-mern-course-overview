@@ -12,8 +12,7 @@ export const bookingSchema = z
       .int()
       .min(1, "At least 1 guest")
       .max(20, "Up to 20 guests"),
-    // Only "cod" in Lesson 25; Lesson 26 will widen the enum.
-    paymentMethod: z.enum(["cod"], {
+    paymentMethod: z.enum(["cod", "esewa"], {
       errorMap: () => ({ message: "Please select a payment method" }),
     }),
   })

@@ -40,14 +40,12 @@ export const createBookingValidator = [
     .withMessage("Guests must be at least 1")
     .toInt(),
 
-  // Cash on Arrival is the only option in Lesson 25. Lesson 26 will
-  // widen this to ["cod", "esewa"].
   body("paymentMethod")
     .exists({ checkFalsy: true })
     .withMessage("Payment method is required")
     .bail()
-    .isIn(["cod"])
-    .withMessage("Payment method must be cod"),
+    .isIn(["cod", "esewa"])
+    .withMessage("Payment method must be cod or esewa"),
 ];
 
 // PATCH /api/bookings/:id/status

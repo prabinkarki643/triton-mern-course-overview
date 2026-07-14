@@ -41,6 +41,16 @@ export function BookingSummary({ booking }: BookingSummaryProps) {
 
   return (
     <div className="space-y-6">
+      {/* Cancellation reason (only when set) -- Lesson 26 cron auto-sets
+          this for abandoned eSewa bookings; manual cancels leave it
+          undefined. */}
+      {booking.status === "cancelled" && booking.cancellationReason && (
+        <div className="border-destructive/40 bg-destructive/5 text-destructive rounded-md border p-3 text-sm">
+          <span className="font-medium">Cancelled: </span>
+          {booking.cancellationReason}
+        </div>
+      )}
+
       {/* Room hero */}
       <div className="overflow-hidden rounded-lg border">
         {room.images?.[0] ? (
@@ -93,7 +103,7 @@ export function BookingSummary({ booking }: BookingSummaryProps) {
           icon={<Wallet className="h-4 w-4" />}
           label="Payment method"
         >
-          {booking.paymentMethod === "cod" ? "Cash on arrival" : "-"}
+          {booking.paymentMethod === "cod" ? "Cash on arrival" : "eSewa"}
         </SummaryField>
       </div>
 
