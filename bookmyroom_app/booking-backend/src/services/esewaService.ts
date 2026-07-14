@@ -29,6 +29,10 @@ export function esewaFormActionUrl(): string {
 }
 
 // Assemble the full form payload the frontend will POST to eSewa's page.
+// CRITICAL: every value that ends up in the `signed_field_names` list must
+// be stringified identically in the signed message and in the form field.
+// eSewa recomputes the HMAC over the RECEIVED field strings, so any mismatch
+// (e.g. signing "60" but sending "60.00") returns ES104 Invalid signature.
 export function buildPayload(
   amount: number,
   transactionId: string,
@@ -36,12 +40,13 @@ export function buildPayload(
   failureUrl: string
 ) {
   const signedFieldNames = "total_amount,transaction_uuid,product_code";
-  const message = `total_amount=${amount},transaction_uuid=${transactionId},product_code=${ESEWA_CONFIG.merchantId}`;
+  const totalAmount = amount;
+  const message = `total_amount=${totalAmount},transaction_uuid=${transactionId},product_code=${ESEWA_CONFIG.merchantId}`;
 
   return {
-    amount: amount.toFixed(2),
+    amount: String(amount),
     tax_amount: "0",
-    total_amount: amount.toFixed(2),
+    total_amount: String(totalAmount),
     transaction_uuid: transactionId,
     product_code: ESEWA_CONFIG.merchantId,
     product_service_charge: "0",
