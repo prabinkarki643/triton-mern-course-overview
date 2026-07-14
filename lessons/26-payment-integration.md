@@ -1,14 +1,14 @@
 # Lesson 26: Payment Integration: eSewa & COD
 
 ## What You Will Learn
-- Understanding different payment methods: online (eSewa) and offline (Cash on Delivery)
-- Building a COD payment flow with status tracking
-- Integrating eSewa using HMAC-SHA256 signed payloads
-- Creating backend endpoints to initiate and verify payments using **express-validator** with explicit **try/catch** blocks
-- Returning a consistent **`{ data: ... }` response envelope** from every endpoint
-- Building a payment selector inside a shadcn **`Field`** with React Hook Form's `Controller` + Zod
-- Wrapping payment calls in an Axios **service layer** (`paymentApi`)
-- Using **React Query mutation hooks** (`useInitiateEsewaPayment`, `useVerifyEsewaPayment`) for loading state, cache invalidation, and toast feedback
+- Understanding different payment methods: online (**eSewa**) and offline (**Cash on Delivery**)
+- Extending the L25 Booking model with `paymentStatus`, `transactionId` and `cancellationReason` -- without changing the `status` flow (the owner still confirms every booking, whatever the payment method)
+- Integrating eSewa using **HMAC-SHA256 signed payloads**
+- Wiring eSewa's success/failure callbacks to the **backend** (not the frontend), so verification runs before the guest sees any UI and no signed data flies through the browser
+- Reusing the L25 `BookingDetail` page for post-payment UX -- **no dedicated success / failure pages** -- via a `?payment=` query param that fires a Sonner toast
+- A hybrid submit UX: **Book Now** creates a `pending` booking and then, if the method is eSewa, kicks straight into the gateway redirect (no "click again to pay" second step for online payments)
+- Owner-side "Mark cash received" for COD bookings, dropped into the `OwnerBookingDetail` page from L25
+- A **cron job** that reclaims abandoned eSewa bookings so they don't block the room's dates forever
 - Using eSewa sandbox credentials for safe development testing
 
 ---
@@ -24,12 +24,12 @@ We will implement both in our project. COD is simpler, so we start there.
 
 ---
 
-## 26.2 Database Changes: Payment Fields
+## 26.2 Database Changes: Payment + Cancellation Fields
 
-Lesson 25 already gave the Booking a `paymentMethod` field with a single-option enum (`["cod"]`). Two changes to that schema are all we need before any payment code:
+Lesson 25 gave the Booking a `paymentMethod` field with a single-option enum (`["cod"]`) and an owner-driven `status` flow (`pending → confirmed | cancelled`). Two axes are added in L26:
 
-1. **Widen the enum** on `paymentMethod` from `["cod"]` to `["cod", "esewa"]`.
-2. **Add two sibling fields** -- `paymentStatus` and `transactionId` -- so the eSewa flow has somewhere to record its result.
+1. **Widen `paymentMethod`** to `["cod", "esewa"]`
+2. **Add three sibling fields** -- `paymentStatus`, `transactionId`, and `cancellationReason` -- so the eSewa flow has somewhere to record its result and so users can see *why* a booking was cancelled
 
 ```typescript
 // backend/src/models/Booking.ts  (diff)
@@ -42,10 +42,11 @@ export interface IBooking extends Document {
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;   // NEW
   transactionId?: string;         // NEW
+  cancellationReason?: string;    // NEW
 }
 
 // inside the schema definition, adjust paymentMethod and append the
-// two new fields:
+// three new fields:
 paymentMethod: {
   type: String,
   enum: ["cod", "esewa"],         // was: ["cod"]
@@ -61,146 +62,125 @@ transactionId: {                  // NEW
   type: String,
   default: undefined,
 },
+cancellationReason: {             // NEW
+  type: String,
+  default: undefined,
+  maxlength: [500, "Reason cannot exceed 500 characters"],
+},
 ```
 
-The three additions in one place:
+**The four field changes in one place:**
 
 - **`paymentMethod`** -- widened enum so the client can pick either method
-- **`paymentStatus`** -- pending / paid / failed. COD bookings become `paid` when the owner marks cash received; eSewa bookings become `paid` after we verify the transaction with the gateway
+- **`paymentStatus`** -- pending / paid / failed. COD bookings become `paid` when the owner marks cash received; eSewa bookings become `paid` after we verify the transaction with the gateway; `failed` when eSewa rejects or the cron reclaims the row
 - **`transactionId`** -- eSewa returns a reference id after a successful payment; we store it here for reconciliation
+- **`cancellationReason`** -- optional human-readable text. The cron job (§26.14) sets `"Payment not completed within 30 minutes"` when it auto-cancels an abandoned eSewa booking. Manual cancels leave it undefined for now; adding an optional reason input on the Cancel AlertDialogs is a stretch exercise.
+
+### `status` and `paymentStatus` are independent
+
+Two orthogonal fields express every real-world state cleanly:
+
+| `status` | `paymentStatus` | What it means |
+|---|---|---|
+| pending | pending | New request, owner hasn't decided, no payment yet |
+| pending | paid | Guest paid up-front via eSewa, **owner is still reviewing** |
+| pending | failed | Guest tried eSewa, gateway rejected -- they can retry |
+| confirmed | pending | Owner accepted, guest still owes (COD, or eSewa in-flight) |
+| **confirmed** | **paid** | Complete. Everyone happy. |
+| cancelled | pending | Cancelled before any payment attempt |
+| cancelled | paid | Cancelled after payment -- refund workflow (out of scope) |
+| cancelled | failed | Cancelled after / including a failed attempt (typical cron outcome) |
+
+**Payment method does NOT change the `status` flow.** The owner still confirms every request from the Owner Portal, whatever method the guest picked. That's why L26 will NOT modify L25's `createBooking` controller -- it keeps `status: "pending"` for everyone. Only `paymentStatus` varies by method.
 
 > **Widening an enum is a safe migration.** Existing bookings with `paymentMethod: "cod"` still validate, and Mongoose does not need to backfill anything. Just re-deploy the model file.
 
 ---
 
-## 26.3 Cash on Delivery (COD) Flow
+## 26.3 Cash on Delivery (COD) Flow -- Keep L25 As-Is
 
-COD is the simplest payment method. Here is what happens:
+**We do not touch `createBooking` in Lesson 26.** The L25 controller already creates COD bookings correctly:
 
 ```
-User selects COD at checkout
-        |
-        v
-Backend creates booking with:
-  paymentMethod: "cod"
-  paymentStatus: "pending"
-        |
-        v
-User sees "Booking confirmed - pay on arrival"
-        |
-        v
-When cash is collected, owner marks as paid
-        |
-        v
-Backend updates paymentStatus to "paid"
+status:        "pending"    (owner still confirms every booking)
+paymentStatus: "pending"    (money not received yet -- default from the schema)
 ```
 
-### Backend: Create Booking with COD
+Nothing changes on `POST /api/bookings`. The owner reviews the request in `/owner/bookings` (same as any other booking), taps **Confirm** on `OwnerBookingDetail`, and the guest gets the confirmation email from L25.
 
-When the user selects COD during checkout, the booking is created with `paymentMethod: 'cod'` and `paymentStatus: 'pending'`.
-
-Following the patterns from Lesson 16, we split this into a **validator**, a **controller** (with an explicit `try/catch`), and a **route** that wires them together. Every response uses the `{ data: ... }` envelope.
+The only owner-side action we **add** in L26 is a new endpoint that lets them tick the cash off after the guest arrives and pays:
 
 ```typescript
-// backend/src/validators/booking.validator.ts
-import { body, param } from 'express-validator';
+// backend/src/controllers/bookingController.ts  (append)
+import { Request, Response } from "express";
+import Booking, { IBooking } from "../models/Booking";
+import Room, { IRoom } from "../models/Room";
 
-export const createBookingValidator = [
-  body('roomId').exists({ checkFalsy: true }).isMongoId().withMessage('Valid room ID required'),
-  body('checkIn').exists({ checkFalsy: true }).isISO8601().withMessage('Valid check-in date required'),
-  body('checkOut').exists({ checkFalsy: true }).isISO8601().withMessage('Valid check-out date required'),
-  body('totalPrice').exists().isFloat({ min: 0 }).withMessage('Total price must be a positive number'),
-  body('paymentMethod').exists({ checkFalsy: true }).isIn(['esewa', 'cod']).withMessage('Payment method must be esewa or cod'),
-];
-
-export const bookingIdValidator = [
-  param('id').isMongoId().withMessage('Invalid booking ID format'),
-];
-```
-
-```typescript
-// backend/src/controllers/bookingController.ts
-import { Response } from 'express';
-import { Booking } from '../models/Booking';
-import type { AuthRequest } from '../types/auth';
-
-// POST /api/bookings
-export const createBooking = async (
-  req: AuthRequest,
-  res: Response
-): Promise<void> => {
-  try {
-    const { roomId, checkIn, checkOut, totalPrice, paymentMethod } = req.body;
-
-    const booking = await Booking.create({
-      user: req.userId,
-      room: roomId,
-      checkIn: new Date(checkIn),
-      checkOut: new Date(checkOut),
-      totalPrice,
-      paymentMethod,
-      paymentStatus: 'pending',
-      status: paymentMethod === 'cod' ? 'confirmed' : 'pending',
-    });
-
-    res.status(201).json({ data: booking });
-  } catch (error: unknown) {
-    console.error('createBooking error:', error);
-    res.status(500).json({ error: 'Failed to create booking' });
-  }
-};
-
-// PATCH /api/bookings/:id/mark-paid (owner only)
+// PATCH /api/bookings/:id/mark-paid  (owner only)
+// COD bookings only -- eSewa payments become "paid" via the callback in §26.6.
 export const markBookingPaid = async (
-  req: AuthRequest,
+  req: Request,
   res: Response
 ): Promise<void> => {
   try {
-    const booking = await Booking.findById(req.params.id).populate('room');
-
+    const booking: IBooking | null = await Booking.findById(req.params.id)
+      .populate("room");
     if (!booking) {
-      res.status(404).json({ error: 'Booking not found' });
+      res.status(404).json({ message: "Booking not found" });
       return;
     }
 
-    if (booking.paymentMethod !== 'cod') {
-      res.status(400).json({ error: 'Only COD bookings can be manually marked as paid' });
+    // Only the room's owner may mark cash received.
+    const room = booking.room as unknown as IRoom;
+    if (room.owner.toString() !== req.user!.userId) {
+      res
+        .status(403)
+        .json({ message: "Only the room owner can mark this as paid" });
       return;
     }
 
-    if (booking.paymentStatus === 'paid') {
-      res.status(400).json({ error: 'Booking is already marked as paid' });
+    if (booking.paymentMethod !== "cod") {
+      res.status(400).json({
+        message: "Only COD bookings can be manually marked as paid",
+      });
+      return;
+    }
+    if (booking.paymentStatus === "paid") {
+      res.status(400).json({ message: "Booking is already marked as paid" });
       return;
     }
 
-    booking.paymentStatus = 'paid';
+    booking.paymentStatus = "paid";
     await booking.save();
 
-    res.json({ data: booking });
+    const populated = await Booking.findById(booking._id)
+      .populate("room", "title location price images owner")
+      .populate("user", "name email");
+    res.json({ data: populated });
   } catch (error: unknown) {
-    console.error('markBookingPaid error:', error);
-    res.status(500).json({ error: 'Failed to mark booking as paid' });
+    console.error("markBookingPaid error:", error);
+    res.status(500).json({ message: "Failed to mark booking as paid" });
   }
 };
 ```
 
+And its route + validator entry:
+
 ```typescript
-// backend/src/routes/bookings.ts
-import { Router } from 'express';
-import { createBooking, markBookingPaid } from '../controllers/bookingController';
-import { authMiddleware } from '../middleware/auth';
-import { validateResult } from '../middleware/validate-result.middleware';
-import { createBookingValidator, bookingIdValidator } from '../validators/booking.validator';
+// backend/src/validators/booking.validator.ts  (already has bookingIdValidator from L25)
+// -- no changes needed --
 
-const router = Router();
-
-router.post('/', authMiddleware, createBookingValidator, validateResult, createBooking);
-router.patch('/:id/mark-paid', authMiddleware, bookingIdValidator, validateResult, markBookingPaid);
-
-export default router;
+// backend/src/routes/bookingRoutes.ts  (add ONE line)
+router.patch(
+  "/:id/mark-paid",
+  requireAuth,
+  bookingIdValidator,
+  validateResult,
+  markBookingPaid
+);
 ```
 
-Notice that COD bookings are immediately set to `status: 'confirmed'` because no online payment step is needed. eSewa bookings stay `pending` until payment is verified. The controller stays clean -- input validation lives in the validator chain, and the `try/catch` block catches any database errors and returns a clean 500 response. The global error handler in `index.ts` is the final safety net for anything else.
+Consistent with the rest of the app: `{ message }` on error responses, explicit `try/catch`, owner-only guard checked in the controller (not in a middleware -- we need the booking's room populated to look up the owner).
 
 ---
 
@@ -329,180 +309,275 @@ Let us break down each function:
 
 ## 26.6 Payment Endpoints: Backend
 
-Now create the routes that the frontend will call. As in Lesson 16, we keep validation, controller logic and the route wiring in separate files. Every response uses the `{ data: ... }` envelope -- there is **no `success` boolean** on the envelope itself; the HTTP status code and a `paymentStatus` field on the booking tell the client what happened.
+Three endpoints total: **initiate** (called by the frontend to get the signed payload) and **two backend callbacks** that eSewa itself redirects to. **The callbacks are the important design decision** -- eSewa points at your backend, not your frontend, so signature verification runs before the guest sees any UI and the booking is up-to-date the moment their browser lands back on the app.
+
+### Why backend callbacks (not frontend)
+
+| Concern | Frontend callback (naive) | **Backend callback (this section)** |
+|---|---|---|
+| Guest closes the tab mid-redirect | Booking stuck at `paymentStatus: pending` forever | Already updated -- the tab closing is irrelevant |
+| Signed payload transit | Flies through the browser, then handed back to backend | Lands directly on the backend |
+| Sources of truth for `paymentStatus` | Two: eSewa's redirect + frontend-triggered verify endpoint | One: the backend callback handler |
+| Extra hop | Zero | ~200ms (backend verify + 302) -- imperceptible |
+
+We give up nothing meaningful and gain a lot.
 
 ### Step 1: Validators
 
 ```typescript
 // backend/src/validators/payment.validator.ts
-import { body } from 'express-validator';
+import { body } from "express-validator";
 
 export const initiatePaymentValidator = [
-  body('bookingId').exists({ checkFalsy: true }).isMongoId().withMessage('Valid booking ID required'),
-];
-
-export const verifyPaymentValidator = [
-  body('bookingId').exists({ checkFalsy: true }).isMongoId().withMessage('Valid booking ID required'),
+  body("bookingId")
+    .exists({ checkFalsy: true })
+    .withMessage("Booking ID is required")
+    .bail()
+    .isMongoId()
+    .withMessage("Valid booking ID required"),
 ];
 ```
+
+No verify validator -- the callbacks read their id from a signed field inside eSewa's payload, not from client input.
 
 ### Step 2: Controller
 
 ```typescript
 // backend/src/controllers/paymentController.ts
-import { Response } from 'express';
-import { Booking } from '../models/Booking';
-import { buildPayload, verifyPayment } from '../services/esewa.service';
-import type { AuthRequest } from '../types/auth';
+import { Request, Response } from "express";
+import Booking, { IBooking } from "../models/Booking";
+import { buildPayload, verifyPayment } from "../services/esewa.service";
 
-// POST /api/payments/initiate
+// POST /api/payments/initiate  (frontend)
 // Returns the eSewa form action URL and the signed payload the frontend
-// will auto-submit. Wrapped in { data: { ... } }.
+// will auto-submit. success_url and failure_url point at THIS backend,
+// not at the frontend.
 export const initiateEsewaPayment = async (
-  req: AuthRequest,
+  req: Request,
   res: Response
 ): Promise<void> => {
   try {
     const { bookingId } = req.body;
 
-    const booking = await Booking.findById(bookingId);
+    const booking: IBooking | null = await Booking.findById(bookingId);
     if (!booking) {
-      res.status(404).json({ error: 'Booking not found' });
+      res.status(404).json({ message: "Booking not found" });
+      return;
+    }
+    if (booking.user.toString() !== req.user!.userId) {
+      // Never let another user pay for someone else's booking.
+      res.status(404).json({ message: "Booking not found" });
+      return;
+    }
+    if (booking.paymentMethod !== "esewa") {
+      res
+        .status(400)
+        .json({ message: "This booking does not use eSewa" });
+      return;
+    }
+    if (booking.paymentStatus === "paid") {
+      res.status(400).json({ message: "This booking is already paid" });
       return;
     }
 
-    if (booking.paymentMethod !== 'esewa') {
-      res.status(400).json({ error: 'This booking does not use eSewa' });
-      return;
-    }
-
-    if (booking.paymentStatus === 'paid') {
-      res.status(400).json({ error: 'This booking is already paid' });
-      return;
-    }
-
-    // Generate a unique transaction ID and persist it on the booking
+    // Fresh transaction id every attempt. Overwriting the previous one is
+    // fine -- eSewa is only interested in the latest one.
     const transactionId = `ESW-${booking._id}-${Date.now()}`;
     booking.transactionId = transactionId;
+    booking.paymentStatus = "pending";  // reset from any prior "failed"
     await booking.save();
 
-    const clientBaseUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    // success_url and failure_url both point at OUR backend. eSewa will
+    // hit these with GET redirects carrying the signed data field.
+    const apiBase =
+      process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 4001}`;
     const payload = buildPayload(
       booking.totalPrice,
       transactionId,
-      `${clientBaseUrl}/payment/success?bookingId=${booking._id}`,
-      `${clientBaseUrl}/payment/failure?bookingId=${booking._id}`
+      `${apiBase}/api/payments/esewa/callback/success`,
+      `${apiBase}/api/payments/esewa/callback/failure`
     );
 
     const paymentUrl =
-      process.env.ESEWA_TEST_MODE === 'false'
-        ? 'https://epay.esewa.com.np/api/epay/main/v2/form'
-        : 'https://rc-epay.esewa.com.np/api/epay/main/v2/form';
+      process.env.ESEWA_TEST_MODE === "false"
+        ? "https://epay.esewa.com.np/api/epay/main/v2/form"
+        : "https://rc-epay.esewa.com.np/api/epay/main/v2/form";
 
     res.json({ data: { paymentUrl, payload } });
   } catch (error: unknown) {
-    console.error('initiateEsewaPayment error:', error);
-    res.status(500).json({ error: 'Failed to initiate eSewa payment' });
+    console.error("initiateEsewaPayment error:", error);
+    res.status(500).json({ message: "Failed to initiate eSewa payment" });
   }
 };
 
-// POST /api/payments/verify
-// Calls eSewa's status check API. Returns the updated booking so the
-// frontend can read `paymentStatus` to decide what to show.
-export const verifyEsewaPayment = async (
-  req: AuthRequest,
+// GET /api/payments/esewa/callback/success  (eSewa -> us)
+// eSewa redirects the browser here with a base64-encoded `data` field
+// carrying the signed transaction result. We decode it, verify the
+// payment with eSewa's status API (never trust the redirect alone),
+// update the booking, then 302 the browser to the frontend.
+export const esewaSuccessCallback = async (
+  req: Request,
   res: Response
 ): Promise<void> => {
+  const clientBase = process.env.CLIENT_URL || "http://localhost:3002";
   try {
-    const { bookingId } = req.body;
+    const dataParam = req.query.data as string | undefined;
+    if (!dataParam) {
+      res.redirect(`${clientBase}/bookings?payment=failed`);
+      return;
+    }
 
-    const booking = await Booking.findById(bookingId);
+    // eSewa's `data` param is base64-encoded JSON.
+    const decoded = JSON.parse(
+      Buffer.from(dataParam, "base64").toString("utf8")
+    ) as { transaction_uuid?: string; total_amount?: string };
+    const transactionId = decoded.transaction_uuid;
+    const totalAmount = Number(decoded.total_amount);
+
+    if (!transactionId || Number.isNaN(totalAmount)) {
+      res.redirect(`${clientBase}/bookings?payment=failed`);
+      return;
+    }
+
+    const booking = await Booking.findOne({ transactionId });
     if (!booking) {
-      res.status(404).json({ error: 'Booking not found' });
+      // Landed on our callback with an unknown transaction id.
+      res.redirect(`${clientBase}/bookings?payment=failed`);
       return;
     }
 
-    if (!booking.transactionId) {
-      res.status(400).json({ error: 'No transaction found for this booking' });
-      return;
-    }
-
-    const isVerified = await verifyPayment(
-      booking.transactionId,
-      booking.totalPrice
-    );
-
-    booking.paymentStatus = isVerified ? 'paid' : 'failed';
-    if (isVerified) booking.status = 'confirmed';
+    // Server-to-server verify (the actually authoritative step).
+    const ok = await verifyPayment(transactionId, totalAmount);
+    booking.paymentStatus = ok ? "paid" : "failed";
     await booking.save();
 
-    res.json({ data: booking });
+    res.redirect(
+      `${clientBase}/bookings/${booking._id}?payment=${ok ? "success" : "failed"}`
+    );
   } catch (error: unknown) {
-    console.error('verifyEsewaPayment error:', error);
-    res.status(500).json({ error: 'Failed to verify eSewa payment' });
+    console.error("esewaSuccessCallback error:", error);
+    res.redirect(`${clientBase}/bookings?payment=failed`);
+  }
+};
+
+// GET /api/payments/esewa/callback/failure  (eSewa -> us)
+// eSewa may redirect here without a signed payload (user cancelled on
+// the eSewa page, etc.). Best effort: mark whatever we can as failed
+// and bounce the browser back to the app.
+export const esewaFailureCallback = async (
+  req: Request,
+  res: Response
+): Promise<void> => {
+  const clientBase = process.env.CLIENT_URL || "http://localhost:3002";
+  try {
+    // eSewa sometimes echoes the transaction uuid in the query; try to
+    // pick it up so we can update the right booking. If not, the guest
+    // still gets a friendly failure toast on the bookings list.
+    const transactionId = (req.query.transaction_uuid as string) || undefined;
+    if (transactionId) {
+      const booking = await Booking.findOne({ transactionId });
+      if (booking && booking.paymentStatus !== "paid") {
+        booking.paymentStatus = "failed";
+        await booking.save();
+        res.redirect(`${clientBase}/bookings/${booking._id}?payment=failed`);
+        return;
+      }
+    }
+    res.redirect(`${clientBase}/bookings?payment=failed`);
+  } catch (error: unknown) {
+    console.error("esewaFailureCallback error:", error);
+    res.redirect(`${clientBase}/bookings?payment=failed`);
   }
 };
 ```
+
+**Why the callbacks never send a JSON response.** They're hit by the guest's browser through an HTTP redirect, not by our own frontend fetch. If they replied with JSON, the browser would render `{ "message": ... }` as plain text. Every branch ends with `res.redirect(...)` back into the SPA -- success or failure. The SPA reads `?payment=` from the URL and shows the toast (see §26.10).
+
+**Why the failure callback still updates the DB.** eSewa's failure redirect isn't as strongly authenticated as the success one (no `data` blob to verify), but if the guest genuinely cancelled or the gateway rejected, we still want `paymentStatus: failed` so the "Retry" button appears on `BookingDetail`. Worst case: a malicious visitor hits `/callback/failure?transaction_uuid=X` for a booking that's already paid, and we defensively skip the update (`booking.paymentStatus !== "paid"` guard).
 
 ### Step 3: Route Wiring
 
 ```typescript
-// backend/src/routes/payments.ts
-import { Router } from 'express';
-import { initiateEsewaPayment, verifyEsewaPayment } from '../controllers/paymentController';
-import { authMiddleware } from '../middleware/auth';
-import { validateResult } from '../middleware/validate-result.middleware';
-import { initiatePaymentValidator, verifyPaymentValidator } from '../validators/payment.validator';
+// backend/src/routes/paymentRoutes.ts
+import { Router } from "express";
+import {
+  initiateEsewaPayment,
+  esewaSuccessCallback,
+  esewaFailureCallback,
+} from "../controllers/paymentController";
+import { requireAuth } from "../middleware/auth";
+import { validateResult } from "../middleware/validate";
+import { initiatePaymentValidator } from "../validators/payment.validator";
 
-const router = Router();
+const router: Router = Router();
 
-router.post('/initiate', authMiddleware, initiatePaymentValidator, validateResult, initiateEsewaPayment);
-router.post('/verify', authMiddleware, verifyPaymentValidator, validateResult, verifyEsewaPayment);
+// Initiate is called by our own frontend -- auth required.
+router.post(
+  "/initiate",
+  requireAuth,
+  initiatePaymentValidator,
+  validateResult,
+  initiateEsewaPayment
+);
+
+// Callbacks are hit by eSewa (which doesn't send our JWT). NO auth on
+// these routes -- authentication is provided by the signed `data`
+// payload we then verify with eSewa's status API.
+router.get("/esewa/callback/success", esewaSuccessCallback);
+router.get("/esewa/callback/failure", esewaFailureCallback);
 
 export default router;
 ```
 
-Register the routes in your main app file:
+Register in the main app file:
 
 ```typescript
-// backend/src/index.ts (add these lines)
-import paymentRoutes from './routes/payments';
-
-app.use('/api/payments', paymentRoutes);
+// backend/src/index.ts (add)
+import paymentRoutes from "./routes/paymentRoutes";
+app.use("/api/payments", paymentRoutes);
 ```
 
-**Why no `success` field?** A consistent envelope keeps the frontend simple. The HTTP status and the booking's `paymentStatus` (`paid` or `failed`) tell the client everything it needs. This matches the pattern from Lesson 16 where every response is `{ data: ... }` or `{ error: '...' }`.
+> **The callbacks are unauthenticated.** That's not a bug -- eSewa's server has no way to include your JWT in a browser redirect. Authentication comes from the signed `data` payload plus the server-to-server `verifyPayment` call. Anyone can *hit* the endpoints, but they can't forge a payment.
 
 ---
 
 ## 26.7 Environment Variables
 
-Add these to your `.env` file. For development, the test credentials work out of the box:
+Add these to your backend `.env` file. `CLIENT_URL` is already there from Lesson 20 -- the callbacks use it to redirect back to the frontend after verifying.
 
 ```env
-# eSewa Configuration
+# eSewa configuration
 ESEWA_MERCHANT_ID=EPAYTEST
 ESEWA_SECRET_KEY=8gBm/:&EnhH.1/q
 ESEWA_TEST_MODE=true
 
-# Frontend URL (for redirect URLs)
-CLIENT_URL=http://localhost:5173
+# The URL eSewa hits with its success / failure redirects. Must be
+# publicly reachable from eSewa's servers in production -- during local
+# development the same http://localhost:4001 that runs the API works
+# because eSewa's redirect happens in the guest's own browser (their
+# browser is running on the same machine, so it can reach localhost).
+API_BASE_URL=http://localhost:4001
+
+# Frontend origin the callbacks 302 back to (already set in L20)
+CLIENT_URL=http://localhost:3002
 ```
 
-> **Important:** The values `EPAYTEST` and `8gBm/:&EnhH.1/q` are eSewa's official sandbox credentials. They are publicly documented and safe to use during development. When you go to production, you will replace these with real credentials from your eSewa merchant account.
+Mirror the two new keys into `.env.example` with placeholder values so the next student to clone the repo knows what to fill in.
+
+> **Important:** `EPAYTEST` / `8gBm/:&EnhH.1/q` are eSewa's official sandbox credentials -- publicly documented and safe for development. Replace with real values from your eSewa merchant account for production.
+>
+> **Production caveat:** `API_BASE_URL` must be a public HTTPS URL that eSewa can reach (their servers issue the redirect that lands in the guest's browser -- but the URL string must be a valid public origin, since eSewa's dashboard validates it). Localhost only works during local development because the guest's own browser is on the same machine.
 
 ---
 
 ## 26.8 Frontend: The Payment API Service Layer
 
-Following the same pattern as `todoApi` in Lesson 17, we wrap every payment API call in a typed service. The component never calls `fetch` or Axios directly -- it calls `paymentApi.initiateEsewa(...)` or a React Query hook.
+Because eSewa verifies on the backend now, the frontend only needs **one** payment method: `initiateEsewa`. There's no `verify` on the frontend -- the backend callback owns that step.
 
 ### Step 1: Types
 
 ```typescript
 // webapp/src/types/payment.ts
-import type { Booking } from './booking';
-
 export interface EsewaPayload {
   amount: string;
   tax_amount: string;
@@ -511,8 +586,8 @@ export interface EsewaPayload {
   product_code: string;
   product_service_charge: string;
   product_delivery_charge: string;
-  success_url: string;
-  failure_url: string;
+  success_url: string;      // now points at OUR backend
+  failure_url: string;      // now points at OUR backend
   signed_field_names: string;
   signature: string;
 }
@@ -521,39 +596,20 @@ export interface InitiateEsewaResponse {
   paymentUrl: string;
   payload: EsewaPayload;
 }
-
-export interface VerifyPaymentParams {
-  bookingId: string;
-}
-
-// The verify endpoint returns the updated booking
-export type VerifyPaymentResponse = Booking;
 ```
 
 ### Step 2: The `paymentApi` Service
 
 ```typescript
 // webapp/src/services/paymentApi.ts
-import api from './api';
-import type {
-  InitiateEsewaResponse,
-  VerifyPaymentParams,
-  VerifyPaymentResponse,
-} from '../types/payment';
+import api from "./api";
+import type { InitiateEsewaResponse } from "@/types/payment";
 
 export const paymentApi = {
   async initiateEsewa(bookingId: string): Promise<InitiateEsewaResponse> {
     const { data } = await api.post<{ data: InitiateEsewaResponse }>(
-      '/payments/initiate',
+      "/payments/initiate",
       { bookingId }
-    );
-    return data.data;
-  },
-
-  async verify(params: VerifyPaymentParams): Promise<VerifyPaymentResponse> {
-    const { data } = await api.post<{ data: VerifyPaymentResponse }>(
-      '/payments/verify',
-      params
     );
     return data.data;
   },
@@ -597,346 +653,233 @@ export function submitEsewaForm(
 }
 ```
 
-### Step 4: React Query Mutation Hooks
+### Step 4: One React Query Mutation Hook
 
-Following the **one-hook-per-action** pattern from Lesson 17, we create dedicated mutation hooks. Each hook owns its loading state, success/error toast, and cache invalidation.
+Since only `initiate` is left, only one hook is needed. It calls the API, then auto-submits the hidden form via `submitEsewaForm` -- the guest's browser navigates to eSewa, the flow returns via the backend callback, no more work here.
 
 ```typescript
 // webapp/src/hooks/usePayments.ts
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
-import { paymentApi } from '../services/paymentApi';
-import { bookingKeys } from './useBookings';
-import { submitEsewaForm } from '../utils/esewa';
-import type { VerifyPaymentParams } from '../types/payment';
+import { useMutation } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { paymentApi } from "@/services/paymentApi";
+import { submitEsewaForm } from "@/utils/esewa";
 
 export function useInitiateEsewaPayment() {
   return useMutation({
     mutationFn: (bookingId: string) => paymentApi.initiateEsewa(bookingId),
     onSuccess: (data) => {
-      // Auto-submit the hidden form -- the page will navigate to eSewa
+      // Auto-submit the hidden form -- the browser navigates to eSewa.
+      // From here, everything flows back through the backend callback in §26.6.
       submitEsewaForm(data.paymentUrl, data.payload);
     },
     onError: (error: Error) => {
-      toast.error(error.message || 'Failed to initiate payment');
-    },
-  });
-}
-
-export function useVerifyEsewaPayment() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (params: VerifyPaymentParams) => paymentApi.verify(params),
-    onSuccess: () => {
-      toast.success('Payment verified successfully');
-      // Bookings will now show paymentStatus: 'paid' -- refresh all booking queries
-      queryClient.invalidateQueries({ queryKey: bookingKeys.all });
-    },
-    onError: (error: Error) => {
-      toast.error(error.message || 'Payment verification failed');
+      toast.error(error.message || "Failed to initiate payment");
     },
   });
 }
 ```
 
-> `bookingKeys` is the query key factory for bookings (defined in `useBookings.ts`, mirroring `todoKeys` from Lesson 17). Invalidating `bookingKeys.all` refetches both the list and detail queries so the new `paymentStatus` is visible everywhere.
+No `useVerifyEsewaPayment` -- the backend callback verifies, updates the DB, then 302s the browser to `BookingDetail`. React Query invalidation happens naturally when the guest lands on `BookingDetail`, which re-fetches via `useBooking(id)`.
 
 ---
 
-## 26.9 Frontend: Payment Method Selection with shadcn `Field`
+## 26.9 Frontend: Widen the L25 BookingForm + Hybrid Submit UX
 
-The payment method is part of the booking form. Following Lesson 12, we use React Hook Form + Zod with shadcn's **new `Field` component family** -- driven by RHF's `Controller` -- and wire up `useInitiateEsewaPayment` for the eSewa path.
+The L25 `BookingForm` already has a Payment method `Select`, seeded with just `"cod"`. Two small changes turn it into the L26 flow:
 
-First, install the `field` component (note: this is the new pattern -- we no longer use `form`):
+1. Add `"esewa"` as a second option in the Select (and widen the Zod enum + `PaymentMethod` type)
+2. Branch on the guest's choice inside the submit handler -- **COD** goes straight to `/bookings` as before; **eSewa** immediately fires `useInitiateEsewaPayment` after the booking is created, so the browser flows directly to the gateway
 
-```bash
-npx shadcn@latest add field
-npx shadcn@latest add radio-group
-npx shadcn@latest add label
+### The three widenings (types / Zod / Select)
+
+```ts
+// booking-frontend/src/types/booking.ts  (diff)
+export type PaymentMethod = "cod" | "esewa";   // was: "cod"
+```
+
+```ts
+// booking-frontend/src/schemas/bookingSchema.ts  (diff)
+paymentMethod: z.enum(["cod", "esewa"], {   // was: ["cod"]
+  errorMap: () => ({ message: "Please select a payment method" }),
+}),
 ```
 
 ```tsx
-// webapp/src/components/PaymentMethodSelector.tsx
-import { Controller, useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import {
-  Field,
-  FieldDescription,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
-} from '@/components/ui/field';
-import { Label } from '@/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { useInitiateEsewaPayment } from '@/hooks/usePayments';
+// booking-frontend/src/components/booking/BookingForm.tsx  (diff -- inside the Payment method Controller)
+<SelectContent>
+  <SelectItem value="cod">Cash on arrival</SelectItem>
+  <SelectItem value="esewa">eSewa</SelectItem>   {/* NEW */}
+</SelectContent>
+```
 
-const paymentSchema = z.object({
-  paymentMethod: z.enum(['esewa', 'cod']),
-});
+That's the entire "add the option" change. The form field, layout, and validation all keep working unchanged.
 
-type PaymentFormData = z.infer<typeof paymentSchema>;
+### The hybrid submit -- one branch based on payment method
 
-interface PaymentMethodSelectorProps {
-  bookingId: string;
-  totalPrice: number;
-  onCodSelected: () => void;
-}
+L25's submit currently navigates to `/bookings` on every success. L26 branches:
 
-export function PaymentMethodSelector({
-  bookingId,
-  totalPrice,
-  onCodSelected,
-}: PaymentMethodSelectorProps) {
-  const form = useForm<PaymentFormData>({
-    resolver: zodResolver(paymentSchema),
-    defaultValues: { paymentMethod: 'esewa' },
-  });
+- **COD**: same as L25 -- toast "Booking request sent", navigate to `/bookings`.
+- **eSewa**: navigate is *replaced* by firing `useInitiateEsewaPayment(booking._id)`. The hook auto-submits the hidden form; the guest's browser is now on eSewa's page. No "click Pay Now again" round-trip.
 
-  const { mutate: initiateEsewa, isPending } = useInitiateEsewaPayment();
+```tsx
+// booking-frontend/src/components/booking/BookingForm.tsx  (diff -- inside the component)
+import { useInitiateEsewaPayment } from "@/hooks/usePayments";
 
-  const onSubmit = (values: PaymentFormData) => {
-    if (values.paymentMethod === 'cod') {
-      onCodSelected();
-      return;
+// inside BookingForm:
+const { mutate: initiateEsewa } = useInitiateEsewaPayment();
+
+const onSubmit = (data: BookingFormData): void => {
+  createBooking(
+    {
+      room: room._id,
+      checkIn: data.checkIn,
+      checkOut: data.checkOut,
+      guests: data.guests,
+      paymentMethod: data.paymentMethod,
+    },
+    {
+      onSuccess: (booking) => {
+        if (data.paymentMethod === "esewa") {
+          // Immediately kick off the eSewa redirect. No toast, no navigate --
+          // the browser is about to leave the SPA for eSewa's page.
+          initiateEsewa(booking._id);
+        } else {
+          // COD -- same as L25.
+          navigate("/bookings");
+        }
+      },
     }
-    // eSewa: the hook auto-submits the form to eSewa on success
-    initiateEsewa(bookingId);
-  };
-
-  const method = form.watch('paymentMethod');
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Choose Payment Method</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-          <FieldGroup>
-            <Controller
-              name="paymentMethod"
-              control={form.control}
-              render={({ field, fieldState }) => (
-                <Field data-invalid={fieldState.invalid}>
-                  <FieldLabel>Payment Method</FieldLabel>
-                  <RadioGroup
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    aria-invalid={fieldState.invalid}
-                    className="gap-3"
-                  >
-                    <div className="flex items-center space-x-3 rounded-lg border p-3 hover:bg-muted/50">
-                      <RadioGroupItem value="esewa" id="payment-esewa" />
-                      <Label htmlFor="payment-esewa" className="flex-1 cursor-pointer">
-                        <div className="font-medium">eSewa</div>
-                        <div className="text-sm text-muted-foreground">
-                          Pay now with eSewa wallet
-                        </div>
-                      </Label>
-                    </div>
-                    <div className="flex items-center space-x-3 rounded-lg border p-3 hover:bg-muted/50">
-                      <RadioGroupItem value="cod" id="payment-cod" />
-                      <Label htmlFor="payment-cod" className="flex-1 cursor-pointer">
-                        <div className="font-medium">Cash on Delivery</div>
-                        <div className="text-sm text-muted-foreground">
-                          Pay at the venue when you check in
-                        </div>
-                      </Label>
-                    </div>
-                  </RadioGroup>
-                  <FieldDescription>
-                    You can change this until the booking is confirmed.
-                  </FieldDescription>
-                  {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
-                </Field>
-              )}
-            />
-          </FieldGroup>
-
-          <p className="text-sm text-muted-foreground">
-            Total: <span className="font-bold">NPR {totalPrice}</span>
-          </p>
-
-          <Button type="submit" disabled={isPending} className="w-full">
-            {isPending
-              ? 'Processing...'
-              : method === 'esewa'
-                ? 'Pay with eSewa'
-                : 'Confirm COD Booking'}
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
   );
-}
+};
 ```
 
-**What is different from the older `Form`/`FormField` pattern:**
-- We import from `@/components/ui/field`, not `@/components/ui/form`. The new `Field` family (`Field`, `FieldGroup`, `FieldLabel`, `FieldDescription`, `FieldError`) is the modern shadcn approach.
-- There is **no `<Form {...form}>` wrapper** -- we use a plain `<form>` element and let RHF's `Controller` connect each field directly.
-- **`Controller`** from `react-hook-form` gives us both `field` (value/onChange) and `fieldState` (invalid/error) -- no extra context needed.
-- For radio groups, `aria-invalid` is set on the **`RadioGroup`** itself, not on individual items. Each `RadioGroupItem` keeps a regular `<Label htmlFor=...>` for accessibility (we do **not** use `FieldLabel` per item -- `FieldLabel` belongs to the whole `Field`).
-- Errors are rendered with `{fieldState.invalid && <FieldError errors={[fieldState.error]} />}` -- explicit and conditional.
-- `FieldDescription` provides helper text below the control.
+**Why we don't navigate for eSewa.** `initiateEsewa` auto-submits the hidden HTML form on success, which triggers a full-page navigation to eSewa's URL. If we called `navigate("/bookings")` first, we'd race React Router against the form submit -- the guest might see `/bookings` for a fraction of a second before the eSewa redirect kicks in. Skipping the navigate on the eSewa branch keeps the UX clean.
 
-**What changed compared to a raw `useState` version:**
-- The radio is part of a typed schema (`z.enum(['esewa', 'cod'])`) -- TypeScript and runtime validation in one place
-- `isPending` from the React Query hook drives the button state -- no manual `setLoading`
-- Errors are surfaced as toasts inside `useInitiateEsewaPayment`, so the component does not need its own try/catch
-- The component is pure UI -- it never calls `fetch` directly
+**Retry path.** If the guest's eSewa attempt fails (they cancel on eSewa, network drops, gateway rejects), they land back on `BookingDetail` with `paymentStatus: "failed"`. `BookingDetail` (§26.10) shows a **Pay Now** button that calls the same `useInitiateEsewaPayment` -- so retry is one click away, no need to re-book.
 
 ---
 
-## 26.10 Frontend: Success and Failure Pages
+## 26.10 Frontend: Post-Payment UX on `BookingDetail`
 
-After the user pays (or cancels) on eSewa, they are redirected back to your application. You need pages to handle both outcomes. The Success page calls `useVerifyEsewaPayment()` on mount and reads `paymentStatus` from the returned booking.
+**No dedicated success or failure pages.** The backend callback (§26.6) already updated the DB and 302'd the guest to `/bookings/:id?payment=success` or `/bookings/:id?payment=failed`. `BookingDetail` (L25 §25.15.3) is already there ready to render, backed by `useBooking(id)` which reads the fresh `paymentStatus` straight out of the DB.
 
-### Success Page
+Two tiny additions to `BookingDetail` complete the loop:
+
+1. **Toast on landing** -- read the `?payment=` param on mount, fire a Sonner toast, then strip the param so a refresh doesn't re-fire.
+2. **Payment action block** -- Pay Now (`pending`), Retry (`failed`), or a Paid receipt (`paid`), each with the eSewa branch guarded by `paymentMethod === "esewa"`.
 
 ```tsx
-// webapp/src/pages/PaymentSuccess.tsx
-import { useEffect } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { useVerifyEsewaPayment } from '@/hooks/usePayments';
+// booking-frontend/src/pages/BookingDetail.tsx  (diff -- inside the component)
+import { useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
+import { toast } from "sonner";
+import { useInitiateEsewaPayment } from "@/hooks/usePayments";
 
-export function PaymentSuccess() {
-  const [searchParams] = useSearchParams();
-  const bookingId = searchParams.get('bookingId');
+// inside BookingDetail:
+const [searchParams, setSearchParams] = useSearchParams();
+const { mutate: initiateEsewa, isPending: isInitiating } =
+  useInitiateEsewaPayment();
 
-  const { mutate: verify, data: booking, isPending, isError } = useVerifyEsewaPayment();
-
-  // Fire verification once on mount
-  useEffect(() => {
-    if (bookingId) verify({ bookingId });
-  }, [bookingId, verify]);
-
-  if (isPending) {
-    return (
-      <div className="flex justify-center items-center min-h-screen">
-        <p className="text-lg">Verifying your payment...</p>
-      </div>
-    );
+// Read ?payment= once on mount and toast. Strip it so a refresh
+// doesn't re-fire the toast forever.
+useEffect(() => {
+  const outcome = searchParams.get("payment");
+  if (outcome === "success") toast.success("Payment received. You're all set.");
+  if (outcome === "failed") toast.error("Payment didn't go through. Try again below.");
+  if (outcome) {
+    searchParams.delete("payment");
+    setSearchParams(searchParams, { replace: true });
   }
-
-  const isPaid = booking?.paymentStatus === 'paid';
-
-  return (
-    <div className="flex justify-center items-center min-h-screen p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>
-            {isPaid ? 'Payment Successful!' : 'Payment Verification Failed'}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {isPaid ? (
-            <div className="space-y-4">
-              <p className="text-green-600">
-                Your payment has been verified and your booking is confirmed.
-              </p>
-              <Button className="w-full" asChild>
-                <Link to="/dashboard">Go to Dashboard</Link>
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <p className="text-red-600">
-                {isError
-                  ? 'We could not verify your payment. If money was deducted, please contact support.'
-                  : 'Payment was not completed. Please try again from your bookings.'}
-              </p>
-              <Button variant="outline" className="w-full" asChild>
-                <Link to="/bookings">View Bookings</Link>
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
 ```
 
-**Notice:**
-- The hook handles the API call, loading state (`isPending`), error state (`isError`), and the toast feedback
-- We read `booking.paymentStatus` from the response rather than a `success` boolean -- the backend returns the updated booking, not a flag
-- `useEffect` only triggers the mutation once after mount; React Query takes over from there
-
-### Failure Page
+Then, in the Actions card (where the L25 code left the `// Lesson 26 will add payment blocks here` comment), drop in the payment states:
 
 ```tsx
-// webapp/src/pages/PaymentFailure.tsx
-import { useSearchParams, Link } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+{/* Payment block -- only for eSewa bookings */}
+{booking.paymentMethod === "esewa" && (
+  <>
+    {booking.paymentStatus === "pending" && (
+      <Button
+        className="w-full"
+        disabled={isInitiating}
+        onClick={() => initiateEsewa(booking._id)}
+      >
+        {isInitiating ? "Redirecting..." : "Pay with eSewa"}
+      </Button>
+    )}
 
-export function PaymentFailure() {
-  const [searchParams] = useSearchParams();
-  const bookingId = searchParams.get('bookingId');
+    {booking.paymentStatus === "failed" && (
+      <Button
+        className="w-full"
+        variant="destructive"
+        disabled={isInitiating}
+        onClick={() => initiateEsewa(booking._id)}
+      >
+        {isInitiating ? "Redirecting..." : "Retry payment"}
+      </Button>
+    )}
 
-  return (
-    <div className="flex justify-center items-center min-h-screen p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>Payment Failed</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-red-600">
-            Your payment was not completed. No money has been charged.
-          </p>
-          <div className="flex flex-col gap-2">
-            <Button className="w-full" asChild>
-              <Link to={`/bookings/${bookingId}/pay`}>Try Again</Link>
-            </Button>
-            <Button variant="outline" className="w-full" asChild>
-              <Link to="/bookings">View Bookings</Link>
-            </Button>
+    {booking.paymentStatus === "paid" && (
+      <div className="rounded-md border p-3 text-sm">
+        <div className="font-medium">Paid via eSewa</div>
+        {booking.transactionId && (
+          <div className="text-muted-foreground text-xs">
+            Ref: <code className="font-mono">{booking.transactionId}</code>
           </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
+        )}
+      </div>
+    )}
+  </>
+)}
+
+{/* COD guests get a passive line -- the owner marks it paid */}
+{booking.paymentMethod === "cod" && (
+  <div className="text-muted-foreground text-sm">
+    Payment on arrival. {booking.paymentStatus === "paid"
+      ? "Marked received."
+      : "Owner will mark it received after check-in."}
+  </div>
+)}
 ```
 
-### Add Routes
+**No new routes needed.** `/bookings/:id` already exists from L25. The `?payment=` query is just a message passed by the backend redirect -- React Router treats it like any other URL param.
 
-Register these pages in your router:
+**Displaying `cancellationReason`.** Bookings that got cancelled by the cron (or manually with a future reason) show the reason inline in `BookingSummary` (a one-line touch in the L25 component):
 
 ```tsx
-// webapp/src/App.tsx (add to your Routes)
-import { PaymentSuccess } from './pages/PaymentSuccess';
-import { PaymentFailure } from './pages/PaymentFailure';
-
-// Inside your <Routes>:
-<Route path="/payment/success" element={<PaymentSuccess />} />
-<Route path="/payment/failure" element={<PaymentFailure />} />
+// booking-frontend/src/components/booking/BookingSummary.tsx  (diff -- append after the Room hero header block)
+{booking.status === "cancelled" && booking.cancellationReason && (
+  <div className="border-destructive/40 bg-destructive/5 text-destructive rounded-md border p-3 text-sm">
+    <span className="font-medium">Cancelled: </span>
+    {booking.cancellationReason}
+  </div>
+)}
 ```
+
+Both the guest's `BookingDetail` and the owner's `OwnerBookingDetail` pick this up automatically because they both render `<BookingSummary>` (L25 §25.15.2). Also add the `cancellationReason?: string` field to `types/booking.ts` alongside the L26 type widening.
 
 ---
 
 ## 26.11 The Complete eSewa Flow: Step by Step
 
-Let us trace through the entire flow from start to finish:
+End-to-end path with backend callbacks. Each step is a genuine HTTP request or user action -- no hand-waving.
 
-1. **User clicks "Pay with eSewa"** on the checkout page.
-2. **Frontend calls `POST /api/payments/initiate`** with the booking ID.
-3. **Backend generates a unique transaction ID** (e.g. `ESW-abc123-1700000000`) and saves it on the booking.
-4. **Backend builds the eSewa payload** including the HMAC-SHA256 signature and returns it to the frontend.
-5. **Frontend creates a hidden HTML form** with all the payload fields and auto-submits it to `https://rc-epay.esewa.com.np/api/epay/main/v2/form`.
-6. **The user's browser navigates to eSewa's website** where they log in and confirm the payment.
-7. **eSewa redirects the user back** to either the success URL or the failure URL.
-8. **On the success page, the frontend calls `POST /api/payments/verify`** with the booking ID.
-9. **Backend calls eSewa's status check API** to confirm the payment is genuinely `COMPLETE`.
-10. **If verified, the booking's `paymentStatus` is updated to `'paid'`** and the user sees a confirmation message.
+1. **Guest submits `BookingForm`** with `paymentMethod: "esewa"`. `POST /api/bookings` creates the booking with `status: "pending"`, `paymentStatus: "pending"` (§L25.4).
+2. **On create success**, `BookingForm.onSuccess` sees the eSewa branch and calls `POST /api/payments/initiate` with the booking id (§26.6).
+3. **Backend** generates `transactionId = ESW-<bookingId>-<timestamp>`, saves it on the booking, builds the HMAC-signed eSewa payload with `success_url` / `failure_url` pointing at **our backend**, and returns `{ paymentUrl, payload }`.
+4. **Frontend** auto-submits a hidden HTML form to `paymentUrl` (§26.5 Step 3). Browser navigates to eSewa.
+5. **Guest logs in and confirms payment on eSewa's page.**
+6. **eSewa redirects the browser** to our success URL: `GET https://api.ourapp.com/api/payments/esewa/callback/success?data=<base64>`.
+7. **Backend callback (`esewaSuccessCallback`)** decodes the base64 `data`, extracts `transaction_uuid` + `total_amount`, and calls eSewa's status check API for server-to-server verification.
+8. **Backend updates booking**: `paymentStatus: "paid"` (or `"failed"` if eSewa says the transaction isn't `COMPLETE`).
+9. **Backend responds with `302 Redirect`** to `${CLIENT_URL}/bookings/:id?payment=success` (or `?payment=failed`).
+10. **Browser lands on `BookingDetail`** in our SPA. `useBooking(id)` fetches the fresh booking (already `paid` in Mongo). The `useEffect` reads `?payment=success` and fires the Sonner toast. The Actions block now shows the "Paid via eSewa" receipt instead of the Pay Now button.
 
-> **Security note:** Step 9 is critical. Never trust the redirect alone. A malicious user could type your success URL directly into their browser without paying. Always verify server-side.
+The failure path is symmetrical: `/callback/failure` sets `paymentStatus: "failed"` (best-effort, based on `transaction_uuid` in the query), 302s to `/bookings/:id?payment=failed`, `BookingDetail` shows the error toast and a **Retry payment** button.
+
+> **Why server-to-server verify is critical (step 7).** Someone could open the browser and type `https://api.ourapp.com/api/payments/esewa/callback/success?data=<forged>` directly. The signature inside `data` protects us for genuine flows -- but the true belt-and-braces defense is that we don't trust the signed data alone; we call eSewa's status API to independently confirm the transaction is `COMPLETE`. Even a valid-looking signed blob that eSewa doesn't recognise gets rejected here.
 
 ---
 
@@ -1032,34 +975,186 @@ The component is tiny because all the work -- the API call, loading state, toast
 - A **receipt block** (transaction id, timestamp, status) when `paymentStatus === "paid"`.
 - A **"Retry payment"** button when `paymentStatus === "failed"` -- routes back to the eSewa initiate call.
 
-The **guest card list** (`/bookings`) gains a small `paymentStatus` chip on each card so guests can see at a glance which bookings still need paying without opening the detail page.
+---
+
+## 26.14 Cron Job: Reclaim Abandoned Bookings
+
+An eSewa booking that stays `paymentStatus: pending` forever is a problem. The room's dates are locked (they'd fail conflict-detection for any competing guest), even though the original guest almost certainly closed the tab and moved on. Without cleanup, one abandoned attempt can block a room for weeks.
+
+We fix this with a small **cron job** that periodically finds abandoned eSewa attempts and cancels them with a clear `cancellationReason`.
+
+### What we target (and what we don't)
+
+| Method | Do we auto-cancel? | Why |
+|---|---|---|
+| eSewa `paymentStatus: pending` past window | **Yes** | Guest started paying, never finished. Dates are locked. Reclaim. |
+| COD `paymentStatus: pending` | **No** | COD is *supposed* to sit at pending until the owner acts. No abandonment concept. |
+| Any `status: confirmed` | **No** | Owner has already agreed. Never auto-cancel. |
+| Any `status: cancelled` | **No** | Already terminal. |
+
+The exact query is `{ status: "pending", paymentStatus: "pending", paymentMethod: "esewa", createdAt: { $lt: cutoff } }`.
+
+### Install `node-cron`
+
+```bash
+cd booking-backend
+npm install node-cron
+npm install --save-dev @types/node-cron
+```
+
+`node-cron` gives us a familiar crontab-style scheduler with a two-line API. Runs in-process (no separate worker) which is fine for our teaching project. In production you'd typically move this into a dedicated worker so scaling the web tier doesn't multiply the cron runs.
+
+### The service
+
+```typescript
+// backend/src/services/cronService.ts
+// Matches Lesson 26 section 26.14. Reclaims abandoned eSewa bookings so
+// their dates come free for other guests to book.
+import cron from "node-cron";
+import Booking from "../models/Booking";
+
+// How long we give a guest to finish an eSewa payment before we
+// consider it abandoned. Configurable so students can shorten it to a
+// couple of minutes for testing.
+const ABANDON_MINUTES = Number(process.env.ABANDONED_BOOKING_MINUTES) || 30;
+
+// How often the sweeper runs. Every 5 minutes is a good middle ground:
+// long enough to keep DB load negligible, short enough that abandoned
+// rows come free promptly.
+const CRON_EXPRESSION = process.env.ABANDONED_BOOKING_CRON || "*/5 * * * *";
+
+async function cancelAbandonedEsewaBookings(): Promise<void> {
+  const cutoff = new Date(Date.now() - ABANDON_MINUTES * 60 * 1000);
+
+  // Note: COD bookings are NOT touched. Their `pending` state is legitimate
+  // -- it means the owner hasn't reviewed the booking yet, not that the
+  // guest disappeared. Only eSewa has a "started paying then vanished"
+  // failure mode.
+  const result = await Booking.updateMany(
+    {
+      status: "pending",
+      paymentStatus: "pending",
+      paymentMethod: "esewa",
+      createdAt: { $lt: cutoff },
+    },
+    {
+      $set: {
+        status: "cancelled",
+        paymentStatus: "failed",
+        cancellationReason: `Payment not completed within ${ABANDON_MINUTES} minutes`,
+      },
+    }
+  );
+
+  if (result.modifiedCount > 0) {
+    console.log(
+      `[cron] cancelled ${result.modifiedCount} abandoned eSewa booking(s)`
+    );
+  }
+}
+
+export function startCronJobs(): void {
+  cron.schedule(CRON_EXPRESSION, () => {
+    cancelAbandonedEsewaBookings().catch((err) => {
+      // Never let the cron throw. If the sweep fails once, we just try
+      // again on the next tick -- no need to crash the process.
+      console.error("[cron] cancelAbandonedEsewaBookings failed:", err);
+    });
+  });
+  console.log(
+    `[cron] scheduled abandoned-booking sweep (${CRON_EXPRESSION}, window ${ABANDON_MINUTES}m)`
+  );
+}
+```
+
+### Wire it up in `index.ts`
+
+Start the scheduler after the DB is connected. If Mongo isn't ready, the first sweep would just fail its query anyway.
+
+```typescript
+// backend/src/index.ts (diff)
+import { startCronJobs } from "./services/cronService";
+
+// ...existing setup...
+
+connectDB().then(() => {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    startCronJobs();
+  });
+});
+```
+
+### Env additions
+
+Add two optional env vars so students can dial the numbers down for demos:
+
+```env
+# backend/.env
+ABANDONED_BOOKING_MINUTES=30
+ABANDONED_BOOKING_CRON=*/5 * * * *
+```
+
+Also add matching placeholders to `.env.example` with the same defaults documented.
+
+### Why `updateMany`, not per-row?
+
+Every candidate row gets the *same* update -- there's no per-row logic (no per-booking emails, no per-booking reason). `updateMany` runs in one round trip on the server; a `for` loop over a `find()` would issue N `save()` calls for zero benefit.
+
+**If** you did want to email each guest ("we cancelled your abandoned booking, sorry!"), you'd `find()` first, iterate, send the email inside a `void ... .catch()`, then `updateMany` at the end. Not worth the complexity for L26 -- the cancellation reason on the detail page tells the story clearly enough.
+
+### What the guest sees
+
+Next time the guest opens the browser:
+
+- If they navigate to `/bookings`, the abandoned booking now shows a **Cancelled** badge instead of blocking the dates.
+- If they open the detail page, `BookingSummary`'s red banner shows: **Cancelled: Payment not completed within 30 minutes.**
+- They can go back to `/rooms/:id` and rebook -- the dates are free.
+
+### Verifying the cron in a test session
+
+Testing every 30 minutes is painful. For a quick demo, temporarily set:
+
+```env
+ABANDONED_BOOKING_MINUTES=1
+ABANDONED_BOOKING_CRON=*/1 * * * *
+```
+
+Then create an eSewa booking, close the tab before paying, wait 60-90 seconds, and refresh `/bookings`. You'll see the booking flip to Cancelled with the reason. Reset the env vars afterwards.
 
 ---
 
 ## Practice Exercises
 
-1. **COD flow:** Create a booking with COD payment method. Verify that the booking is created with `paymentStatus: 'pending'`. Then use the mark-paid endpoint to update it to `'paid'`.
+1. **COD flow** -- Create a booking with `paymentMethod: "cod"`. Verify that `POST /api/bookings` returns `status: "pending"` and `paymentStatus: "pending"`. As the owner, tap **Confirm** on `/owner/bookings/:id`, then tap **Mark cash received** and confirm both the guest's `/bookings/:id` and the owner's view flip to Paid.
 
-2. **eSewa integration:** Set up the eSewa service, payment routes, and frontend components. Use the sandbox credentials to complete a test payment from start to finish.
+2. **eSewa end-to-end (sandbox)** -- Book with `paymentMethod: "esewa"`. Confirm the browser redirects straight to eSewa on submit (no intermediate `/bookings` flash). Complete the sandbox payment; land back on `/bookings/:id?payment=success` with a green toast and a **Paid via eSewa** receipt block showing the `transactionId`.
 
-3. **Error handling:** What happens if the user navigates directly to `/payment/success` without actually paying? Test this scenario and confirm that the verification correctly rejects the attempt.
+3. **eSewa failure path** -- Start an eSewa payment, cancel on eSewa's page. Confirm you land on `/bookings/:id?payment=failed`, the toast is the error variant, and the `Retry payment` button re-fires the initiate.
 
-4. **Payment history:** Add a "Payment Status" badge to the bookings list that shows `Pending`, `Paid`, or `Failed` with appropriate colours (yellow, green, red).
+4. **Existence-safe callback** -- Hit `GET /api/payments/esewa/callback/success?data=notbase64` directly in the browser. The backend must gracefully redirect to `/bookings?payment=failed`, not error out to the guest.
 
-5. **Challenge:** Add a third payment method of your choice (e.g. Khalti, another Nepali payment gateway). Follow the same pattern: build a service, create initiate/verify endpoints, and update the frontend selector.
+5. **Cron demo** -- Set `ABANDONED_BOOKING_MINUTES=1` and `ABANDONED_BOOKING_CRON=*/1 * * * *`. Create an eSewa booking, close the tab before paying, wait 90 seconds. Confirm the booking is now Cancelled with `cancellationReason: "Payment not completed within 1 minutes"` (fix the pluralisation as a bonus). Confirm a fresh guest can now book the same dates -- the conflict-check no longer trips.
+
+6. **Cancellation reason in the UI** -- Manually cancel a booking in mongosh with `cancellationReason: "Room booked out for maintenance"`. Refresh `/bookings/:id`. The red banner shows the reason.
+
+7. **Stretch: Manual cancel with reason** -- Add an optional `<Textarea>` to the Cancel AlertDialogs on `BookingDetail` (guest self-cancel) and `OwnerBookingDetail` (owner cancel). If provided, the frontend passes `cancellationReason` alongside `status: "cancelled"` to `PATCH /api/bookings/:id/status`. Update the L25 validator + controller to accept it.
+
+8. **Stretch: Third payment method** -- Add Khalti as a third method. Widen the enum, add a Khalti service (`generateSignature`, `buildPayload`, `verifyPayment`), backend callbacks, and one more `<SelectItem>` in the BookingForm. Notice how little needs to change because everything routes through the same `paymentStatus` field.
 
 ---
 
 ## Key Takeaways
 
-- **COD is simple:** create the booking with `paymentStatus: 'pending'` and provide an endpoint for the owner to mark it as paid.
-- **eSewa uses a form-based redirect flow:** your backend generates a signed payload, the frontend submits it as a hidden form, the user pays on eSewa's site, and eSewa redirects back.
-- **HMAC-SHA256 signatures** prove that the payment request came from your application and has not been tampered with.
-- **Always verify payments server-side.** Never trust a redirect URL alone -- call eSewa's status check API to confirm the payment is genuinely complete.
-- **Backend endpoints follow the project pattern:** `validator + validateResult + controller (with explicit try/catch)` keeps controllers clean and consistent with Lesson 16.
-- **Every response uses the `{ data: ... }` envelope** -- no ad-hoc `success` booleans. The HTTP status and the booking's `paymentStatus` carry the meaning.
-- **The frontend never calls `fetch` directly for payments** -- a typed `paymentApi` service layer wraps every call, and React Query mutation hooks (`useInitiateEsewaPayment`, `useVerifyEsewaPayment`, `useMarkBookingPaid`) handle loading state, toasts, and cache invalidation.
-- **The Payment Method selector uses the new shadcn `Field` family** (`Field`, `FieldGroup`, `FieldLabel`, `FieldDescription`, `FieldError`) driven by RHF's `Controller` -- no `<Form>` wrapper, no `FormField`/`FormItem`/`FormControl`/`FormMessage`.
-- **For radio groups, `aria-invalid` goes on the `RadioGroup` itself**, and each `RadioGroupItem` keeps a regular `<Label htmlFor=...>` -- `FieldLabel` is reserved for the whole `Field`.
-- **Use sandbox credentials during development.** Switch to production credentials only when you are ready to accept real payments.
-- **Keep your secret key secure.** Store it in environment variables, never commit it to version control.
+- **Payment method never sets booking status.** `createBooking` from L25 always writes `status: "pending"`. The owner still confirms every request. Only `paymentStatus` varies by method (see the two-axis table in §26.2).
+- **COD is a two-mutation flow.** L25's `createBooking` creates the row; L26's `PATCH /api/bookings/:id/mark-paid` on the owner's `OwnerBookingDetail` page flips `paymentStatus` to `paid` after cash changes hands.
+- **eSewa uses a form-based redirect flow** with **backend callbacks** -- eSewa redirects to *our backend*, which verifies + updates the DB + 302s the guest to `BookingDetail`. This is safer than frontend callbacks: the booking is up-to-date the moment the guest's tab lands, even if they closed the tab mid-redirect.
+- **HMAC-SHA256 signatures** prove the payment request came from us. But we still call eSewa's status check API server-to-server -- a valid-looking signed blob eSewa doesn't recognise gets rejected here.
+- **No dedicated `/payment/success` or `/payment/failure` pages.** `BookingDetail` from L25 reads `?payment=` on mount, toasts, and strips the param. One page, three states (Pay Now / Retry / Receipt) driven by `paymentStatus`.
+- **Hybrid submit UX.** `BookingForm.onSuccess` branches by `paymentMethod`: COD → toast + `/bookings`; eSewa → `initiateEsewa(booking._id)` which auto-submits the hidden form. The guest never sees a "click Pay Now again" second step for online payments.
+- **`{ message }` on error responses**, matching the rest of the codebase. The Axios interceptor surfaces the friendly text via Sonner.
+- **Widening an enum is a safe migration** -- Mongoose doesn't backfill anything, existing rows with `paymentMethod: "cod"` still validate. Just re-deploy the model file.
+- **`cancellationReason` for user-visible cancellations.** The cron auto-sets it; `BookingSummary` shows it in a red banner on both detail pages. Manual cancels (guest / owner) don't set it in L26 but can be extended by the stretch exercise above.
+- **Cron reclaims abandoned eSewa bookings** so their dates come free. Never touches COD (its `pending` state is legitimate), never touches `confirmed` or `cancelled`. Runs `updateMany` in one round trip. `node-cron` is fine in-process for the teaching stack; a real production system would move it to a dedicated worker so scaling the web tier doesn't multiply the sweeps.
+- **Use sandbox credentials during development.** `EPAYTEST` / `8gBm/:&EnhH.1/q` are publicly-documented eSewa test values. Swap to real merchant creds only when you're accepting real money.
+- **Keep secrets in `.env`, never in git.** `.env.example` documents the shape with placeholders and is safe to commit.
