@@ -47,7 +47,7 @@ export function Navbar() {
             Browse Rooms
           </NavLink>
           {user && (
-            <NavLink to="/my-bookings" className={navLinkClass}>
+            <NavLink to="/bookings" className={navLinkClass}>
               My Bookings
             </NavLink>
           )}
@@ -79,9 +79,11 @@ export function Navbar() {
                   </div>
                 </div>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem>
-                  <UserIcon className="mr-2 size-4" />
-                  Profile
+                <DropdownMenuItem asChild>
+                  <Link to="/profile">
+                    <UserIcon className="mr-2 size-4" />
+                    Profile
+                  </Link>
                 </DropdownMenuItem>
                 {user.role === "owner" && (
                   <DropdownMenuItem asChild>
