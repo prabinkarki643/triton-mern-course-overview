@@ -115,6 +115,10 @@ The only owner-side action we **add** in L26 is a new endpoint that lets them ti
 import { Request, Response } from "express";
 import Booking, { IBooking } from "../models/Booking";
 import Room, { IRoom } from "../models/Room";
+import {
+  sendMail,
+  bookingPaymentReceivedGuestEmail,
+} from "../services/mailService";
 
 // PATCH /api/bookings/:id/mark-paid  (owner only)
 // COD bookings only -- eSewa payments become "paid" via the callback in §26.6.
@@ -156,12 +160,41 @@ export const markBookingPaid = async (
     const populated = await Booking.findById(booking._id)
       .populate("room", "title location price images owner")
       .populate("user", "name email");
+
+    // Email the guest a receipt. NOT the owner -- they just triggered
+    // this themselves, self-emails are noise. Fire-and-forget so a mail
+    // outage never blocks the money-received update.
+    if (populated) {
+      void notifyGuestOfPayment(populated).catch((err) => {
+        console.error("Payment receipt email (guest) failed:", err);
+      });
+    }
+
     res.json({ data: populated });
   } catch (error: unknown) {
     console.error("markBookingPaid error:", error);
     res.status(500).json({ message: "Failed to mark booking as paid" });
   }
 };
+
+// Shared helper -- called from both markBookingPaid (COD) and
+// esewaSuccessCallback (eSewa). Same template, template branches on
+// paymentMethod internally.
+async function notifyGuestOfPayment(populated: IBooking): Promise<void> {
+  const room = populated.room as unknown as IRoom;
+  const guest = populated.user as unknown as { name: string; email: string };
+  const { subject, html } = bookingPaymentReceivedGuestEmail({
+    guestName: guest.name,
+    roomTitle: room.title,
+    checkIn: populated.checkIn,
+    checkOut: populated.checkOut,
+    totalPrice: populated.totalPrice,
+    paymentMethod: populated.paymentMethod,
+    transactionId: populated.transactionId,
+    bookingId: String(populated._id),
+  });
+  await sendMail({ to: guest.email, subject, html });
+}
 ```
 
 And its route + validator entry:
@@ -307,6 +340,105 @@ Let us break down each function:
 
 ---
 
+### 26.5.1 Extending `mailService` with Payment-Receipt Templates
+
+Whenever `paymentStatus` flips to `"paid"` -- either because eSewa verified an online payment (§26.6) or because the owner marked cash received (§26.3) -- we send the **guest** a receipt. For eSewa specifically we also notify the **owner** ("money hit your account for booking X"). On COD the owner triggered the transition themselves, so no owner email is needed.
+
+We extend the mailer from Lesson 21.1 with two more named templates, in the same file where the L25 booking templates already live. Same shape, same XSS-safe `escape()` helper.
+
+```ts
+// backend/src/services/mailService.ts   (append below the L25 templates)
+
+interface BookingPaymentReceivedGuestParams {
+  guestName: string;
+  roomTitle: string;
+  checkIn: Date;
+  checkOut: Date;
+  totalPrice: number;
+  paymentMethod: "cod" | "esewa";
+  transactionId?: string;
+  bookingId: string;
+}
+
+export function bookingPaymentReceivedGuestEmail(
+  params: BookingPaymentReceivedGuestParams
+): { subject: string; html: string } {
+  const subject = `Payment received for ${params.roomTitle}`;
+  const paymentLine =
+    params.paymentMethod === "esewa"
+      ? `Transaction id: <code>${escape(params.transactionId ?? "-")}</code>`
+      : "Cash received on arrival.";
+  const html = `
+    <div style="font-family: system-ui, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; color: #111;">
+      <h2 style="margin-top:0">Payment received</h2>
+      <p>Hi ${escape(params.guestName)},</p>
+      <p>
+        We've received your payment of
+        <strong>Rs ${params.totalPrice}</strong> for
+        <strong>${escape(params.roomTitle)}</strong>.
+      </p>
+      <p>${paymentLine}</p>
+      <table style="width:100%; border-collapse: collapse; margin: 16px 0;">
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Check-in</td>
+          <td style="padding: 6px 0;">${fmtDate(params.checkIn)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 0; color:#666;">Check-out</td>
+          <td style="padding: 6px 0;">${fmtDate(params.checkOut)}</td>
+        </tr>
+      </table>
+      <p style="color:#666; font-size: 13px;">Booking id: <code>${params.bookingId}</code></p>
+    </div>
+  `;
+  return { subject, html };
+}
+
+interface BookingPaymentReceivedOwnerParams {
+  ownerName: string;
+  guestName: string;
+  roomTitle: string;
+  totalPrice: number;
+  transactionId: string;
+  bookingId: string;
+}
+
+// Only fired on eSewa. COD payments are marked received BY the owner --
+// they don't need an email about an action they just performed.
+export function bookingPaymentReceivedOwnerEmail(
+  params: BookingPaymentReceivedOwnerParams
+): { subject: string; html: string } {
+  const subject = `Payment received: ${params.roomTitle} (Rs ${params.totalPrice})`;
+  const html = `
+    <div style="font-family: system-ui, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; color: #111;">
+      <h2 style="margin-top:0">A guest just paid for their booking</h2>
+      <p>Hi ${escape(params.ownerName)},</p>
+      <p>
+        <strong>${escape(params.guestName)}</strong> has paid
+        <strong>Rs ${params.totalPrice}</strong> via eSewa for
+        <strong>${escape(params.roomTitle)}</strong>.
+      </p>
+      <p>Transaction id: <code>${escape(params.transactionId)}</code></p>
+      <p style="color:#666; font-size: 13px;">Booking id: <code>${params.bookingId}</code></p>
+    </div>
+  `;
+  return { subject, html };
+}
+```
+
+The `fmtDate` and `escape` helpers already exist in `mailService.ts` from L21.1 / L25 -- reuse them, don't redeclare.
+
+**Why an owner email for eSewa but not COD:**
+
+| Path | Guest email | Owner email | Reason |
+|---|---|---|---|
+| eSewa verify | ✅ | ✅ | Both parties get an autonomous "money moved" notification -- neither triggered it manually |
+| COD mark-paid | ✅ | ❌ | The owner *is* the actor. Emailing them about a click they just made is noise. |
+
+Wire both from inside `void ...catch(logger)` fire-and-forget wrappers, same as every other mail send in the app.
+
+---
+
 ## 26.6 Payment Endpoints: Backend
 
 Three endpoints total: **initiate** (called by the frontend to get the signed payload) and **two backend callbacks** that eSewa itself redirects to. **The callbacks are the important design decision** -- eSewa points at your backend, not your frontend, so signature verification runs before the guest sees any UI and the booking is up-to-date the moment their browser lands back on the app.
@@ -346,7 +478,14 @@ No verify validator -- the callbacks read their id from a signed field inside eS
 // backend/src/controllers/paymentController.ts
 import { Request, Response } from "express";
 import Booking, { IBooking } from "../models/Booking";
+import User, { IUser } from "../models/User";
+import Room, { IRoom } from "../models/Room";
 import { buildPayload, verifyPayment } from "../services/esewa.service";
+import {
+  sendMail,
+  bookingPaymentReceivedGuestEmail,
+  bookingPaymentReceivedOwnerEmail,
+} from "../services/mailService";
 
 // POST /api/payments/initiate  (frontend)
 // Returns the eSewa form action URL and the signed payload the frontend
@@ -389,13 +528,12 @@ export const initiateEsewaPayment = async (
 
     // success_url and failure_url both point at OUR backend. eSewa will
     // hit these with GET redirects carrying the signed data field.
-    const apiBase =
-      process.env.API_BASE_URL || `http://localhost:${process.env.PORT || 4001}`;
+    const serverBase = process.env.SERVER_BASE_URL || "http://localhost:4001";
     const payload = buildPayload(
       booking.totalPrice,
       transactionId,
-      `${apiBase}/api/payments/esewa/callback/success`,
-      `${apiBase}/api/payments/esewa/callback/failure`
+      `${serverBase}/api/payments/esewa/callback/success`,
+      `${serverBase}/api/payments/esewa/callback/failure`
     );
 
     const paymentUrl =
@@ -439,7 +577,11 @@ export const esewaSuccessCallback = async (
       return;
     }
 
-    const booking = await Booking.findOne({ transactionId });
+    // Populate on lookup so we have room+owner+guest ready for the
+    // notification emails without a second round-trip.
+    const booking = await Booking.findOne({ transactionId })
+      .populate("room", "title location price images owner")
+      .populate("user", "name email");
     if (!booking) {
       // Landed on our callback with an unknown transaction id.
       res.redirect(`${clientBase}/bookings?payment=failed`);
@@ -451,6 +593,17 @@ export const esewaSuccessCallback = async (
     booking.paymentStatus = ok ? "paid" : "failed";
     await booking.save();
 
+    // On success, fire TWO fire-and-forget emails:
+    //   - guest: "We received your payment"
+    //   - owner: "Money hit your account for booking X"
+    // Both are autonomous (neither party clicked a button), so both
+    // deserve a notification. See §26.5.1 for the design table.
+    if (ok) {
+      void notifyPaymentReceived(booking).catch((err) => {
+        console.error("Payment receipt emails failed:", err);
+      });
+    }
+
     res.redirect(
       `${clientBase}/bookings/${booking._id}?payment=${ok ? "success" : "failed"}`
     );
@@ -459,6 +612,49 @@ export const esewaSuccessCallback = async (
     res.redirect(`${clientBase}/bookings?payment=failed`);
   }
 };
+
+// Shared helper -- fires the guest receipt + the owner notification.
+// Called only from the eSewa success path (COD bookings notify guest
+// only, from markBookingPaid).
+async function notifyPaymentReceived(populated: IBooking): Promise<void> {
+  const room = populated.room as unknown as IRoom;
+  const guest = populated.user as unknown as { name: string; email: string };
+  const owner: IUser | null = await User.findById(room.owner);
+
+  // Guest receipt
+  const guestEmail = bookingPaymentReceivedGuestEmail({
+    guestName: guest.name,
+    roomTitle: room.title,
+    checkIn: populated.checkIn,
+    checkOut: populated.checkOut,
+    totalPrice: populated.totalPrice,
+    paymentMethod: populated.paymentMethod,
+    transactionId: populated.transactionId,
+    bookingId: String(populated._id),
+  });
+  await sendMail({
+    to: guest.email,
+    subject: guestEmail.subject,
+    html: guestEmail.html,
+  });
+
+  // Owner notification (skip if we somehow can't find the owner)
+  if (owner) {
+    const ownerEmail = bookingPaymentReceivedOwnerEmail({
+      ownerName: owner.name,
+      guestName: guest.name,
+      roomTitle: room.title,
+      totalPrice: populated.totalPrice,
+      transactionId: populated.transactionId ?? "-",
+      bookingId: String(populated._id),
+    });
+    await sendMail({
+      to: owner.email,
+      subject: ownerEmail.subject,
+      html: ownerEmail.html,
+    });
+  }
+}
 
 // GET /api/payments/esewa/callback/failure  (eSewa -> us)
 // eSewa may redirect here without a signed payload (user cancelled on
@@ -556,7 +752,7 @@ ESEWA_TEST_MODE=true
 # development the same http://localhost:4001 that runs the API works
 # because eSewa's redirect happens in the guest's own browser (their
 # browser is running on the same machine, so it can reach localhost).
-API_BASE_URL=http://localhost:4001
+SERVER_BASE_URL=http://localhost:4001
 
 # Frontend origin the callbacks 302 back to (already set in L20)
 CLIENT_URL=http://localhost:3002
@@ -566,7 +762,7 @@ Mirror the two new keys into `.env.example` with placeholder values so the next 
 
 > **Important:** `EPAYTEST` / `8gBm/:&EnhH.1/q` are eSewa's official sandbox credentials -- publicly documented and safe for development. Replace with real values from your eSewa merchant account for production.
 >
-> **Production caveat:** `API_BASE_URL` must be a public HTTPS URL that eSewa can reach (their servers issue the redirect that lands in the guest's browser -- but the URL string must be a valid public origin, since eSewa's dashboard validates it). Localhost only works during local development because the guest's own browser is on the same machine.
+> **Production caveat:** `SERVER_BASE_URL` must be a public HTTPS URL that eSewa can reach (their servers issue the redirect that lands in the guest's browser -- but the URL string must be a valid public origin, since eSewa's dashboard validates it). Localhost only works during local development because the guest's own browser is on the same machine.
 
 ---
 
@@ -874,8 +1070,9 @@ End-to-end path with backend callbacks. Each step is a genuine HTTP request or u
 6. **eSewa redirects the browser** to our success URL: `GET https://api.ourapp.com/api/payments/esewa/callback/success?data=<base64>`.
 7. **Backend callback (`esewaSuccessCallback`)** decodes the base64 `data`, extracts `transaction_uuid` + `total_amount`, and calls eSewa's status check API for server-to-server verification.
 8. **Backend updates booking**: `paymentStatus: "paid"` (or `"failed"` if eSewa says the transaction isn't `COMPLETE`).
-9. **Backend responds with `302 Redirect`** to `${CLIENT_URL}/bookings/:id?payment=success` (or `?payment=failed`).
-10. **Browser lands on `BookingDetail`** in our SPA. `useBooking(id)` fetches the fresh booking (already `paid` in Mongo). The `useEffect` reads `?payment=success` and fires the Sonner toast. The Actions block now shows the "Paid via eSewa" receipt instead of the Pay Now button.
+9. **On success**, backend fires **two fire-and-forget emails** (guest: "we received your payment", owner: "money hit your account for booking X") -- both autonomous notifications, neither party triggered the transition manually.
+10. **Backend responds with `302 Redirect`** to `${CLIENT_URL}/bookings/:id?payment=success` (or `?payment=failed`).
+11. **Browser lands on `BookingDetail`** in our SPA. `useBooking(id)` fetches the fresh booking (already `paid` in Mongo). The `useEffect` reads `?payment=success` and fires the Sonner toast. The Actions block now shows the "Paid via eSewa" receipt instead of the Pay Now button.
 
 The failure path is symmetrical: `/callback/failure` sets `paymentStatus: "failed"` (best-effort, based on `transaction_uuid` in the query), 302s to `/bookings/:id?payment=failed`, `BookingDetail` shows the error toast and a **Retry payment** button.
 
@@ -1149,6 +1346,7 @@ Then create an eSewa booking, close the tab before paying, wait 60-90 seconds, a
 - **Payment method never sets booking status.** `createBooking` from L25 always writes `status: "pending"`. The owner still confirms every request. Only `paymentStatus` varies by method (see the two-axis table in §26.2).
 - **COD is a two-mutation flow.** L25's `createBooking` creates the row; L26's `PATCH /api/bookings/:id/mark-paid` on the owner's `OwnerBookingDetail` page flips `paymentStatus` to `paid` after cash changes hands.
 - **eSewa uses a form-based redirect flow** with **backend callbacks** -- eSewa redirects to *our backend*, which verifies + updates the DB + 302s the guest to `BookingDetail`. This is safer than frontend callbacks: the booking is up-to-date the moment the guest's tab lands, even if they closed the tab mid-redirect.
+- **Payment-received emails follow the "manual actor gets no self-email" rule.** eSewa success → both guest and owner receive a notification (autonomous transition). COD mark-paid → only the guest is emailed (the owner just clicked the button; emailing them would be noise). Both paths call the same `bookingPaymentReceivedGuestEmail` template.
 - **HMAC-SHA256 signatures** prove the payment request came from us. But we still call eSewa's status check API server-to-server -- a valid-looking signed blob eSewa doesn't recognise gets rejected here.
 - **No dedicated `/payment/success` or `/payment/failure` pages.** `BookingDetail` from L25 reads `?payment=` on mount, toasts, and strips the param. One page, three states (Pay Now / Retry / Receipt) driven by `paymentStatus`.
 - **Hybrid submit UX.** `BookingForm.onSuccess` branches by `paymentMethod`: COD → toast + `/bookings`; eSewa → `initiateEsewa(booking._id)` which auto-submits the hidden form. The guest never sees a "click Pay Now again" second step for online payments.
