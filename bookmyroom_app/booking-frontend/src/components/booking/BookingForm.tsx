@@ -100,47 +100,50 @@ function BookingForm({ room }: BookingFormProps) {
       <CardContent>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
           <FieldGroup>
-            <div className="grid grid-cols-2 gap-3">
-              <Controller
-                name="checkIn"
-                control={form.control}
-                render={({ field, fieldState }) => (
-                  <Field data-invalid={fieldState.invalid}>
-                    <FieldLabel htmlFor={field.name}>Check-in</FieldLabel>
-                    <Input
-                      {...field}
-                      id={field.name}
-                      type="date"
-                      min={today}
-                      aria-invalid={fieldState.invalid}
-                    />
-                    {fieldState.invalid && (
-                      <FieldError errors={[fieldState.error]} />
-                    )}
-                  </Field>
-                )}
-              />
+            {/* Dates stack vertically. The BookingForm sits in a narrow 1/3
+                column on desktop, and Chrome/Safari won't shrink native date
+                inputs below ~150px without truncating "mm/dd/yyyy" -- so two
+                side-by-side dates always look broken. Stacking keeps them
+                fully readable at every viewport. */}
+            <Controller
+              name="checkIn"
+              control={form.control}
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>Check-in</FieldLabel>
+                  <Input
+                    {...field}
+                    id={field.name}
+                    type="date"
+                    min={today}
+                    aria-invalid={fieldState.invalid}
+                  />
+                  {fieldState.invalid && (
+                    <FieldError errors={[fieldState.error]} />
+                  )}
+                </Field>
+              )}
+            />
 
-              <Controller
-                name="checkOut"
-                control={form.control}
-                render={({ field, fieldState }) => (
-                  <Field data-invalid={fieldState.invalid}>
-                    <FieldLabel htmlFor={field.name}>Check-out</FieldLabel>
-                    <Input
-                      {...field}
-                      id={field.name}
-                      type="date"
-                      min={checkIn || today}
-                      aria-invalid={fieldState.invalid}
-                    />
-                    {fieldState.invalid && (
-                      <FieldError errors={[fieldState.error]} />
-                    )}
-                  </Field>
-                )}
-              />
-            </div>
+            <Controller
+              name="checkOut"
+              control={form.control}
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>Check-out</FieldLabel>
+                  <Input
+                    {...field}
+                    id={field.name}
+                    type="date"
+                    min={checkIn || today}
+                    aria-invalid={fieldState.invalid}
+                  />
+                  {fieldState.invalid && (
+                    <FieldError errors={[fieldState.error]} />
+                  )}
+                </Field>
+              )}
+            />
 
             <Controller
               name="guests"
