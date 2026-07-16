@@ -15,6 +15,22 @@ import roomRoutes from "./routes/roomRoutes";
 import bookingRoutes from "./routes/bookingRoutes";
 import paymentRoutes from "./routes/paymentRoutes";
 import { startCronJobs } from "./services/cronService";
+import dns from "dns";
+
+// Optional DNS override for MongoDB Atlas connections.
+//
+// The Atlas connection string uses the mongodb+srv:// scheme, which
+// asks Node to resolve DNS SRV and TXT records for the cluster host.
+// Some ISPs and campus/university networks filter or fail these
+// lookups -- the driver then throws "querySrv ENOTFOUND" or
+// "queryTxt ENODATA" and the app can't reach Mongo.
+//
+// dns.setServers() overrides Node's DNS resolver just for THIS
+// process (nothing else on the machine changes) and points it at
+// Google's Public DNS, which reliably serves SRV / TXT records.
+// If you never hit Atlas resolution errors you can safely delete
+// these two lines.
+dns.setServers(["8.8.8.8", "8.8.4.4"]);
 
 // Load environment variables BEFORE anything else
 dotenv.config();
