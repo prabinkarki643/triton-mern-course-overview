@@ -241,6 +241,8 @@ eSewa uses a **form-based redirect** flow. This means your application never han
 
 The signature uses **HMAC-SHA256**, which is a way of proving that the request genuinely came from your application and has not been tampered with.
 
+> **v1 vs v2 -- what to Google, what to ignore.** eSewa's current integration is called **ePay v2**. It's what this lesson uses, what the [official docs](https://developer.esewa.com.np/pages/Epay) describe, and what your backend will POST to `rc-epay.esewa.com.np/api/epay/main/v2/form`. You will still find plenty of old tutorials pointing at **ePay v1** URLs like `https://uat.esewa.com.np/epay/main` (sandbox, now retired -- the host doesn't even resolve) or `https://esewa.com.np/epay/main` (production, ancient). v1 tells give-aways: uses field names `scd` / `pid` / `amt`, has no signature step, and returns plain `?oid=...&refId=...` query params in the callback. If you see any of those, you're looking at v1 -- close the tab and find v2 material instead. If AI assistants (including ChatGPT) suggest an `scd` field in your signature, that's another v1 leak; v2 uses `product_code`.
+
 ---
 
 ## 26.5 eSewa Service: Backend
@@ -1339,6 +1341,31 @@ ABANDONED_BOOKING_CRON=*/1 * * * *
 ```
 
 Then create an eSewa booking, close the tab before paying, wait 60-90 seconds, and refresh `/bookings`. You'll see the booking flip to Cancelled with the reason. Reset the env vars afterwards.
+
+### About those `[NODE-CRON] [WARN] missed execution at ...` messages
+
+If you leave the backend running for a while on your laptop, especially over lunch or between classes, you may see runs of warnings like this in the terminal:
+
+```
+[NODE-CRON] [WARN] missed execution at Thu Jul 16 2026 11:00:00 GMT+0545!
+  Possible blocking IO or high CPU user at the same process used by node-cron.
+[NODE-CRON] [WARN] missed execution at Thu Jul 16 2026 11:05:00 GMT+0545!
+[NODE-CRON] [WARN] missed execution at Thu Jul 16 2026 11:10:00 GMT+0545!
+```
+
+This is not a bug in our code and no data is lost.
+
+`node-cron` (v4+) compares "when a tick was scheduled to fire" against "when the process actually got CPU". If several ticks were missed in a row, it emits one warn per missed slot the moment the process wakes up. The wording ("Possible blocking IO or high CPU user") sounds scary but is usually misleading for us -- our sweep is a single indexed `updateMany`, done in a couple of milliseconds. What's actually happening is the operating system suspended the Node process for a while, so the timer couldn't fire:
+
+- **Laptop sleep** -- lid closed / display slept -- freezes every process on the machine until you come back.
+- **macOS App Nap** -- Terminal.app throttles or fully suspends tabs that lose focus for long enough while running on battery.
+
+When the OS lets the process run again, node-cron's next real tick still catches everything: `updateMany` reads live time on each run, so a booking that crossed the threshold while your laptop was asleep is picked up in the very next sweep. The warns are informational -- the sweep itself is idempotent and correct.
+
+Two mitigations if the noise bothers you during dev:
+
+1. Keep the terminal awake with `caffeinate -i npm run dev` on macOS -- `-i` prevents idle sleep for as long as `npm run dev` is running.
+2. Ignore them. On a real deployment (Render, Railway, Fly, PM2 on a VPS) the process never sleeps, and you won't see these at all.
 
 ---
 
