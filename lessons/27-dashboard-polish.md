@@ -34,22 +34,21 @@ We follow the standard project pattern from Lesson 16: a controller with an expl
 
 ```typescript
 // backend/src/controllers/dashboardController.ts
-import { Response } from 'express';
-import mongoose from 'mongoose';
-import { Booking } from '../models/Booking';
-import { Room } from '../models/Room';
-import type { AuthRequest } from '../types/auth';
+import { Request, Response } from "express";
+import mongoose from "mongoose";
+import Booking from "../models/Booking";
+import Room from "../models/Room";
 
 // GET /api/dashboard/owner/stats
 export const getOwnerStats = async (
-  req: AuthRequest,
+  req: Request,
   res: Response
 ): Promise<void> => {
   try {
-    const ownerId = new mongoose.Types.ObjectId(req.userId);
+    const ownerId = new mongoose.Types.ObjectId(req.user!.userId);
 
     // Get all room IDs belonging to this owner
-    const ownerRooms = await Room.find({ owner: ownerId }).select('_id');
+    const ownerRooms = await Room.find({ owner: ownerId }).select("_id");
     const ownerRoomIds = ownerRooms.map((room) => room._id);
     const totalRooms = ownerRooms.length;
 
@@ -60,15 +59,15 @@ export const getOwnerStats = async (
         $group: {
           _id: null,
           totalBookings: { $sum: 1 },
-          totalRevenue: { $sum: '$totalPrice' },
+          totalRevenue: { $sum: "$totalPrice" },
           confirmedBookings: {
-            $sum: { $cond: [{ $eq: ['$status', 'confirmed'] }, 1, 0] },
+            $sum: { $cond: [{ $eq: ["$status", "confirmed"] }, 1, 0] },
           },
           pendingBookings: {
-            $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] },
+            $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] },
           },
           paidBookings: {
-            $sum: { $cond: [{ $eq: ['$paymentStatus', 'paid'] }, 1, 0] },
+            $sum: { $cond: [{ $eq: ["$paymentStatus", "paid"] }, 1, 0] },
           },
         },
       },
@@ -90,24 +89,28 @@ export const getOwnerStats = async (
       },
     });
   } catch (error: unknown) {
-    console.error('getOwnerStats error:', error);
-    res.status(500).json({ error: 'Failed to load owner stats' });
+    console.error("getOwnerStats error:", error);
+    res.status(500).json({ message: "Failed to load owner stats" });
   }
 };
 ```
 
+> **Where does `req.user` come from?** From the `requireAuth` middleware in Lesson 20. It verifies the JWT and attaches `{ userId, role }` to the request; the type augmentation in `src/types/express.d.ts` makes `req.user` visible to TypeScript. We use `req.user!.userId` here for the same reason the L25/L26 controllers do -- the route is behind `requireAuth`, so `req.user` is guaranteed to be present.
+
 ```typescript
-// backend/src/routes/dashboard.ts
-import { Router } from 'express';
-import { getOwnerStats } from '../controllers/dashboardController';
-import { authMiddleware } from '../middleware/auth';
+// backend/src/routes/dashboardRoutes.ts
+import { Router } from "express";
+import { getOwnerStats } from "../controllers/dashboardController";
+import { requireAuth, requireRole } from "../middleware/auth";
 
 const router = Router();
 
-router.get('/owner/stats', authMiddleware, getOwnerStats);
+router.get("/owner/stats", requireAuth, requireRole("owner"), getOwnerStats);
 
 export default router;
 ```
+
+> **Why `requireRole("owner")` and not just `requireAuth`?** Owner stats leak booking counts and revenue for that owner's rooms. `requireRole` (from L23.2 backend) blocks a signed-in guest from calling `/api/dashboard/owner/stats` at all -- 403 instead of leaking the shape of another user's numbers.
 
 Let us break down the aggregation pipeline:
 
@@ -121,9 +124,9 @@ Register the route:
 
 ```typescript
 // backend/src/index.ts
-import dashboardRoutes from './routes/dashboard';
+import dashboardRoutes from "./routes/dashboardRoutes";
 
-app.use('/api/dashboard', dashboardRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 ```
 
 ---
@@ -137,34 +140,42 @@ The dashboard should also show the most recent bookings. Same pattern -- explici
 
 // GET /api/dashboard/owner/recent-bookings
 export const getOwnerRecentBookings = async (
-  req: AuthRequest,
+  req: Request,
   res: Response
 ): Promise<void> => {
   try {
-    const ownerId = new mongoose.Types.ObjectId(req.userId);
+    const ownerId = new mongoose.Types.ObjectId(req.user!.userId);
 
-    const ownerRooms = await Room.find({ owner: ownerId }).select('_id');
+    const ownerRooms = await Room.find({ owner: ownerId }).select("_id");
     const ownerRoomIds = ownerRooms.map((room) => room._id);
 
     const recentBookings = await Booking.find({ room: { $in: ownerRoomIds } })
-      .populate('user', 'name email')
-      .populate('room', 'title')
+      .populate("user", "name email")
+      .populate("room", "title")
       .sort({ createdAt: -1 })
       .limit(10);
 
     res.json({ data: recentBookings });
   } catch (error: unknown) {
-    console.error('getOwnerRecentBookings error:', error);
-    res.status(500).json({ error: 'Failed to load recent bookings' });
+    console.error("getOwnerRecentBookings error:", error);
+    res.status(500).json({ message: "Failed to load recent bookings" });
   }
 };
 ```
 
 ```typescript
-// Add to backend/src/routes/dashboard.ts
-import { getOwnerStats, getOwnerRecentBookings } from '../controllers/dashboardController';
+// Add to backend/src/routes/dashboardRoutes.ts
+import {
+  getOwnerStats,
+  getOwnerRecentBookings,
+} from "../controllers/dashboardController";
 
-router.get('/owner/recent-bookings', authMiddleware, getOwnerRecentBookings);
+router.get(
+  "/owner/recent-bookings",
+  requireAuth,
+  requireRole("owner"),
+  getOwnerRecentBookings
+);
 ```
 
 ---
@@ -183,7 +194,7 @@ The Owner Dashboard pulls together everything we have built in previous lessons:
 ### Step 1: Dashboard Types
 
 ```typescript
-// webapp/src/types/dashboard.ts
+// booking-frontend/src/types/dashboard.ts
 export interface OwnerStats {
   totalRooms: number;
   totalBookings: number;
@@ -214,7 +225,7 @@ export interface DashboardBooking {
 ### Step 2: The `dashboardApi` Service
 
 ```typescript
-// webapp/src/services/dashboardApi.ts
+// booking-frontend/src/services/dashboardApi.ts
 import api from './api';
 import type {
   OwnerStats,
@@ -247,7 +258,7 @@ Notice the **double `.data`** -- Axios gives us the HTTP body in `response.data`
 ### Step 3: Query Keys Factory + Hooks
 
 ```typescript
-// webapp/src/hooks/useDashboard.ts
+// booking-frontend/src/hooks/useDashboard.ts
 import { useQuery } from '@tanstack/react-query';
 import { dashboardApi } from '../services/dashboardApi';
 
@@ -288,7 +299,7 @@ Now any component anywhere in the app can call these hooks and benefit from cach
 Following the column-definition pattern from Lesson 17.1:
 
 ```tsx
-// webapp/src/components/dashboard/recent-bookings-columns.tsx
+// booking-frontend/src/components/dashboard/recent-bookings-columns.tsx
 import type { ColumnDef } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
 import type { DashboardBooking } from '@/types/dashboard';
@@ -361,7 +372,7 @@ export const recentBookingsColumns: ColumnDef<DashboardBooking>[] = [
 ### Step 5: Reusable Stats Card with Skeleton Loading
 
 ```tsx
-// webapp/src/components/dashboard/stats-card.tsx
+// booking-frontend/src/components/dashboard/stats-card.tsx
 import type { ReactNode } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -486,11 +497,11 @@ The user dashboard shows the user's own bookings and spending. Same backend patt
 
 // GET /api/dashboard/user/stats
 export const getUserStats = async (
-  req: AuthRequest,
+  req: Request,
   res: Response
 ): Promise<void> => {
   try {
-    const userId = new mongoose.Types.ObjectId(req.userId);
+    const userId = new mongoose.Types.ObjectId(req.user!.userId);
 
     const stats = await Booking.aggregate([
       { $match: { user: userId } },
@@ -498,9 +509,9 @@ export const getUserStats = async (
         $group: {
           _id: null,
           totalBookings: { $sum: 1 },
-          totalSpent: { $sum: '$totalPrice' },
+          totalSpent: { $sum: "$totalPrice" },
           upcomingBookings: {
-            $sum: { $cond: [{ $gte: ['$checkIn', new Date()] }, 1, 0] },
+            $sum: { $cond: [{ $gte: ["$checkIn", new Date()] }, 1, 0] },
           },
         },
       },
@@ -514,8 +525,8 @@ export const getUserStats = async (
 
     res.json({ data: userStats });
   } catch (error: unknown) {
-    console.error('getUserStats error:', error);
-    res.status(500).json({ error: 'Failed to load user stats' });
+    console.error("getUserStats error:", error);
+    res.status(500).json({ message: "Failed to load user stats" });
   }
 };
 ```
@@ -523,66 +534,73 @@ export const getUserStats = async (
 Wire it into the router:
 
 ```typescript
-// backend/src/routes/dashboard.ts
-import { getOwnerStats, getOwnerRecentBookings, getUserStats } from '../controllers/dashboardController';
+// backend/src/routes/dashboardRoutes.ts
+import {
+  getOwnerStats,
+  getOwnerRecentBookings,
+  getUserStats,
+} from "../controllers/dashboardController";
 
-router.get('/user/stats', authMiddleware, getUserStats);
+router.get("/user/stats", requireAuth, getUserStats);
 ```
 
-> The user's upcoming/past bookings can reuse the existing **bookings list endpoint** (with filters like `?upcoming=true`) via the `useBookings` hook -- there is no need for a separate dashboard route. Lean on the patterns you already have.
+> `/user/stats` intentionally omits `requireRole` -- both guests and owners have "user bookings" (their own reservations), so anyone signed in can see their own numbers.
+>
+> For upcoming/past **lists**, we deliberately do **not** add server-side filters. `useMyBookings()` from L25 already fetches everything the current user has, and splitting by date on the client is one `filter()`. Adding server filters here would double the surface area for no real gain.
 
 ### Frontend
 
-The page consumes `useUserStats()` (from the dashboard hooks above) and `useBookings({ ... })` from your existing bookings hook. There is no `fetch`, no `useEffect`, no `useState` for server data.
+The page consumes `useUserStats()` (from the dashboard hooks above) and `useMyBookings()` from L25 -- no new endpoint, no new hook. We split into upcoming vs past on the client using `booking.checkIn` vs `Date.now()`. The existing `<BookingCard>` from L25.15.2 renders each row.
 
 ```tsx
-// webapp/src/pages/UserDashboard.tsx
-import { CalendarCheck, Wallet, Clock } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { StatsCard } from '@/components/dashboard/stats-card';
-import { useUserStats } from '@/hooks/useDashboard';
-import { useBookings } from '@/hooks/useBookings';
-import type { Booking } from '@/types/booking';
+// booking-frontend/src/pages/UserDashboard.tsx
+import { useMemo } from "react";
+import { CalendarCheck, Wallet, Clock } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { StatsCard } from "@/components/dashboard/stats-card";
+import BookingCard from "@/components/booking/BookingCard";
+import { useUserStats } from "@/hooks/useDashboard";
+import { useMyBookings } from "@/hooks/useBookings";
 
 export function UserDashboard() {
   const { data: stats, isLoading: statsLoading } = useUserStats();
 
-  // Reuse the bookings hook with filters -- no special dashboard endpoint needed
-  const { data: upcomingResponse, isLoading: upcomingLoading } = useBookings({
-    upcoming: true,
-    limit: 20,
+  // One request -- all my bookings. Client-side split is trivial.
+  const { data: bookingsResponse, isLoading: bookingsLoading } = useMyBookings({
+    limit: 100,
   });
-  const { data: pastResponse, isLoading: pastLoading } = useBookings({
-    past: true,
-    limit: 20,
-  });
+  const bookings = bookingsResponse?.data ?? [];
 
-  const upcoming = upcomingResponse?.data ?? [];
-  const past = pastResponse?.data ?? [];
+  const { upcoming, past } = useMemo(() => {
+    const now = Date.now();
+    return {
+      upcoming: bookings.filter((b) => new Date(b.checkIn).getTime() >= now),
+      past: bookings.filter((b) => new Date(b.checkIn).getTime() < now),
+    };
+  }, [bookings]);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
       <h1 className="text-2xl font-bold">My Dashboard</h1>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatsCard
           title="Total Bookings"
           value={stats?.totalBookings ?? 0}
-          icon={<CalendarCheck className="h-4 w-4 text-muted-foreground" />}
+          icon={<CalendarCheck className="text-muted-foreground h-4 w-4" />}
           isLoading={statsLoading}
         />
         <StatsCard
           title="Total Spent"
-          value={`NPR ${(stats?.totalSpent ?? 0).toLocaleString()}`}
-          icon={<Wallet className="h-4 w-4 text-muted-foreground" />}
+          value={`Rs ${(stats?.totalSpent ?? 0).toLocaleString()}`}
+          icon={<Wallet className="text-muted-foreground h-4 w-4" />}
           isLoading={statsLoading}
         />
         <StatsCard
           title="Upcoming Bookings"
           value={stats?.upcomingBookings ?? 0}
-          icon={<Clock className="h-4 w-4 text-muted-foreground" />}
+          icon={<Clock className="text-muted-foreground h-4 w-4" />}
           isLoading={statsLoading}
         />
       </div>
@@ -593,12 +611,12 @@ export function UserDashboard() {
           <CardTitle>Upcoming Bookings</CardTitle>
         </CardHeader>
         <CardContent>
-          {upcomingLoading ? (
+          {bookingsLoading ? (
             <p className="text-muted-foreground">Loading...</p>
           ) : upcoming.length === 0 ? (
             <p className="text-muted-foreground">No upcoming bookings.</p>
           ) : (
-            <div className="space-y-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {upcoming.map((booking) => (
                 <BookingCard key={booking._id} booking={booking} />
               ))}
@@ -613,12 +631,12 @@ export function UserDashboard() {
           <CardTitle>Past Bookings</CardTitle>
         </CardHeader>
         <CardContent>
-          {pastLoading ? (
+          {bookingsLoading ? (
             <p className="text-muted-foreground">Loading...</p>
           ) : past.length === 0 ? (
             <p className="text-muted-foreground">No past bookings.</p>
           ) : (
-            <div className="space-y-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {past.map((booking) => (
                 <BookingCard key={booking._id} booking={booking} />
               ))}
@@ -629,42 +647,21 @@ export function UserDashboard() {
     </div>
   );
 }
-
-function BookingCard({ booking }: { booking: Booking }) {
-  return (
-    <div className="flex items-center justify-between border rounded-lg p-4">
-      <div>
-        <p className="font-medium">{booking.room.title}</p>
-        <p className="text-sm text-muted-foreground">{booking.room.location}</p>
-        <p className="text-sm">
-          {new Date(booking.checkIn).toLocaleDateString('en-GB')} -{' '}
-          {new Date(booking.checkOut).toLocaleDateString('en-GB')}
-        </p>
-      </div>
-      <div className="text-right space-y-1">
-        <p className="font-bold">NPR {booking.totalPrice.toLocaleString()}</p>
-        <Badge
-          variant={
-            booking.paymentStatus === 'paid'
-              ? 'default'
-              : booking.paymentStatus === 'pending'
-                ? 'secondary'
-                : 'destructive'
-          }
-          className="capitalize"
-        >
-          {booking.paymentStatus}
-        </Badge>
-      </div>
-    </div>
-  );
-}
 ```
 
-The component is now under 100 lines because:
-- No `useState`/`useEffect` for data -- React Query handles all of it
-- No raw `fetch` -- everything flows through Axios + the service layer
-- Stats cards reuse the `<StatsCard>` we built once for the owner dashboard
+The component is under 100 lines because:
+- No `useState`/`useEffect` for server data -- React Query handles it.
+- No inline `<BookingCard>` -- we reuse the shared card built for `MyBookings` in L25, so any styling change to bookings-in-lists ripples here automatically.
+- The upcoming/past split is a two-line `useMemo` over the same array, not two separate API calls.
+
+> **Route it in `MainLayout` (from L21):**
+>
+> ```tsx
+> // booking-frontend/src/routes.tsx  (or wherever your routes tree lives)
+> <Route path="dashboard" element={<UserDashboard />} />
+> ```
+>
+> Add "Dashboard" to the Navbar's signed-in links right next to "My Bookings".
 
 ---
 
@@ -677,7 +674,7 @@ We introduced Sonner back in Lesson 17 as part of the React Query setup. Every m
 The `<Toaster />` is mounted once at the root next to `QueryClientProvider`:
 
 ```tsx
-// webapp/src/main.tsx (from Lesson 17)
+// booking-frontend/src/main.tsx (from Lesson 17)
 <QueryClientProvider client={queryClient}>
   <App />
   <Toaster richColors position="top-right" />
@@ -734,62 +731,113 @@ For anything involving the API, put the toast inside the hook so every caller ge
 
 When a user clicks "Delete Room" or "Cancel Booking", they should see a confirmation dialog first. Accidental deletions are frustrating.
 
-We already built a reusable `ConfirmDialog` component in Lesson 11 and used it for task deletion in Lesson 13 and room deletion in Lesson 23. The same component works everywhere:
+We use shadcn's **`AlertDialog`** for these confirmations. You already installed it in an earlier lesson (`npx shadcn@latest add alert-dialog`), and L25's `BookingDetail` and `OwnerBookingDetail` (§25.15) already use it for the guest Cancel button and the owner's Confirm/Cancel flow. This section shows how to reach for the same pattern anywhere else you have a destructive action.
 
-```tsx
-// Already created in src/components/ConfirmDialog.tsx (Lesson 11)
-// Props: trigger, title, description, confirmLabel, cancelLabel, variant, onConfirm
-```
+### The pattern
 
-### Usage Examples Across the App
-
-The mutation hooks already handle toasts and cache invalidation, so the `onConfirm` is just `mutate(id)`.
+Wrap the trigger button in `<AlertDialogTrigger asChild>`, put the dialog body next to it, and put `mutate(...)` inside the `AlertDialogAction`'s `onClick`. The mutation hook handles the toast + cache invalidation, so the whole thing stays short.
 
 **Delete a room (owner portal):**
 
 ```tsx
-import { ConfirmDialog } from '@/components/ConfirmDialog';
-import { Button } from '@/components/ui/button';
-import { useDeleteRoom } from '@/hooks/useRooms';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { useDeleteRoom } from "@/hooks/useRooms";
+import type { Room } from "@/types/room";
 
 function DeleteRoomButton({ room }: { room: Room }) {
-  const { mutate: deleteRoom } = useDeleteRoom();
+  const { mutate: deleteRoom, isPending } = useDeleteRoom();
 
   return (
-    <ConfirmDialog
-      trigger={<Button variant="destructive" size="sm">Delete Room</Button>}
-      title="Delete Room"
-      description={`Are you sure you want to delete "${room.title}"? All bookings for this room will also be affected.`}
-      confirmLabel="Delete"
-      variant="destructive"
-      onConfirm={() => deleteRoom(room._id)}
-    />
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button variant="destructive" size="sm" disabled={isPending}>
+          Delete Room
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete "{room.title}"?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This permanently removes the listing. Existing bookings for this
+            room will still show, but the room won't be bookable any more.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Keep room</AlertDialogCancel>
+          <AlertDialogAction onClick={() => deleteRoom(room._id)}>
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 ```
 
-**Cancel a booking (user portal):**
+**Cancel a booking (guest side):** we use the L25 `useUpdateBookingStatus` mutation with `status: "cancelled"` -- there is no separate "cancel" hook; cancelling is just a status transition.
 
 ```tsx
-import { useCancelBooking } from '@/hooks/useBookings';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { useUpdateBookingStatus } from "@/hooks/useBookings";
+import type { Booking } from "@/types/booking";
 
 function CancelBookingButton({ booking }: { booking: Booking }) {
-  const { mutate: cancelBooking } = useCancelBooking();
+  const { mutate: updateStatus, isPending } = useUpdateBookingStatus();
 
   return (
-    <ConfirmDialog
-      trigger={<Button variant="outline" size="sm">Cancel Booking</Button>}
-      title="Cancel Booking"
-      description="Are you sure you want to cancel this booking? If you paid via eSewa, a refund will be processed."
-      confirmLabel="Cancel Booking"
-      variant="destructive"
-      onConfirm={() => cancelBooking(booking._id)}
-    />
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button variant="outline" size="sm" disabled={isPending}>
+          Cancel Booking
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Cancel this booking?</AlertDialogTitle>
+          <AlertDialogDescription>
+            The room will be released for other guests. If you already paid
+            via eSewa the owner will process a refund manually.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Keep booking</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() =>
+              updateStatus({ id: booking._id, status: "cancelled" })
+            }
+          >
+            Cancel booking
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 ```
 
-**This is the benefit of building reusable components and hooks early** -- one `ConfirmDialog` (from Lesson 11) plus one mutation hook (from Lesson 17) gives you a confirm-and-delete flow with toasts and cache invalidation in a handful of lines.
+**Why inline the dialog instead of building a reusable `<ConfirmDialog>` wrapper?** Because every real confirmation looks slightly different -- the title asks a specific question, the description references a specific thing being destroyed, the confirm label reads naturally in context. A generic wrapper either forces you to pass every one of those as a prop (at which point you might as well just write the dialog) or homogenises the copy in ways that hurt UX. The shadcn `AlertDialog` primitives are already the reusable layer; a further abstraction usually costs more than it saves.
 
 ---
 
@@ -798,7 +846,7 @@ function CancelBookingButton({ booking }: { booking: Booking }) {
 When a form is submitting, the user should see clear feedback. Disable the submit button and show a spinner or "Loading..." text:
 
 ```tsx
-// webapp/src/components/SubmitButton.tsx
+// booking-frontend/src/components/SubmitButton.tsx
 import { Button } from '@/components/ui/button';
 
 interface SubmitButtonProps {
@@ -882,142 +930,174 @@ No manual `useState` for loading, no try/catch -- the hook owns the loading stat
 
 Instead of showing generic "Something went wrong" messages, we want the user to see the actual error from the API (e.g. "Title must be between 3 and 100 characters"). Because all our requests go through the **shared Axios instance** from Lesson 17, we handle this in one place using an Axios response interceptor.
 
-### Centralised Error Extraction
+### What we already have
 
-Update the Axios instance to extract `error` from the standard response envelope and re-throw a clean `Error` with the meaningful message:
+The `services/api.ts` interceptor from Lesson 20 handles 401 auto-logout and copies `error.response.data.message` into `error.message`, so `error.message` on the mutation hook side is already the server's message. That covers 90% of cases -- our controllers return `{ message: "Booking not found" }` and the toast shows exactly that.
 
-```typescript
-// webapp/src/services/api.ts
-import axios, { AxiosError } from 'axios';
+### The one gap: validation errors with `errors[]`
 
-const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3001/api',
-  headers: { 'Content-Type': 'application/json' },
-  timeout: 10000,
-});
+Our `validate` middleware from L20 turns express-validator failures into a response like:
 
-// Extract the API's `error` message so every caller sees something useful
-api.interceptors.response.use(
-  (response) => response,
-  (error: AxiosError<{ error?: string; details?: { field: string; message: string }[] }>) => {
-    const apiError = error.response?.data;
-    const firstDetail = apiError?.details?.[0]?.message;
-    const message = firstDetail || apiError?.error || error.message || 'An unexpected error occurred';
-    return Promise.reject(new Error(message));
-  }
-);
-
-export default api;
+```json
+{
+  "message": "Validation failed",
+  "errors": [
+    { "field": "title", "message": "Title must be 3-100 characters" },
+    { "field": "price", "message": "Price must be positive" }
+  ]
+}
 ```
 
-Now every mutation hook's `onError: (error: Error) => toast.error(error.message)` automatically shows the real API message -- e.g. "Title must be between 3 and 100 characters" rather than "Request failed with status code 400".
+Right now the toast just says "Validation failed", which isn't useful. Let's extend the existing interceptor to prefer the first `errors[].message` when it exists:
 
-This single change improves error quality across the entire app, including all the mutation hooks from previous lessons.
+```typescript
+// booking-frontend/src/services/api.ts  (inside the existing response
+// interceptor -- add ONE branch before the `serverMessage` block)
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // ... existing auto-logout logic ...
+    }
+
+    // NEW: prefer the first field-level error when the API returned an
+    // errors[] array from the validate() middleware.
+    const firstFieldError = error.response?.data?.errors?.[0]?.message;
+    if (firstFieldError) {
+      error.message = firstFieldError;
+      return Promise.reject(error);
+    }
+
+    const serverMessage = error.response?.data?.message;
+    if (serverMessage) {
+      error.message = serverMessage;
+    }
+
+    return Promise.reject(error);
+  }
+);
+```
+
+Now a mutation that fails Zod / express-validator will show "Title must be 3-100 characters" instead of "Validation failed". Every existing mutation hook benefits automatically -- no changes anywhere else.
+
+> **Field-level errors on the form itself.** For inline errors *next to each field* (rather than a toast), keep using Zod + React Hook Form -- those catch bad input before it ever reaches the API. The interceptor only kicks in when the client somehow lets bad data through and the server is the last line of defence.
 
 ---
 
 ## 27.10 Mobile-Responsive Navigation
 
-On mobile devices, a horizontal navigation bar does not fit. We need a hamburger menu that opens a slide-out panel.
+On mobile, our L21 `Navbar` hides its whole `<nav>` block behind `md:flex` and there's nothing in its place -- guests on a phone can see the logo and the avatar dropdown, but not "Browse Rooms" or "My Bookings" or "Owner Portal". We fix that by adding a hamburger `Sheet` that shows the same role-aware links below the `md` breakpoint. **We are not replacing the L21 Navbar** -- we're extending it.
 
-### Install Sheet
+### Install Sheet (if not already installed)
 
 ```bash
+cd booking-frontend
 npx shadcn@latest add sheet
 ```
 
-### Responsive Navigation Component
+L23's owner sidebar already brings `sheet` in; check `src/components/ui/sheet.tsx` before installing.
+
+### Add a mobile menu to the existing Navbar
+
+Open `booking-frontend/src/components/Navbar.tsx` (from L21) and add:
+
+1. `Sheet` + `Menu` icon imports at the top.
+2. A shared `navLinks` array so the desktop `<nav>` and mobile Sheet render the same items -- avoids drift.
+3. A `md:hidden` Sheet trigger next to the avatar dropdown, using the exact same role-aware conditions as the desktop nav.
 
 ```tsx
-// webapp/src/components/Navbar.tsx
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Menu } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+// booking-frontend/src/components/Navbar.tsx  (diff -- top of file)
+import { useState } from "react";
+import { Menu } from "lucide-react";
 import {
   Sheet,
   SheetContent,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
-} from '@/components/ui/sheet';
+} from "@/components/ui/sheet";
+```
 
-export function Navbar() {
-  const [open, setOpen] = useState(false);
+Inside the component, extract the link list once so both views stay in lock-step:
 
-  const navLinks = [
-    { to: '/', label: 'Home' },
-    { to: '/rooms', label: 'Rooms' },
-    { to: '/dashboard', label: 'Dashboard' },
-    { to: '/bookings', label: 'My Bookings' },
-  ];
+```tsx
+const [mobileOpen, setMobileOpen] = useState(false);
 
-  return (
-    <nav className="border-b">
-      <div className="container mx-auto flex items-center justify-between h-16 px-4">
-        {/* Logo */}
-        <Link to="/" className="text-xl font-bold">
-          BookingApp
-        </Link>
+const navLinks = [
+  { to: "/", label: "Browse Rooms", show: true },
+  { to: "/bookings", label: "My Bookings", show: !!user },
+  { to: "/owner/dashboard", label: "Owner Portal", show: user?.role === "owner" },
+] as const;
+```
 
-        {/* Desktop Navigation -- hidden on mobile */}
-        <div className="hidden md:flex items-center gap-4">
-          {navLinks.map((link) => (
-            <Link
-              key={link.to}
-              to={link.to}
-              className="text-sm font-medium hover:text-primary"
-            >
-              {link.label}
-            </Link>
-          ))}
-          <Button variant="outline" size="sm">
-            Log Out
-          </Button>
-        </div>
+Swap the existing desktop `<nav>` links for a mapped list so it stays consistent:
 
-        {/* Mobile Hamburger -- visible only on mobile */}
-        <div className="md:hidden">
-          <Sheet open={open} onOpenChange={setOpen}>
-            <SheetTrigger asChild>
-              <Button variant="ghost" size="sm">
-                {/* Hamburger icon (three lines) */}
-                <Menu className="h-6 w-6" />
-              </Button>
-            </SheetTrigger>
-            <SheetContent side="right">
-              <SheetHeader>
-                <SheetTitle>Menu</SheetTitle>
-              </SheetHeader>
-              <div className="flex flex-col gap-4 mt-6">
-                {navLinks.map((link) => (
-                  <Link
-                    key={link.to}
-                    to={link.to}
-                    className="text-lg font-medium hover:text-primary"
-                    onClick={() => setOpen(false)}
-                  >
-                    {link.label}
-                  </Link>
-                ))}
-                <Button variant="outline" className="mt-4">
-                  Log Out
-                </Button>
-              </div>
-            </SheetContent>
-          </Sheet>
-        </div>
-      </div>
+```tsx
+<nav className="hidden items-center gap-8 md:flex">
+  {navLinks
+    .filter((link) => link.show)
+    .map((link) => (
+      <NavLink key={link.to} to={link.to} end={link.to === "/"} className={navLinkClass}>
+        {link.label}
+      </NavLink>
+    ))}
+</nav>
+```
+
+Then, immediately before the `<div className="flex items-center gap-2">` that holds the avatar, add the mobile trigger:
+
+```tsx
+{/* Mobile hamburger -- only visible below md */}
+<Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+  <SheetTrigger asChild>
+    <Button variant="ghost" size="sm" className="md:hidden">
+      <Menu className="size-5" />
+      <span className="sr-only">Open menu</span>
+    </Button>
+  </SheetTrigger>
+  <SheetContent side="right" className="w-72">
+    <SheetHeader>
+      <SheetTitle>Menu</SheetTitle>
+    </SheetHeader>
+    <nav className="mt-6 flex flex-col gap-2 px-4">
+      {navLinks
+        .filter((link) => link.show)
+        .map((link) => (
+          <NavLink
+            key={link.to}
+            to={link.to}
+            end={link.to === "/"}
+            onClick={() => setMobileOpen(false)}
+            className={({ isActive }) =>
+              `rounded-md px-3 py-2 text-base font-medium transition-colors ${
+                isActive
+                  ? "bg-muted text-foreground"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`
+            }
+          >
+            {link.label}
+          </NavLink>
+        ))}
+      {!user && (
+        <Button asChild variant="outline" className="mt-4">
+          <Link to="/login" onClick={() => setMobileOpen(false)}>
+            Log in
+          </Link>
+        </Button>
+      )}
     </nav>
-  );
-}
+  </SheetContent>
+</Sheet>
 ```
 
 Key points:
-- `hidden md:flex` -- the desktop nav is hidden on small screens and visible from medium screens upward.
-- `md:hidden` -- the hamburger button is only visible on small screens.
-- The `Sheet` component slides in from the right and shows the navigation links vertically.
-- Clicking a link closes the sheet by calling `setOpen(false)`.
+- **Single source of truth for links.** `navLinks` drives both the desktop `<nav>` and the mobile Sheet -- no drift between views.
+- **Role-aware everywhere.** Both views share the same `show` checks, so an owner sees "Owner Portal" on both mobile and desktop.
+- **Avatar dropdown stays as-is.** It already shows on all breakpoints and handles Profile / Owner Dashboard / Log out. We don't duplicate those into the Sheet.
+- **`md:hidden` on the trigger, `hidden md:flex` on the desktop `<nav>`** -- exactly one of them shows at any width.
+- **Clicking a link closes the sheet** via `onClick={() => setMobileOpen(false)}`.
 
 ---
 
@@ -1073,13 +1153,13 @@ Every component in the app follows this shape, which is why each component stays
 
 3. **Owner dashboard frontend:** Build the dashboard page using `<StatsCard>` (with `Skeleton` loading) and the reusable `<DataTable>` from Lesson 17.1 for Recent Bookings. Confirm no raw `fetch` appears anywhere in the component.
 
-4. **User dashboard:** Build the user dashboard using `useUserStats()` and the existing `useBookings()` hook with filters. Format dates with `en-GB` (DD/MM/YYYY).
+4. **User dashboard:** Build the user dashboard using `useUserStats()` and the existing `useMyBookings()` hook from L25. Split upcoming vs past client-side by comparing `booking.checkIn` to `Date.now()`. Reuse the shared `<BookingCard>` from L25 for each row. Format dates with `en-GB` (DD/MM/YYYY).
 
-5. **Confirmation dialogs:** Wire the `<ConfirmDialog>` from Lesson 11 around the destructive mutations (`useDeleteRoom`, `useCancelBooking`). Verify the toast and cache invalidation happen automatically from the hook.
+5. **Confirmation dialogs:** Wrap destructive actions (`useDeleteRoom`, `useUpdateBookingStatus({ id, status: "cancelled" })`) in shadcn `AlertDialog` blocks following the pattern in `BookingDetail.tsx` from L25. Verify the toast and cache invalidation happen automatically from the mutation hook -- the dialog only asks the question.
 
-6. **Mobile navigation:** Implement the responsive navbar with a hamburger menu using shadcn `Sheet`. Test it by resizing your browser window to a mobile width (below 768px).
+6. **Mobile navigation:** Extend the L21 `Navbar` with a shadcn `Sheet` hamburger below the `md` breakpoint. Verify the same role-aware links show on desktop and mobile without duplicating the array.
 
-7. **Axios error interceptor:** Add the response interceptor to `services/api.ts` so every mutation hook surfaces the API's `error` (or first `details[0].message`) in its toast. Trigger a validation error and confirm the toast shows the real message rather than "Request failed with status code 400".
+7. **Axios error interceptor:** Extend the existing `services/api.ts` interceptor from L20 so it prefers `error.response.data.errors[0].message` over the top-level `message` when both are present. Trigger a validation error (e.g. submit a room with an empty title) and confirm the toast shows the field-level message rather than the generic "Validation failed".
 
 8. **Challenge:** Add a line chart to the owner dashboard showing revenue per month. Add a new endpoint that returns aggregated monthly revenue (still using explicit `try/catch` + `{ data: ... }`), then a `useMonthlyRevenue()` hook and a chart component. You may use a library like `recharts` (`npm install recharts`).
 
@@ -1096,6 +1176,6 @@ Every component in the app follows this shape, which is why each component stays
 - **Stats cards** use shadcn `Card` + `Skeleton` for a proper loading state rather than a global "Loading..." flash.
 - **Toast notifications** already live inside every mutation hook from Lesson 17 -- components do not call `toast` directly for API actions.
 - **An Axios response interceptor** extracts the API's real error message (or first `details[0]`) so every mutation hook's toast is meaningful.
-- **Confirmation dialogs** (Lesson 11 `<ConfirmDialog>`) combine with mutation hooks for a one-line destructive flow.
+- **Confirmation dialogs** use shadcn `AlertDialog` inline (as in L25's `BookingDetail`), with `mutate(...)` inside `AlertDialogAction.onClick`. No custom wrapper needed.
 - **Responsive navigation** with shadcn `Sheet` + a Tailwind `md:hidden` / `hidden md:flex` split.
 - **Resist generic helpers** (`useFetch`, `handleAction`) -- React Query mutation/query hooks already do everything they would, with better caching and invalidation.
