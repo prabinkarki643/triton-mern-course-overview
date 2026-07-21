@@ -115,6 +115,15 @@ export const esewaSuccessCallback = async (
     // Server-to-server verify -- the actually authoritative step.
     const ok = await verifyPayment(transactionId, totalAmount);
     booking.paymentStatus = ok ? "paid" : "failed";
+
+    // Auto-confirm on successful eSewa payment. eSewa collapses the two-axis
+    // model (see L26.2): the guest has committed real money, so we skip the
+    // "owner reviews" gate the COD flow needs. Guarded on status === "pending"
+    // so a late callback can never un-cancel a booking the cron / guest has
+    // already killed.
+    if (ok && booking.status === "pending") {
+      booking.status = "confirmed";
+    }
     await booking.save();
 
     // On success, fire TWO fire-and-forget emails:

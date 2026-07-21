@@ -76,22 +76,28 @@ cancellationReason: {             // NEW
 - **`transactionId`** -- eSewa returns a reference id after a successful payment; we store it here for reconciliation
 - **`cancellationReason`** -- optional human-readable text. The cron job (§26.14) sets `"Payment not completed within 30 minutes"` when it auto-cancels an abandoned eSewa booking. Manual cancels leave it undefined for now; adding an optional reason input on the Cancel AlertDialogs is a stretch exercise.
 
-### `status` and `paymentStatus` are independent
+### `status` and `paymentStatus` per payment method
 
-Two orthogonal fields express every real-world state cleanly:
+The two fields exist so the same booking record can express two independent kinds of state -- **owner decision** (status) and **money movement** (paymentStatus). How they combine depends on the method:
 
-| `status` | `paymentStatus` | What it means |
+**COD:** the axes stay independent because payment happens *later*. Owner confirms first (`status: "confirmed"`), then marks cash received at check-in (`paymentStatus: "paid"`).
+
+**eSewa:** the axes collapse because payment happens *first*. The guest has already committed real money in a gateway that verified it -- there's no point making them wait for the owner to say "yes". So on successful eSewa verify we set `paymentStatus: "paid"` **and** `status: "confirmed"` in the same save. Refund complexity is avoided because the owner never sees a "paid but not confirmed" booking to reject.
+
+Here's every reachable state in the app:
+
+| `status` | `paymentStatus` | How you reach it |
 |---|---|---|
-| pending | pending | New request, owner hasn't decided, no payment yet |
-| pending | paid | Guest paid up-front via eSewa, **owner is still reviewing** |
-| pending | failed | Guest tried eSewa, gateway rejected -- they can retry |
-| confirmed | pending | Owner accepted, guest still owes (COD, or eSewa in-flight) |
-| **confirmed** | **paid** | Complete. Everyone happy. |
-| cancelled | pending | Cancelled before any payment attempt |
-| cancelled | paid | Cancelled after payment -- refund workflow (out of scope) |
-| cancelled | failed | Cancelled after / including a failed attempt (typical cron outcome) |
+| pending | pending | Fresh booking -- COD before owner reviews, or eSewa before the guest completes payment |
+| pending | failed | eSewa attempt rejected -- guest can retry |
+| pending | paid | Rare, COD-only: owner marked cash received before clicking Confirm |
+| confirmed | pending | Owner accepted a COD booking; guest will pay at check-in |
+| **confirmed** | **paid** | Complete. Reached via owner-confirm + owner-marks-cash (COD) OR eSewa auto-confirm |
+| cancelled | pending | Cancelled before any payment -- guest self-cancel, or cron on abandoned eSewa |
+| cancelled | failed | Cancelled after a failed eSewa attempt (typical cron outcome) |
+| cancelled | paid | Rare, refund territory -- would need a manual refund workflow (out of scope) |
 
-**Payment method does NOT change the `status` flow.** The owner still confirms every request from the Owner Portal, whatever method the guest picked. That's why L26 will NOT modify L25's `createBooking` controller -- it keeps `status: "pending"` for everyone. Only `paymentStatus` varies by method.
+**COD keeps the two-axis flow; eSewa collapses it.** That is why L26 does not modify L25's `createBooking` (every booking starts pending/pending), but §26.6's eSewa success callback sets both fields at once.
 
 > **Widening an enum is a safe migration.** Existing bookings with `paymentMethod: "cod"` still validate, and Mongoose does not need to backfill anything. Just re-deploy the model file.
 
@@ -612,11 +618,20 @@ export const esewaSuccessCallback = async (
     // Server-to-server verify (the actually authoritative step).
     const ok = await verifyPayment(transactionId, totalAmount);
     booking.paymentStatus = ok ? "paid" : "failed";
+
+    // Auto-confirm on successful eSewa payment. eSewa collapses the
+    // two-axis model (see §26.2) -- the guest has committed real money,
+    // so we skip the "owner reviews" gate that COD needs. Guarded on
+    // status === "pending" so a late callback can never un-cancel a
+    // booking the cron / guest has already killed.
+    if (ok && booking.status === "pending") {
+      booking.status = "confirmed";
+    }
     await booking.save();
 
     // On success, fire TWO fire-and-forget emails:
-    //   - guest: "We received your payment"
-    //   - owner: "Money hit your account for booking X"
+    //   - guest: "Your booking is confirmed" (eSewa) / "Payment received" (COD)
+    //   - owner: "Booking auto-confirmed via eSewa"
     // Both are autonomous (neither party clicked a button), so both
     // deserve a notification. See §26.5.1 for the design table.
     if (ok) {
@@ -1091,9 +1106,10 @@ End-to-end path with backend callbacks. Each step is a genuine HTTP request or u
 6. **eSewa redirects the browser** to our success URL: `GET https://api.ourapp.com/api/payments/esewa/callback/success?data=<base64>`.
 7. **Backend callback (`esewaSuccessCallback`)** decodes the base64 `data`, extracts `transaction_uuid` + `total_amount`, and calls eSewa's status check API for server-to-server verification.
 8. **Backend updates booking**: `paymentStatus: "paid"` (or `"failed"` if eSewa says the transaction isn't `COMPLETE`).
-9. **On success**, backend fires **two fire-and-forget emails** (guest: "we received your payment", owner: "money hit your account for booking X") -- both autonomous notifications, neither party triggered the transition manually.
-10. **Backend responds with `302 Redirect`** to `${CLIENT_URL}/bookings/:id?payment=success` (or `?payment=failed`).
-11. **Browser lands on `BookingDetail`** in our SPA. `useBooking(id)` fetches the fresh booking (already `paid` in Mongo). The `useEffect` reads `?payment=success` and fires the Sonner toast. The Actions block now shows the "Paid via eSewa" receipt instead of the Pay Now button.
+9. **On success, backend also auto-confirms the booking**: `status: "confirmed"` (guarded on the current `status === "pending"` so a late callback can't un-cancel a booking the cron already swept or the guest already cancelled).
+10. **On success**, backend fires **two fire-and-forget emails** (guest: "your booking is confirmed", owner: "booking auto-confirmed via eSewa") -- both autonomous notifications, neither party triggered the transition manually.
+11. **Backend responds with `302 Redirect`** to `${CLIENT_URL}/bookings/:id?payment=success` (or `?payment=failed`).
+12. **Browser lands on `BookingDetail`** in our SPA. `useBooking(id)` fetches the fresh booking (already `confirmed` + `paid` in Mongo). The `useEffect` reads `?payment=success` and fires the Sonner toast. The status badge now shows **Confirmed**, the Actions block shows the "Paid via eSewa" receipt, and the Cancel button hides (guest can only self-cancel while `status === "pending"`).
 
 The failure path is symmetrical: `/callback/failure` sets `paymentStatus: "failed"` (best-effort, based on `transaction_uuid` in the query), 302s to `/bookings/:id?payment=failed`, `BookingDetail` shows the error toast and a **Retry payment** button.
 
