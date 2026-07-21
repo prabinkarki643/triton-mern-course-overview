@@ -2,11 +2,16 @@
 // Shared shapes for every data file in src/data/*.
 
 import type { LucideIcon } from "lucide-react"
+import type { ComponentType, SVGProps } from "react"
+
+// Any icon-shaped component -- both LucideIcon and our inline brand SVGs
+// (see components/shared/brand-icons.tsx) satisfy this.
+export type IconComponent = ComponentType<SVGProps<SVGSVGElement>>
 
 export interface SocialLink {
   label: string
   href: string
-  icon: LucideIcon
+  icon: IconComponent
 }
 
 export interface NavItem {
@@ -23,6 +28,8 @@ export interface SiteConfig {
   phone: string
   location: string
   logo: string
+  /** External resume link (Google Drive, etc.) -- shown as the Resume button */
+  resumeUrl: string
   socials: SocialLink[]
 }
 
@@ -31,6 +38,9 @@ export interface QuickFact {
   value: string
   icon: LucideIcon
 }
+
+// Section-level shapes below can stay tied to LucideIcon (their icons are
+// non-brand). Only socials need the wider IconComponent type.
 
 export interface ProfileContent {
   eyebrow: string

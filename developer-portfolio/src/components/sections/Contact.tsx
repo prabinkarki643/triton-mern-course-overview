@@ -126,18 +126,15 @@ export function Contact() {
                     className="mt-1.5 min-h-32"
                   />
                 </div>
-                <div className="flex items-center gap-3 sm:col-span-2">
+                <div className="sm:col-span-2">
                   <Button
                     type="submit"
                     size="lg"
                     className="bg-brand text-brand-foreground hover:bg-brand/90"
                   >
                     <Send className="mr-2 size-4" />
-                    Send via Gmail
+                    Send
                   </Button>
-                  <p className="text-muted-foreground text-xs">
-                    Opens a pre-filled Gmail compose tab.
-                  </p>
                 </div>
               </form>
             </CardContent>

@@ -7,7 +7,10 @@ export function Footer() {
     <footer className="border-t">
       <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-4 py-8 sm:flex-row sm:px-6 lg:px-8">
         <p className="text-muted-foreground text-sm">
-          © {year} {siteConfig.name}. Built with React and shadcn/ui.
+          © {year} {siteConfig.name}. Built with{" "}
+          <span aria-label="love" className="text-rose-500">
+            ❤️
+          </span>
         </p>
         <div className="flex items-center gap-3">
           {siteConfig.socials.map((social) => {

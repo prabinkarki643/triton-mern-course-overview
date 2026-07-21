@@ -1,11 +1,11 @@
 // src/data/site.ts
 // Top-level site info: name shown everywhere, contact channels, socials.
 // Swap these values -- every section reads from here.
-// This base-nova fork of lucide-react ships without brand icons, so we use
-// neutral lucide icons that convey the same meaning: FolderGit2 for GitHub
-// (code repo folder) and Briefcase for LinkedIn (professional network).
-// Swap for react-icons brand marks if you want the real GitHub/LinkedIn logos.
-import { Briefcase, FolderGit2, Mail } from "lucide-react"
+// The base-nova fork of lucide-react ships without brand icons, so we hand-roll
+// the GitHub and LinkedIn marks as tiny inline SVGs in components/shared/brand-icons.tsx
+// (drawn on lucide's 24x24 grid so they mix cleanly).
+import { Mail } from "lucide-react"
+import { GithubIcon, LinkedinIcon } from "@/components/shared/brand-icons"
 import type { SiteConfig } from "@/types"
 
 export const siteConfig: SiteConfig = {
@@ -17,16 +17,20 @@ export const siteConfig: SiteConfig = {
   phone: "+977 98XXXXXXXX",
   location: "Kathmandu, Nepal",
   logo: "/images/logo.png",
+  // Paste a Google Drive share link (or your own hosted PDF URL) so the
+  // "Resume" button opens the current version of your CV in a new tab.
+  resumeUrl:
+    "https://drive.google.com/file/d/PUT-YOUR-FILE-ID/view?usp=sharing",
   socials: [
     {
       label: "GitHub",
       href: "https://github.com/your-username",
-      icon: FolderGit2,
+      icon: GithubIcon,
     },
     {
       label: "LinkedIn",
       href: "https://www.linkedin.com/in/your-username",
-      icon: Briefcase,
+      icon: LinkedinIcon,
     },
     {
       label: "Email",

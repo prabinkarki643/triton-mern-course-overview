@@ -2,8 +2,8 @@
 // Sticky top nav with anchor links + theme toggle. Every entry lives in
 // src/data/navigation.ts so adding a section is one array push.
 import { useEffect, useState } from "react"
-import { Menu, X } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { FileText, Menu, X } from "lucide-react"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { navItems } from "@/data/navigation"
 import { siteConfig } from "@/data/site"
@@ -55,6 +55,19 @@ export function Navbar() {
 
         {/* Right cluster */}
         <div className="flex items-center gap-1">
+          <a
+            href={siteConfig.resumeUrl}
+            target="_blank"
+            rel="noreferrer"
+            className={buttonVariants({
+              size: "sm",
+              className:
+                "hidden bg-brand text-brand-foreground hover:bg-brand/90 md:inline-flex",
+            })}
+          >
+            <FileText className="mr-1.5 size-4" />
+            Resume
+          </a>
           <ThemeToggle />
           <Button
             variant="ghost"
@@ -86,6 +99,20 @@ export function Navbar() {
                 {item.label}
               </a>
             ))}
+            <a
+              href={siteConfig.resumeUrl}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setMobileOpen(false)}
+              className={buttonVariants({
+                size: "sm",
+                className:
+                  "mt-2 bg-brand text-brand-foreground hover:bg-brand/90",
+              })}
+            >
+              <FileText className="mr-1.5 size-4" />
+              Resume
+            </a>
           </div>
         </nav>
       )}

@@ -17,11 +17,11 @@ export function Projects() {
           title="What I've built recently"
         />
 
-        <div className="mt-12 grid gap-6 lg:grid-cols-2">
+        <div className="mt-12 grid items-stretch gap-6 lg:grid-cols-2">
           {projects.map((project) => (
             <Card
               key={project.title}
-              className="border-border/60 group overflow-hidden py-0 pb-6 transition-shadow hover:shadow-lg"
+              className="border-border/60 group flex h-full flex-col overflow-hidden py-0 pb-6 transition-shadow hover:shadow-lg"
             >
               {/* Cover image */}
               <div className="bg-muted relative aspect-[16/9] overflow-hidden">
@@ -32,7 +32,7 @@ export function Projects() {
                 />
               </div>
 
-              <CardContent className="space-y-3">
+              <CardContent className="flex-1 space-y-3">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <h3 className="text-xl font-semibold tracking-tight">
