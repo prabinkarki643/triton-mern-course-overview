@@ -11,6 +11,7 @@ import RoomListing from "@/pages/RoomListing"
 import RoomDetail from "@/pages/RoomDetail"
 import MyBookings from "@/pages/MyBookings"
 import BookingDetail from "@/pages/BookingDetail"
+import { UserDashboard } from "@/pages/UserDashboard"
 import { ProtectedRoute } from "@/components/ProtectedRoute"
 import OwnerLayout from "@/components/owner/OwnerLayout"
 import MyRooms from "@/pages/owner/MyRooms"
@@ -28,6 +29,14 @@ export function App() {
         <Route path="/" element={<HomePage />} />
         <Route path="/rooms" element={<RoomListing />} />
         <Route path="/rooms/:id" element={<RoomDetail />} />
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <UserDashboard />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/bookings"
           element={

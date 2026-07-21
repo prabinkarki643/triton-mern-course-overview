@@ -1,6 +1,17 @@
 // src/components/Navbar.tsx
+// L27.10 extends the L21 Navbar with a role-aware `Sheet` hamburger
+// menu below the `md` breakpoint. A single `navLinks` array drives
+// both the desktop nav and the mobile Sheet so the two views can
+// never drift. The avatar dropdown stays as-is on all breakpoints.
+import { useState } from "react";
 import { Link, NavLink } from "react-router-dom";
-import { Hotel, LogOut, User as UserIcon, LayoutDashboard } from "lucide-react";
+import {
+  Hotel,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  User as UserIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -10,11 +21,19 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { useCurrentUser, useLogout } from "@/hooks/useAuth";
 
 export function Navbar() {
   const { data: user } = useCurrentUser();
   const logout = useLogout();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const initials = user
     ? user.name
@@ -24,6 +43,20 @@ export function Navbar() {
         .slice(0, 2)
         .toUpperCase()
     : "";
+
+  // Single source of truth for both desktop and mobile nav. `show`
+  // encodes the role gate -- guests don't see My Bookings, non-owners
+  // don't see the Owner Portal link.
+  const navLinks = [
+    { to: "/", label: "Browse Rooms", end: true, show: true },
+    { to: "/dashboard", label: "Dashboard", show: !!user },
+    { to: "/bookings", label: "My Bookings", show: !!user },
+    {
+      to: "/owner/dashboard",
+      label: "Owner Portal",
+      show: user?.role === "owner",
+    },
+  ] as const;
 
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     `text-sm font-medium transition-colors hover:text-foreground ${
@@ -42,20 +75,20 @@ export function Navbar() {
           </span>
         </Link>
 
+        {/* Desktop nav */}
         <nav className="hidden items-center gap-8 md:flex">
-          <NavLink to="/" end className={navLinkClass}>
-            Browse Rooms
-          </NavLink>
-          {user && (
-            <NavLink to="/bookings" className={navLinkClass}>
-              My Bookings
-            </NavLink>
-          )}
-          {user?.role === "owner" && (
-            <NavLink to="/owner/dashboard" className={navLinkClass}>
-              Owner Portal
-            </NavLink>
-          )}
+          {navLinks
+            .filter((link) => link.show)
+            .map((link) => (
+              <NavLink
+                key={link.to}
+                to={link.to}
+                end={"end" in link ? link.end : undefined}
+                className={navLinkClass}
+              >
+                {link.label}
+              </NavLink>
+            ))}
         </nav>
 
         <div className="flex items-center gap-2">
@@ -119,6 +152,57 @@ export function Navbar() {
               </Button>
             </>
           )}
+
+          {/* Mobile hamburger -- only visible below md. Reuses the same
+              navLinks so mobile and desktop stay in lock-step. */}
+          <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+            <SheetTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="md:hidden"
+                aria-label="Open menu"
+              >
+                <Menu className="size-5" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-72">
+              <SheetHeader>
+                <SheetTitle>Menu</SheetTitle>
+              </SheetHeader>
+              <nav className="mt-6 flex flex-col gap-1 px-4">
+                {navLinks
+                  .filter((link) => link.show)
+                  .map((link) => (
+                    <NavLink
+                      key={link.to}
+                      to={link.to}
+                      end={"end" in link ? link.end : undefined}
+                      onClick={() => setMobileOpen(false)}
+                      className={({ isActive }) =>
+                        `rounded-md px-3 py-2 text-base font-medium transition-colors ${
+                          isActive
+                            ? "bg-muted text-foreground"
+                            : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                        }`
+                      }
+                    >
+                      {link.label}
+                    </NavLink>
+                  ))}
+                {!user && (
+                  <Button
+                    asChild
+                    variant="outline"
+                    className="mt-4"
+                    onClick={() => setMobileOpen(false)}
+                  >
+                    <Link to="/login">Log in</Link>
+                  </Button>
+                )}
+              </nav>
+            </SheetContent>
+          </Sheet>
         </div>
       </div>
     </header>

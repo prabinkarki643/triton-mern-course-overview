@@ -38,7 +38,17 @@ api.interceptors.response.use(
       }
     }
 
-    // Pull the friendly message from the server's { message: "..." } envelope
+    // L27.9: prefer the first field-level error when the server returned
+    // an `errors[]` array from the validate() middleware -- users see
+    // "Title must be between 3 and 100 characters" instead of the
+    // generic "Validation failed" top-level message.
+    const firstFieldError = error.response?.data?.errors?.[0]?.message;
+    if (firstFieldError) {
+      error.message = firstFieldError;
+      return Promise.reject(error);
+    }
+
+    // Otherwise fall through to the standard { message: "..." } envelope
     // so error.message shows "Invalid email or password" instead of
     // "Request failed with status code 401" everywhere in the app.
     const serverMessage = error.response?.data?.message;

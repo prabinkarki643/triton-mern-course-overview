@@ -14,6 +14,7 @@ import authRoutes from "./routes/authRoutes";
 import roomRoutes from "./routes/roomRoutes";
 import bookingRoutes from "./routes/bookingRoutes";
 import paymentRoutes from "./routes/paymentRoutes";
+import dashboardRoutes from "./routes/dashboardRoutes";
 import { startCronJobs } from "./services/cronService";
 import dns from "dns";
 
@@ -55,6 +56,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/rooms", roomRoutes);
 app.use("/api/bookings", bookingRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 
 // Health check route
 app.get("/api/health", (_req: Request, res: Response) => {
