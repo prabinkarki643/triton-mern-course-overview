@@ -576,29 +576,122 @@ export function buildMailtoUrl({ to, subject, body }: BuildMailUrlArgs): string 
 
 Gmail's compose URL accepts `to`, `su` (subject) and `body`. Users signed into Gmail in the browser get a compose window with everything already typed in.
 
-The form handler tries Gmail first and falls back to a plain `mailto:` link if the popup doesn't open (which usually means the browser blocked it or the user has no Gmail account signed in):
+### The form itself: React Hook Form + Zod + shadcn `Field`
+
+We reuse **the exact pattern from L12, L20, L21 and L25** on the BookMyRoom side -- schema-first with Zod, form managed by React Hook Form, presentation by shadcn `Field` primitives. That keeps the portfolio consistent with everything students have already built.
+
+First install (already in `package.json` if you scaffolded fresh, otherwise):
+
+```bash
+npm install react-hook-form zod @hookform/resolvers
+npx shadcn@latest add field
+```
+
+Then a schema per form -- one file, one source of truth:
+
+```typescript
+// src/schemas/contactSchema.ts
+import { z } from "zod"
+
+export const contactSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(2, "Please enter your name (at least 2 characters)")
+    .max(60, "Name is too long"),
+  email: z.email("Please enter a valid email address").trim(),
+  subject: z
+    .string()
+    .trim()
+    .max(120, "Subject is too long")
+    .optional()
+    .or(z.literal("")),
+  message: z
+    .string()
+    .trim()
+    .min(10, "Please write a slightly longer message (at least 10 characters)")
+    .max(2000, "Message is too long"),
+})
+
+export type ContactFormValues = z.infer<typeof contactSchema>
+```
+
+Then the form component consumes the schema via `useForm` + `zodResolver`, drives each field through `Controller`, and renders errors with `<FieldError>` -- same pattern as L25's `BookingForm`:
 
 ```tsx
-const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-  event.preventDefault()
+// src/components/sections/Contact.tsx (excerpt)
+import { Controller, useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Button } from "@/components/ui/button"
+import { contactSchema, type ContactFormValues } from "@/schemas/contactSchema"
 
-  const subject = values.subject.trim() || `Hello from ${values.name || "your portfolio"}`
-  const body = [
-    `Hi ${siteConfig.name},`,
-    "",
-    values.message,
-    "",
-    "---",
-    `From: ${values.name}${values.email ? ` <${values.email}>` : ""}`,
-  ].join("\n")
+export function Contact() {
+  const form = useForm<ContactFormValues>({
+    resolver: zodResolver(contactSchema),
+    defaultValues: { name: "", email: "", subject: "", message: "" },
+  })
 
-  const gmailUrl = buildGmailComposeUrl({ to: siteConfig.email, subject, body })
-  const opened = window.open(gmailUrl, "_blank", "noopener,noreferrer")
-  if (!opened) {
-    window.location.href = buildMailtoUrl({ to: siteConfig.email, subject, body })
+  const onSubmit = (data: ContactFormValues): void => {
+    const subject =
+      (data.subject && data.subject.trim()) ||
+      `Hello from ${data.name || "your portfolio"}`
+    const body = [
+      `Hi ${siteConfig.name},`,
+      "",
+      data.message,
+      "",
+      "---",
+      `From: ${data.name} <${data.email}>`,
+    ].join("\n")
+
+    const gmailUrl = buildGmailComposeUrl({ to: siteConfig.email, subject, body })
+
+    const opened = window.open(gmailUrl, "_blank", "noopener,noreferrer")
+    if (!opened) {
+      // Function form -- the React Compiler lint blocks `window.location.href = ...`
+      window.location.assign(
+        buildMailtoUrl({ to: siteConfig.email, subject, body })
+      )
+    }
+
+    form.reset()
   }
+
+  return (
+    <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4 sm:grid-cols-2" noValidate>
+      <Controller
+        name="name"
+        control={form.control}
+        render={({ field, fieldState }) => (
+          <Field data-invalid={fieldState.invalid}>
+            <FieldLabel htmlFor={field.name}>Your name</FieldLabel>
+            <Input {...field} id={field.name} placeholder="Jane Doe" aria-invalid={fieldState.invalid} />
+            {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+          </Field>
+        )}
+      />
+      {/* ...email, subject, message follow the same shape... */}
+      <Button
+        type="submit"
+        size="lg"
+        disabled={form.formState.isSubmitting}
+        className="bg-brand text-brand-foreground hover:bg-brand/90 sm:col-span-2"
+      >
+        Send
+      </Button>
+    </form>
+  )
 }
 ```
+
+What this gives us:
+- **Inline error messages** ("Please enter a valid email address") appear next to each field the moment validation fails -- no ugly browser popups or trailing red borders on submit.
+- **Same pattern everywhere**. If a student can read L25's `BookingForm`, they can read this. If they can add a field to a shadcn/Zod form, they can add a "Phone number" field here.
+- **Type safety**. `data: ContactFormValues` is the exact shape Zod validated -- if you add a `phone` field to the schema, TypeScript will refuse to `build` until you add it to `defaultValues` and the JSX.
+- **`noValidate` on the `<form>`** so the browser's own HTML5 validation doesn't fight Zod for control of the UX.
 
 **Advantages of this pattern:**
 - Zero backend to run
