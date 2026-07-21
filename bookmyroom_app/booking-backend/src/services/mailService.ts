@@ -203,20 +203,24 @@ interface BookingPaymentReceivedGuestParams {
 export function bookingPaymentReceivedGuestEmail(
   params: BookingPaymentReceivedGuestParams
 ): { subject: string; html: string } {
-  const subject = `Payment received for ${params.roomTitle}`;
-  const paymentLine =
-    params.paymentMethod === "esewa"
-      ? `Transaction id: <code>${escape(params.transactionId ?? "-")}</code>`
-      : "Cash received on arrival.";
+  const isEsewa = params.paymentMethod === "esewa";
+  const subject = isEsewa
+    ? `Booking confirmed: ${params.roomTitle}`
+    : `Payment received for ${params.roomTitle}`;
+  const heading = isEsewa
+    ? "Your booking is confirmed"
+    : "Payment received";
+  const introLine = isEsewa
+    ? `Your eSewa payment of <strong>Rs ${params.totalPrice}</strong> for <strong>${escape(params.roomTitle)}</strong> went through, and your booking is <strong>confirmed</strong>.`
+    : `We've received your payment of <strong>Rs ${params.totalPrice}</strong> for <strong>${escape(params.roomTitle)}</strong>.`;
+  const paymentLine = isEsewa
+    ? `Transaction id: <code>${escape(params.transactionId ?? "-")}</code>`
+    : "Cash received on arrival.";
   const html = `
     <div style="font-family: system-ui, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; color: #111;">
-      <h2 style="margin-top:0">Payment received</h2>
+      <h2 style="margin-top:0">${heading}</h2>
       <p>Hi ${escape(params.guestName)},</p>
-      <p>
-        We've received your payment of
-        <strong>Rs ${params.totalPrice}</strong> for
-        <strong>${escape(params.roomTitle)}</strong>.
-      </p>
+      <p>${introLine}</p>
       <p>${paymentLine}</p>
       <table style="width:100%; border-collapse: collapse; margin: 16px 0;">
         <tr>
@@ -248,15 +252,17 @@ interface BookingPaymentReceivedOwnerParams {
 export function bookingPaymentReceivedOwnerEmail(
   params: BookingPaymentReceivedOwnerParams
 ): { subject: string; html: string } {
-  const subject = `Payment received: ${params.roomTitle} (Rs ${params.totalPrice})`;
+  const subject = `Booking auto-confirmed: ${params.roomTitle} (Rs ${params.totalPrice})`;
   const html = `
     <div style="font-family: system-ui, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; color: #111;">
-      <h2 style="margin-top:0">A guest just paid for their booking</h2>
+      <h2 style="margin-top:0">A guest just paid and the booking is confirmed</h2>
       <p>Hi ${escape(params.ownerName)},</p>
       <p>
         <strong>${escape(params.guestName)}</strong> has paid
         <strong>Rs ${params.totalPrice}</strong> via eSewa for
-        <strong>${escape(params.roomTitle)}</strong>.
+        <strong>${escape(params.roomTitle)}</strong>. The booking is now
+        <strong>confirmed</strong> automatically -- nothing further required
+        from you.
       </p>
       <p>Transaction id: <code>${escape(params.transactionId)}</code></p>
       <p style="color:#666; font-size: 13px;">Booking id: <code>${params.bookingId}</code></p>
