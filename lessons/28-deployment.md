@@ -15,18 +15,18 @@
 ## 28.1 From Development to Production
 
 Throughout this course, we have been running everything locally:
-- React on `http://localhost:5173`
-- Express on `http://localhost:3001`
-- MongoDB on `localhost:27017` or MongoDB Atlas
+- React (booking-frontend) on `http://localhost:3002`
+- Express (booking-backend) on `http://localhost:4001`
+- MongoDB on Atlas (already, since L15)
 
 Now we will put your application on the internet so anyone can use it. This process is called **deployment**.
 
 ```
 Development                          Production
 -----------                          ----------
-localhost:5173 (React)     -->       yourapp.vercel.app
-localhost:3001 (Express)   -->       yourapp.onrender.com
-localhost:27017 (MongoDB)  -->       MongoDB Atlas (cloud)
+localhost:3002 (React)     -->       yourapp.vercel.app
+localhost:4001 (Express)   -->       yourapp.onrender.com
+Atlas cluster              -->       same Atlas cluster (or a new "prod" one)
 ```
 
 ---
@@ -38,14 +38,14 @@ In development, Vite serves your React code with hot reloading and debugging too
 Run the build command:
 
 ```bash
-cd webapp
+cd booking-frontend
 npm run build
 ```
 
 This creates a `dist/` folder containing:
 
 ```
-webapp/dist/
+booking-frontend/dist/
 ├── index.html          # The single HTML page
 ├── assets/
 │   ├── index-abc123.js   # All your JavaScript, minified
@@ -92,16 +92,14 @@ mongodb+srv://youruser:yourpassword@cluster0.abc123.mongodb.net/booking-app?retr
 
 ## 28.4 Preparing the Backend for Deployment
 
-Before deploying, make a few adjustments to your backend:
+The backend from L14-L26 is already deploy-ready in most respects -- it reads every host-specific value from env vars. Two things to double-check before you push:
 
-### Update package.json
+### package.json scripts
 
-Ensure your `package.json` has the correct start and build scripts:
+Confirm you have `build` and `start` (from L20). Render runs `npm run build` at deploy time and `npm start` to boot your server:
 
 ```json
 {
-  "name": "booking-backend",
-  "version": "1.0.0",
   "scripts": {
     "dev": "ts-node-dev --respawn src/index.ts",
     "build": "tsc",
@@ -110,71 +108,31 @@ Ensure your `package.json` has the correct start and build scripts:
 }
 ```
 
-- **`build`** -- compiles TypeScript to JavaScript (output in `dist/`).
-- **`start`** -- runs the compiled JavaScript (this is what Render will use).
+- **`build`** compiles TypeScript to `dist/`.
+- **`start`** runs the compiled JS (Render's entry point).
 
-### Update tsconfig.json
+### tsconfig.json outputs to dist/
 
-Make sure your TypeScript configuration outputs to a `dist` folder:
+If you followed L14, your `tsconfig.json` already sets `"outDir": "./dist"`. If not, add it.
 
-```json
-{
-  "compilerOptions": {
-    "target": "ES2020",
-    "module": "commonjs",
-    "outDir": "./dist",
-    "rootDir": "./src",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true
-  },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
-}
-```
+### `index.ts` already reads env vars
 
-### Dynamic Port and CORS
-
-Your Express app must use the port provided by the hosting platform and allow requests from your frontend domain:
+The `booking-backend/src/index.ts` you built in L14-L26 already does the right thing:
 
 ```typescript
-// backend/src/index.ts
-import express from 'express';
-import cors from 'cors';
-import mongoose from 'mongoose';
-import dotenv from 'dotenv';
+const PORT: number = Number(process.env.PORT) || 4001;
 
-dotenv.config();
-
-const app = express();
-
-// Use the PORT environment variable (Render sets this automatically)
-const PORT = process.env.PORT || 3001;
-
-// Allow requests from your frontend
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: process.env.CLIENT_URL || "http://localhost:3002",
     credentials: true,
   })
 );
-
-app.use(express.json());
-
-// Connect to MongoDB
-mongoose
-  .connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/booking-app')
-  .then(() => console.log('Connected to MongoDB'))
-  .catch((err) => console.error('MongoDB connection error:', err));
-
-// ... your routes ...
-
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
 ```
+
+Render sets `PORT` automatically, and you'll set `CLIENT_URL` to your Vercel domain in the Render dashboard (§28.5 Step 4). **No code changes are needed** -- just the env vars.
+
+> **Note:** the DNS override for Atlas connections you may have added in L26.14 (`dns.setServers(["8.8.8.8", "8.8.4.4"])`) is harmless in production. Render's DNS resolvers already handle SRV/TXT lookups fine, but the override does no harm -- you can leave it in.
 
 ---
 
@@ -184,14 +142,13 @@ app.listen(PORT, () => {
 
 ### Step 1: Push to GitHub
 
-If you have not already, push your project to a GitHub repository:
+If you have not already, push your project to a GitHub repository. This course uses **one monorepo** with `bookmyroom_app/booking-backend/` and `bookmyroom_app/booking-frontend/` as sibling folders, which is how we've committed it end-to-end. Render supports monorepos out of the box -- you point it at the same repo twice (once with `bookmyroom_app/booking-backend` as the Root Directory for the backend service, once with `bookmyroom_app/booking-frontend` for the frontend on Vercel).
 
 ```bash
-cd backend
 git init
 git add .
 git commit -m "Initial commit"
-git remote add origin https://github.com/yourusername/booking-backend.git
+git remote add origin https://github.com/yourusername/bookmyroom.git
 git push -u origin main
 ```
 
@@ -207,9 +164,10 @@ Go to [render.com](https://render.com) and sign up with your GitHub account.
 
 | Setting | Value |
 |---------|-------|
-| **Name** | `booking-backend` |
+| **Name** | `bookmyroom-backend` |
 | **Region** | Choose the closest to Nepal (Singapore is closest) |
 | **Branch** | `main` |
+| **Root Directory** | `bookmyroom_app/booking-backend` |
 | **Runtime** | `Node` |
 | **Build Command** | `npm install && npm run build` |
 | **Start Command** | `npm start` |
@@ -217,17 +175,30 @@ Go to [render.com](https://render.com) and sign up with your GitHub account.
 
 ### Step 4: Set Environment Variables
 
-In the Render dashboard, go to **"Environment"** and add:
+In the Render dashboard, go to **"Environment"** and add every variable that lives in your local `.env`. Anything you rely on locally that isn't here will simply be missing in production.
 
-| Variable | Value |
-|----------|-------|
-| `MONGODB_URI` | Your MongoDB Atlas connection string |
-| `JWT_SECRET` | A long random string for token signing |
-| `CLIENT_URL` | `https://your-frontend.vercel.app` (set after deploying frontend) |
-| `ESEWA_MERCHANT_ID` | `EPAYTEST` (or your production merchant ID) |
-| `ESEWA_SECRET_KEY` | `8gBm/:&EnhH.1/q` (or your production key) |
-| `ESEWA_TEST_MODE` | `true` (set to `false` for production) |
-| `NODE_ENV` | `production` |
+| Variable | Value | Notes |
+|---|---|---|
+| `NODE_ENV` | `production` | Enables Express prod optimisations |
+| `MONGODB_URI` | Your MongoDB Atlas connection string | Same URI you used locally |
+| `JWT_SECRET` | A long random string | Generate with the `crypto` snippet in §28.8 |
+| `CLIENT_URL` | `https://your-frontend.vercel.app` | Set after deploying the frontend; controls CORS |
+| `SERVER_BASE_URL` | `https://booking-backend-xxxx.onrender.com` | **Must match this Render service's URL** -- eSewa builds its success/failure callback URLs from this (L26). Localhost breaks eSewa in production. |
+| `ESEWA_MERCHANT_ID` | `EPAYTEST` (sandbox) or your production merchant ID | |
+| `ESEWA_SECRET_KEY` | `8gBm/:&EnhH.1/q` (sandbox) or your production key | |
+| `ESEWA_TEST_MODE` | `true` for the sandbox, `false` for production eSewa | |
+| `ABANDONED_BOOKING_MINUTES` | `30` | L26.14 cron window |
+| `ABANDONED_BOOKING_CRON` | `*/5 * * * *` | L26.14 cron schedule |
+| `SMTP_HOST` | `sandbox.smtp.mailtrap.io` (dev) or your real SMTP host | L21.1 email |
+| `SMTP_PORT` | `587` | |
+| `MAIL_SECURE` | `false` (dev) or `true` (prod SMTP with TLS) | |
+| `SMTP_USERNAME` | Mailtrap username or prod SMTP user | |
+| `SMTP_PASSWORD` | Mailtrap password or prod SMTP password | |
+| `SMTP_DEFAULT_FROM` | `no-reply@yourdomain.com` | Appears in the `From:` header |
+
+> **Where does `PORT` come from?** Render injects it into every web service automatically. Do NOT hard-code it or paste `4001` into the Render dashboard -- our `index.ts` reads `process.env.PORT` and falls back to `4001` only for local dev.
+>
+> **Don't leave the sandbox eSewa creds in prod.** `EPAYTEST` + `8gBm/:&EnhH.1/q` never process real money; every "successful" payment is fake. When you go live, replace them with the real merchant credentials from your eSewa dashboard AND set `ESEWA_TEST_MODE=false`.
 
 ### Step 5: Deploy
 
@@ -239,10 +210,10 @@ Click **"Create Web Service"**. Render will:
 After a few minutes, your backend will be live at something like:
 
 ```
-https://booking-backend-xxxx.onrender.com
+https://bookmyroom-backend-xxxx.onrender.com
 ```
 
-Test it by visiting `https://booking-backend-xxxx.onrender.com/api/rooms` in your browser.
+Test it by visiting `https://bookmyroom-backend-xxxx.onrender.com/api/health` in your browser -- it should return `{ "status": "ok", "message": "BookMyRoom API is running" }` from the health-check route we added in L14/L20.
 
 > **Note:** On the free tier, Render spins down your service after 15 minutes of inactivity. The first request after a spin-down takes about 30 seconds to respond. This is fine for learning but not suitable for a real business.
 
@@ -254,14 +225,7 @@ Test it by visiting `https://booking-backend-xxxx.onrender.com/api/rooms` in you
 
 ### Step 1: Push Frontend to GitHub
 
-```bash
-cd webapp
-git init
-git add .
-git commit -m "Initial commit"
-git remote add origin https://github.com/yourusername/booking-frontend.git
-git push -u origin main
-```
+The frontend lives in the **same repo** as the backend (`bookmyroom_app/booking-frontend/`). If you already pushed for §28.5 Step 1, skip -- Vercel just needs to know which subfolder to build.
 
 ### Step 2: Create a Vercel Account
 
@@ -270,14 +234,16 @@ Go to [vercel.com](https://vercel.com) and sign up with your GitHub account.
 ### Step 3: Import the Project
 
 1. Click **"Add New Project"**.
-2. Select your `booking-frontend` repository.
-3. Vercel automatically detects Vite and configures the build settings.
+2. Select your `bookmyroom` repository.
+3. In **Root Directory**, set `bookmyroom_app/booking-frontend`.
+4. Vercel detects Vite and configures the rest.
 
 Confirm the settings:
 
 | Setting | Value |
 |---------|-------|
 | **Framework Preset** | Vite |
+| **Root Directory** | `bookmyroom_app/booking-frontend` |
 | **Build Command** | `npm run build` |
 | **Output Directory** | `dist` |
 | **Install Command** | `npm install` |
@@ -288,41 +254,30 @@ Add this environment variable in the Vercel dashboard:
 
 | Variable | Value |
 |----------|-------|
-| `VITE_API_URL` | `https://booking-backend-xxxx.onrender.com` |
+| `VITE_API_URL` | `https://booking-backend-xxxx.onrender.com/api` |
 
-> **Important:** Vite requires environment variables to start with `VITE_` to be available in the browser. This is a security feature -- it prevents accidentally exposing server-side secrets.
+> **The trailing `/api` matters.** Our Axios instance is configured as `baseURL: import.meta.env.VITE_API_URL || "http://localhost:4001/api"` (see `booking-frontend/src/services/api.ts`). Every service call then hits `axios.get("/rooms")`, `axios.post("/auth/login")`, etc. -- which resolves to `<VITE_API_URL>/rooms`. If you set `VITE_API_URL` to just `https://backend.onrender.com` (no `/api`), the browser will fetch `https://backend.onrender.com/rooms` and get a 404 for every request. Include the `/api` suffix.
+>
+> **Why `VITE_`?** Vite only exposes env vars whose names start with `VITE_` to the client bundle. This is a security feature -- it prevents you accidentally shipping a secret to the browser.
 
-### Step 5: Update Frontend API Calls
+### Step 5: No frontend code changes required
 
-Make sure your frontend uses the environment variable for API calls:
+`booking-frontend/src/services/api.ts` from L17/L20 already reads `VITE_API_URL` with a localhost fallback:
 
 ```typescript
-// webapp/src/utils/api.ts
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+// booking-frontend/src/services/api.ts (already in place from L17)
+export const API_URL: string =
+  import.meta.env.VITE_API_URL || "http://localhost:4001/api";
 
-export async function apiFetch<T>(
-  path: string,
-  options?: RequestInit
-): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data.error || data.message || 'An unexpected error occurred');
-  }
-
-  return data as T;
-}
+const api = axios.create({
+  baseURL: API_URL,
+  // ...
+});
 ```
 
-Now all API calls use the correct URL automatically -- `localhost` in development, Render in production.
+Every service (`bookingApi`, `roomApi`, `paymentApi`, `authApi`, ...) uses this shared `api` instance, so **setting `VITE_API_URL` in Vercel is enough to redirect the whole app at the Render backend.** No source changes.
+
+If you were still using the `apiFetch` wrapper from the L11 Todo app days -- migrate to the Axios setup from L17 first. Every subsequent lesson (auth, rooms, bookings, payments) assumes it.
 
 ### Step 6: Deploy
 
@@ -358,15 +313,17 @@ const app = express();
 // ... your API routes ...
 
 // Serve React build files in production
-if (process.env.NODE_ENV === 'production') {
+if (process.env.NODE_ENV === "production") {
   // Serve static files from the React build
-  app.use(express.static(path.join(__dirname, '../../webapp/dist')));
+  app.use(express.static(path.join(__dirname, "../../booking-frontend/dist")));
 
   // For any route that is NOT an API route, serve index.html
   // This allows React Router to handle client-side routing
-  app.get('*', (req, res) => {
-    if (!req.path.startsWith('/api')) {
-      res.sendFile(path.join(__dirname, '../../webapp/dist/index.html'));
+  app.get("*", (req, res) => {
+    if (!req.path.startsWith("/api")) {
+      res.sendFile(
+        path.join(__dirname, "../../booking-frontend/dist/index.html")
+      );
     }
   });
 }
@@ -395,21 +352,30 @@ Before going live, verify every environment variable is set correctly:
 ### Backend (Render)
 
 | Variable | Example | Required |
-|----------|---------|----------|
+|---|---|---|
 | `PORT` | Set automatically by Render | Auto |
 | `NODE_ENV` | `production` | Yes |
-| `MONGODB_URI` | `mongodb+srv://user:pass@cluster.mongodb.net/db` | Yes |
+| `MONGODB_URI` | `mongodb+srv://user:pass@cluster.mongodb.net/bookmyroom?retryWrites=true&w=majority` | Yes |
 | `JWT_SECRET` | `a-long-random-string-at-least-32-characters` | Yes |
-| `CLIENT_URL` | `https://your-app.vercel.app` | Yes |
+| `CLIENT_URL` | `https://your-app.vercel.app` | Yes -- controls CORS |
+| `SERVER_BASE_URL` | `https://booking-backend-xxxx.onrender.com` | Yes -- eSewa callback base |
 | `ESEWA_MERCHANT_ID` | `EPAYTEST` or production ID | Yes |
 | `ESEWA_SECRET_KEY` | Test or production key | Yes |
 | `ESEWA_TEST_MODE` | `true` or `false` | Yes |
+| `ABANDONED_BOOKING_MINUTES` | `30` | Yes |
+| `ABANDONED_BOOKING_CRON` | `*/5 * * * *` | Yes |
+| `SMTP_HOST` | `sandbox.smtp.mailtrap.io` or prod SMTP host | Yes |
+| `SMTP_PORT` | `587` | Yes |
+| `MAIL_SECURE` | `false` (Mailtrap) / `true` (prod TLS) | Yes |
+| `SMTP_USERNAME` | Your SMTP user | Yes |
+| `SMTP_PASSWORD` | Your SMTP password | Yes |
+| `SMTP_DEFAULT_FROM` | `no-reply@yourdomain.com` | Yes |
 
 ### Frontend (Vercel)
 
 | Variable | Example | Required |
-|----------|---------|----------|
-| `VITE_API_URL` | `https://your-backend.onrender.com` | Yes |
+|---|---|---|
+| `VITE_API_URL` | `https://your-backend.onrender.com/api` | Yes -- **include the `/api` suffix** |
 
 ### Generate a Secure JWT Secret
 
@@ -420,6 +386,10 @@ node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
 ```
 
 Copy the output and use it as your `JWT_SECRET`. Never share this value or commit it to version control.
+
+### Two Atlas clusters in production?
+
+Optional but recommended once you go live: keep the L15 sandbox cluster for development and create a second, empty cluster for production so student demo data doesn't sit next to real bookings. Same connection-string shape; just paste the prod URI into Render.
 
 ---
 
@@ -452,18 +422,22 @@ Once both deployments are live, test the complete flow:
 
 Take a moment to appreciate what you have accomplished. Starting from zero, you have built:
 
-- A **React frontend** with TypeScript, Tailwind CSS, and shadcn/ui components
-- **Form handling** with React Hook Form and Zod validation
-- **User authentication** with JWT tokens
-- **Role-based access** (users and owners)
-- An **Express.js REST API** with proper error handling
-- **MongoDB database** with Mongoose models and aggregation pipelines
-- **Payment integration** with eSewa and Cash on Delivery
-- **Dashboard pages** with statistics and data visualisation
-- **Responsive design** that works on mobile devices
-- **Production deployment** on Render and Vercel
+- A **React + TypeScript frontend** with Tailwind CSS and shadcn/ui, built on Vite
+- **Form handling** with React Hook Form + Zod, using shadcn `Field` primitives
+- **JWT authentication** with role-based access (guest vs owner), forgot-password OTP flow, change-password, and email verification (L20-L21.1)
+- An **Express.js REST API** with a shared `{ data, meta } / { message }` envelope, centralised validation, and existence-safe 404 authorisation
+- **MongoDB via Mongoose** with schema validation, indexes, and aggregation pipelines
+- **Image uploads** for rooms with Multer, path-traversal guards, and gallery management (L22)
+- **Owner Portal** built on the shadcn sidebar-07 block (L23)
+- **Room browsing** with cards, filters, and detail pages (L24)
+- A full **booking system** with pending/confirmed/cancelled states, owner + guest email notifications, shared `BookingSummary`, and dedicated guest + owner detail pages (L25)
+- **Payment integration**: COD with owner-marks-received flow, eSewa with HMAC-SHA256 signed payloads and backend callbacks, payment-received emails, and a cron sweep for abandoned bookings (L26)
+- **Dashboards** with server-side MongoDB aggregation, `<StatsCard>` skeleton loading, reusable `<DataTable>`, and reused `<BookingCard>` for the guest view (L27)
+- **Toast notifications** via Sonner mounted once and driven from every mutation hook
+- **Responsive navigation** with a role-aware hamburger `Sheet` below `md` (L27)
+- **Production deployment** on Render + Vercel with correct env-var wiring
 
-That is a complete, full-stack web application.
+That is a complete, production-grade full-stack web application.
 
 ---
 
@@ -482,28 +456,14 @@ io.to(ownerId).emit('new-booking', { booking });
 
 Use cases: live booking notifications, chat between user and owner, real-time availability updates.
 
-### Email Notifications with Nodemailer
+### Take the L21.1 email system to real deliverability
 
-Send automated emails for booking confirmations, payment receipts, and reminders:
+You already have Nodemailer wired end-to-end -- booking-created, owner-decision, payment-received, OTP -- against Mailtrap for development. To go live:
 
-```typescript
-import nodemailer from 'nodemailer';
-
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
-
-await transporter.sendMail({
-  from: '"BookingApp" <noreply@bookingapp.com>',
-  to: user.email,
-  subject: 'Booking Confirmed',
-  html: '<h1>Your booking is confirmed!</h1>',
-});
-```
+- Swap the Mailtrap sandbox creds for a real transactional provider (AWS SES, Postmark, SendGrid, Resend). It's just the same env vars (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_SECURE=true`).
+- Set up **SPF, DKIM and DMARC** on the sending domain so major inboxes (Gmail, Outlook) don't spam your emails.
+- Add a **bounce/complaint webhook** to unsubscribe or flag bad recipients.
+- Extend the template set: booking reminders 24h before check-in, review requests after check-out, refund confirmations.
 
 ### Admin Panel
 
@@ -538,7 +498,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --only=production
 COPY dist/ ./dist/
-EXPOSE 3001
+EXPOSE 4001
 CMD ["node", "dist/index.js"]
 ```
 
@@ -577,7 +537,7 @@ jobs:
 
 ## Practice Exercises
 
-1. **Build for production:** Run `npm run build` in both the `webapp` and `backend` directories. Preview the frontend build with `npm run preview` and confirm everything works.
+1. **Build for production:** Run `npm run build` in both `booking-frontend` and `booking-backend`. Preview the frontend build with `npm run preview` and confirm everything works.
 
 2. **Deploy the backend:** Create a Render account, connect your GitHub repository, set the environment variables, and deploy. Verify the API is accessible at the Render URL.
 
