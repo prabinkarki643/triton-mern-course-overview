@@ -316,11 +316,32 @@ A hands-on full-stack / MERN Stack (MongoDB, Express, React, Node.js) course tha
 - [ ] Building React for production (`npm run build`)
 - [ ] MongoDB Atlas for production database
 - [ ] Deploying backend to Render (free tier)
-- [ ] Deploying frontend to Vercel
-- [ ] Environment variables in production
-- [ ] Testing the deployed app
-- [ ] What's next: WebSockets, email notifications, testing, Docker, CI/CD
+- [ ] Deploying frontend to Vercel (monorepo Root Directory)
+- [ ] Environment variables in production (SERVER_BASE_URL, SMTP, eSewa, cron)
+- [ ] VITE_API_URL with the `/api` suffix
+- [ ] Testing the deployed app end-to-end
 - **Exercise**: Deploy BookMyRoom and share the live URL
+
+---
+
+## Phase 9: Bonus (Lesson 29)
+
+### Lesson 29: Bonus -- The Real IT World
+Beginner-friendly map of the tools professionals use around the app itself. Not required to finish the course; each section is a "what is this thing, why care, where to start".
+- [ ] Git cheat sheet -- everyday commands, branches, undoing, history
+- [ ] GitHub beyond `git push` -- PRs, issues, Actions, gh CLI
+- [ ] Domain names & DNS -- GoDaddy / Namecheap / Cloudflare Registrar, A/CNAME/MX/TXT
+- [ ] Cloudflare -- CDN, DDoS protection, DNS, Pages, Workers, R2
+- [ ] AWS -- the 15% you meet first (S3, EC2, RDS, Lambda, SES, Route 53, IAM, CloudWatch)
+- [ ] Docker -- containers, Dockerfile, docker-compose
+- [ ] CI/CD with GitHub Actions -- minimal test-on-push workflow
+- [ ] Environment variables & secrets management (Doppler, dotenv-vault, AWS Secrets Manager)
+- [ ] Monitoring & error tracking (Sentry, UptimeRobot, Grafana)
+- [ ] Testing pyramid (Vitest, Testing Library, Supertest, Playwright)
+- [ ] Code quality tools (ESLint, Prettier, Husky, lint-staged)
+- [ ] Payment gateways beyond eSewa (Khalti, Fonepay, Stripe, PayPal, Razorpay)
+- [ ] Next projects to build + where to keep learning
+- **Exercises**: pick-and-mix -- buy a domain, put a site behind Cloudflare, add GitHub Actions, wire Sentry, write a first Vitest, containerise the backend, ship anything
 
 ---
 
@@ -357,6 +378,7 @@ A hands-on full-stack / MERN Stack (MongoDB, Express, React, Node.js) course tha
 | 26 | Payment gateway, signature verification | eSewa API, crypto |
 | 27 | Data aggregation, dashboards, UX polish | Mongoose aggregation |
 | 28 | Cloud deployment, managed database | Render, Vercel, Atlas |
+| 29 | Bonus tour of the industry -- git, DNS, Cloudflare, AWS, Docker, CI/CD, monitoring, testing, code quality, payment gateways | Landscape lesson |
 
 ---
 
@@ -372,6 +394,7 @@ A hands-on full-stack / MERN Stack (MongoDB, Express, React, Node.js) course tha
 | Phase 6: Backend & Integration | 14-17.1 | 6 | ~2 weeks |
 | Phase 7: BookMyRoom Build | 18-27 | 12 | 4 weeks |
 | Phase 8: Deployment | 28 | 1 | 1 day |
-| **Total** | **1-28** | **~32** | **~10 weeks** |
+| Phase 9: Bonus | 29 | 1-2 | 1 week self-study |
+| **Total** | **1-29** | **~33-34** | **~10-11 weeks** |
 
 *Schedule: 3 classes per week, 1 hour per class. Some complex lessons (13, 22, 25, 26) may require 2 classes.*

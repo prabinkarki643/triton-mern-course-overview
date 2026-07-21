@@ -60,7 +60,8 @@ react-node-beginer/
 │   ├── 25-booking-system.md
 │   ├── 26-payment-integration.md
 │   ├── 27-dashboard-and-polish.md
-│   └── 28-deployment.md
+│   ├── 28-deployment.md
+│   └── 29-bonus.md
 ├── webapp/                # The Vite + React Todo frontend
 ├── backend/               # The Express.js + Mongoose Todo backend
 ├── booking-frontend/      # The Vite + React Booking app frontend
