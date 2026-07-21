@@ -61,11 +61,13 @@ react-node-beginer/
 │   ├── 26-payment-integration.md
 │   ├── 27-dashboard-and-polish.md
 │   ├── 28-deployment.md
-│   └── 29-bonus.md
+│   ├── 29-bonus.md
+│   └── 30-developer-portfolio.md
 ├── webapp/                # The Vite + React Todo frontend
 ├── backend/               # The Express.js + Mongoose Todo backend
 ├── booking-frontend/      # The Vite + React Booking app frontend
-└── booking-backend/       # The Express.js + Mongoose Booking app backend
+├── booking-backend/       # The Express.js + Mongoose Booking app backend
+└── developer-portfolio/   # The Vite + React single-page portfolio (L30)
 ```
 
 ## Teaching Guidelines

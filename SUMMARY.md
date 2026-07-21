@@ -324,7 +324,20 @@ A hands-on full-stack / MERN Stack (MongoDB, Express, React, Node.js) course tha
 
 ---
 
-## Phase 9: Bonus (Lesson 29)
+## Phase 9: Bonus (Lessons 29-30)
+
+### Lesson 30: Build & Ship a Developer Portfolio
+Second project: a single-page portfolio site built with Vite + React + shadcn/ui, deployed to Firebase Hosting, optionally on a free `.np` domain via Cloudflare.
+- [ ] Vite + shadcn init (`base-nova` preset, same as every course project)
+- [ ] Data-first structure -- `src/data/*.ts` for content, sections just render
+- [ ] Anchor-link navigation (no router) with sticky Navbar + mobile hamburger
+- [ ] Brand accent tokens (`--brand`, `--brand-foreground`, `--brand-soft`) in `@theme inline`
+- [ ] Light / dark mode via the scaffold's ThemeProvider + Sun/Moon toggle button
+- [ ] Sections: Hero, About, Skills, Projects, Contact
+- [ ] Contact form that opens Gmail with subject + body prefilled (no backend)
+- [ ] Firebase Hosting -- `firebase init hosting` + `firebase deploy`
+- [ ] Optional: free `.np` domain via register.com.np, DNS on Cloudflare, verified in Firebase
+- **Exercises**: personalise data files, swap placeholder images, add Education section, deploy to Firebase, buy `.np` domain
 
 ### Lesson 29: Bonus -- The Real IT World
 Beginner-friendly map of the tools professionals use around the app itself. Not required to finish the course; each section is a "what is this thing, why care, where to start".
@@ -379,6 +392,7 @@ Beginner-friendly map of the tools professionals use around the app itself. Not 
 | 27 | Data aggregation, dashboards, UX polish | Mongoose aggregation |
 | 28 | Cloud deployment, managed database | Render, Vercel, Atlas |
 | 29 | Bonus tour of the industry -- git, DNS, Cloudflare, AWS, Docker, CI/CD, monitoring, testing, code quality, payment gateways | Landscape lesson |
+| 30 | Single-page portfolio site, data-first content, brand tokens, Firebase Hosting, custom `.np` domain via Cloudflare | Vite, React, shadcn/ui, Firebase |
 
 ---
 
@@ -394,7 +408,7 @@ Beginner-friendly map of the tools professionals use around the app itself. Not 
 | Phase 6: Backend & Integration | 14-17.1 | 6 | ~2 weeks |
 | Phase 7: BookMyRoom Build | 18-27 | 12 | 4 weeks |
 | Phase 8: Deployment | 28 | 1 | 1 day |
-| Phase 9: Bonus | 29 | 1-2 | 1 week self-study |
-| **Total** | **1-29** | **~33-34** | **~10-11 weeks** |
+| Phase 9: Bonus | 29-30 | 3-4 | 1-2 weeks self-study |
+| **Total** | **1-30** | **~35-36** | **~11-12 weeks** |
 
 *Schedule: 3 classes per week, 1 hour per class. Some complex lessons (13, 22, 25, 26) may require 2 classes.*
