@@ -67,7 +67,7 @@ export function UserDashboard() {
         <CardHeader>
           <CardTitle>Upcoming bookings</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pb-6">
           {bookingsLoading ? (
             <p className="text-muted-foreground text-sm">Loading...</p>
           ) : upcoming.length === 0 ? (
@@ -89,7 +89,7 @@ export function UserDashboard() {
         <CardHeader>
           <CardTitle>Past bookings</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pb-6">
           {bookingsLoading ? (
             <p className="text-muted-foreground text-sm">Loading...</p>
           ) : past.length === 0 ? (
