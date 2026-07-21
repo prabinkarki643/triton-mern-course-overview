@@ -3,7 +3,11 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
 import { OwnerBookingActions } from "./owner-row-actions";
-import type { Booking, BookingStatus } from "@/types/booking";
+import type {
+  Booking,
+  BookingStatus,
+  PaymentStatus,
+} from "@/types/booking";
 
 const statusVariant: Record<
   BookingStatus,
@@ -12,6 +16,15 @@ const statusVariant: Record<
   pending: "secondary",
   confirmed: "default",
   cancelled: "destructive",
+};
+
+const paymentVariant: Record<
+  PaymentStatus,
+  "default" | "secondary" | "destructive"
+> = {
+  paid: "default",
+  pending: "secondary",
+  failed: "destructive",
 };
 
 function formatDate(iso: string): string {
@@ -76,6 +89,25 @@ export function useOwnerBookingColumns(): ColumnDef<Booking>[] {
           {row.original.status}
         </Badge>
       ),
+    },
+    {
+      accessorKey: "paymentStatus",
+      header: "Payment",
+      cell: ({ row }) => {
+        const label =
+          row.original.paymentMethod === "esewa" ? "eSewa" : "Cash";
+        return (
+          <div className="flex flex-col items-start gap-1">
+            <Badge
+              variant={paymentVariant[row.original.paymentStatus]}
+              className="capitalize"
+            >
+              {row.original.paymentStatus}
+            </Badge>
+            <span className="text-muted-foreground text-xs">{label}</span>
+          </div>
+        );
+      },
     },
     {
       id: "actions",
