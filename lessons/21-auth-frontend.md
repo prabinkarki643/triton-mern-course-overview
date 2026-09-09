@@ -483,7 +483,10 @@ Build a login form using the **shadcn `Field` component** with React Hook Form +
 import { z } from 'zod';
 
 export const loginSchema = z.object({
-  email: z.email('Please enter a valid email address'),
+  email: z
+    .string()
+    .min(1, 'Email is required')
+    .pipe(z.email('Please enter a valid email address')),
   password: z.string().min(1, 'Password is required'),
 });
 
@@ -492,7 +495,10 @@ export const registerSchema = z.object({
     .string()
     .min(2, 'Name must be at least 2 characters')
     .max(50, 'Name must be under 50 characters'),
-  email: z.email('Please enter a valid email address'),
+  email: z
+    .string()
+    .min(1, 'Email is required')
+    .pipe(z.email('Please enter a valid email address')),
   password: z.string().min(6, 'Password must be at least 6 characters'),
   phone: z.string().min(7, 'Phone number must be at least 7 digits'),
   role: z.enum(['owner', 'user'], {
@@ -503,6 +509,25 @@ export const registerSchema = z.object({
 export type LoginFormData = z.infer<typeof loginSchema>;
 export type RegisterFormData = z.infer<typeof registerSchema>;
 ```
+
+### Why `.pipe(z.email(...))` and not `.email(...)`?
+
+Two small things are happening on the email line.
+
+**1. In Zod 4, `z.email()` is its own schema, not a string method.** The old `z.string().email()` still runs, but it is deprecated and will be removed. Write `z.email('...')`.
+
+**2. `.pipe()` lets us give two different error messages.** We want:
+
+| The user types | Message they should see |
+|----------------|------------------------|
+| nothing at all | "Email is required" |
+| `ram123` | "Please enter a valid email address" |
+
+`.pipe()` means *"check the first rule; only if it passes, check the second"*. So an empty box fails `.min(1)` and stops there with "Email is required". Type something invalid and it passes `.min(1)`, reaches `z.email()`, and gets the format message.
+
+Without the pipe, a single `z.email('...')` would show the format message for an empty box too — which works, but is less helpful.
+
+> **Tip:** you only need `.pipe()` when you want **two separate messages**. For a simple optional email field, plain `z.email('Please enter a valid email')` is enough — that is what `ForgotPasswordPage` uses.
 
 ### Add the shadcn Field component
 
