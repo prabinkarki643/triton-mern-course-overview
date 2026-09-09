@@ -322,7 +322,7 @@ export default defineConfig({
 ### Step 3: Add the shadcn Components We Will Use
 
 ```bash
-npx shadcn@latest add button input card label badge dialog alert-dialog select tabs avatar form table skeleton dropdown-menu sonner
+npx shadcn@latest add button input card label badge dialog alert-dialog select tabs avatar field table skeleton dropdown-menu sonner
 ```
 
 ### Step 4: Install the Rest of the Libraries
