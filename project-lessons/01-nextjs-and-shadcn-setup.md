@@ -8,6 +8,7 @@
 - The difference between **Server Components** and **Client Components**, and when you need `"use client"`
 - Adding shadcn/ui with `npx shadcn@latest init`
 - Adding components with `npx shadcn@latest add button card input label`
+- Building forms with the **`Field`** components — the old `form` component no longer exists
 - Building a first page with those components to prove the setup works
 - Pointing your Next.js frontend at your Express backend with `.env.local`
 
@@ -313,8 +314,8 @@ npx shadcn@latest add button card input label
 ### Components you will want for a booking project
 
 ```bash
-# forms
-npx shadcn@latest add form input label textarea select checkbox radio-group
+# forms  (note: field, NOT form -- see 1.9.1 below)
+npx shadcn@latest add field input label textarea select checkbox radio-group
 
 # layout and display
 npx shadcn@latest add card badge table separator avatar skeleton
@@ -327,6 +328,164 @@ npx shadcn@latest add calendar popover
 ```
 
 Add them as you need them, not all at once.
+
+---
+
+## 1.9.1 Forms: Use `field`, Not `form`
+
+> **Read this section before you build any form.** It will save you an hour of confusion.
+
+shadcn/ui **replaced** the old `Form` component with the newer **`Field`** components. If you follow an older tutorial or YouTube video, it will tell you to run this:
+
+```bash
+npx shadcn@latest add form     # ← the old way, no longer works
+```
+
+**That command now does nothing.** It prints `✔ Checking registry.`, exits successfully with no error, and creates **no files**. Then your imports fail and you cannot see why, because nothing told you anything went wrong.
+
+The command you actually want is:
+
+```bash
+npx shadcn@latest add field
+```
+
+which creates `src/components/ui/field.tsx` (plus `label.tsx` and `separator.tsx`, which it depends on).
+
+### Old way vs new way
+
+| Old (`form`) | New (`field`) |
+|--------------|---------------|
+| `<Form {...form}>` wrapper | No wrapper — use a plain `<form>` |
+| `<FormField control={...} />` | `<Controller />` straight from React Hook Form |
+| `<FormItem>` | `<Field>` |
+| `<FormLabel>` | `<FieldLabel>` |
+| `<FormControl>` | *(gone — put props on the input directly)* |
+| `<FormDescription>` | `<FieldDescription>` |
+| `<FormMessage>` | `<FieldError>` |
+
+What you gain: `Controller` is standard React Hook Form, so the skill transfers to any project, shadcn or not. Nothing is hidden behind a custom wrapper.
+
+### Components in `field.tsx`
+
+`Field`, `FieldLabel`, `FieldDescription`, `FieldError`, `FieldGroup`, `FieldSet`, `FieldLegend`, `FieldSeparator`, `FieldContent`, `FieldTitle`
+
+### A working example
+
+Install the form libraries first — the same three you used in Lesson 12:
+
+```bash
+npm install react-hook-form zod @hookform/resolvers
+npx shadcn@latest add field input button
+```
+
+Then `src/app/page.tsx`:
+
+```tsx
+"use client";
+
+import { Controller, useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import * as z from "zod";
+
+import { Button } from "@/components/ui/button";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+
+const bookingSchema = z.object({
+  fullName: z.string().min(3, "Name must be at least 3 characters."),
+  email: z.email("Enter a valid email address."),
+});
+
+type BookingValues = z.infer<typeof bookingSchema>;
+
+export default function BookingForm() {
+  const form = useForm<BookingValues>({
+    resolver: zodResolver(bookingSchema),
+    defaultValues: { fullName: "", email: "" },
+  });
+
+  function onSubmit(values: BookingValues) {
+    console.log(values);
+  }
+
+  return (
+    <form onSubmit={form.handleSubmit(onSubmit)} className="max-w-sm p-6">
+      <FieldGroup>
+        <Controller
+          name="fullName"
+          control={form.control}
+          render={({ field, fieldState }) => (
+            <Field data-invalid={fieldState.invalid}>
+              <FieldLabel htmlFor={field.name}>Full name</FieldLabel>
+              <Input
+                {...field}
+                id={field.name}
+                aria-invalid={fieldState.invalid}
+                placeholder="Ram Bahadur"
+              />
+              <FieldDescription>The name on the booking.</FieldDescription>
+              {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+            </Field>
+          )}
+        />
+
+        <Controller
+          name="email"
+          control={form.control}
+          render={({ field, fieldState }) => (
+            <Field data-invalid={fieldState.invalid}>
+              <FieldLabel htmlFor={field.name}>Email</FieldLabel>
+              <Input
+                {...field}
+                id={field.name}
+                type="email"
+                aria-invalid={fieldState.invalid}
+              />
+              {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+            </Field>
+          )}
+        />
+
+        <Button type="submit">Confirm booking</Button>
+      </FieldGroup>
+    </form>
+  );
+}
+```
+
+### The pattern to memorise
+
+Every field follows the same four lines:
+
+```tsx
+<Controller
+  name="yourFieldName"
+  control={form.control}
+  render={({ field, fieldState }) => (
+    <Field data-invalid={fieldState.invalid}>
+      <FieldLabel htmlFor={field.name}>Your Label</FieldLabel>
+      <Input {...field} id={field.name} aria-invalid={fieldState.invalid} />
+      {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+    </Field>
+  )}
+/>
+```
+
+Copy that block, change `name`, the label and the input. That is every form in your project.
+
+**Three details that matter:**
+
+- `"use client"` at the top — forms use state, so this is compulsory
+- `data-invalid` on `<Field>` turns the label red; `aria-invalid` on the input tells screen readers. Both, not one
+- `z.email("...")` is the Zod 4 way. Older tutorials write `z.string().email()` — it still runs, but `z.email()` is current and matches the rest of the course
+
+> **You have already seen this pattern.** The contact form in the Lesson 30 portfolio (`developer-portfolio/src/components/sections/Contact.tsx`) is written exactly this way. Open it when you want a longer, real example with four fields and a submit state.
 
 ### Browsing what exists
 
@@ -491,6 +650,8 @@ And in your backend's `.env`, set `CLIENT_URL=http://localhost:3000` so CORS all
 |-------|-------|-----|
 | `You're importing a component that needs useState...` | Interactivity in a Server Component | Add `"use client"` at the top of that file |
 | `Module not found: Can't resolve '@/components/ui/button'` | Component not added yet, or wrong alias | Run `npx shadcn@latest add button`; check `paths` in `tsconfig.json` |
+| `npx shadcn@latest add form` succeeds but creates nothing | `form` was replaced by `field` | Run `npx shadcn@latest add field` — see section 1.9.1 |
+| `Can't resolve '@/components/ui/form'` | Following an old tutorial | Use `Field` + `Controller` instead — see section 1.9.1 |
 | `Invalid enum value. Expected 'radix' \| 'base' \| 'aria'` | Used `-b` for a colour | `-b` is the base library. Use `-b radix` |
 | Port 3000 already in use | Something else is running | Next.js offers another port — or run `npm run dev -- -p 3005` |
 | CORS error in the browser console | Backend does not allow your frontend origin | Set `CLIENT_URL=http://localhost:3000` in the backend `.env` |
@@ -526,7 +687,14 @@ Each page just needs a heading for now. Confirm every URL loads.
 2. Add a client component with a `useState` toggle for the mobile menu
 3. Deliberately remove `"use client"` and read the error carefully, then put it back
 
-### Exercise 4: Wire Up the Backend Address
+### Exercise 4: Build a Form with Field
+1. Install `react-hook-form`, `zod` and `@hookform/resolvers`
+2. Run `npx shadcn@latest add field input button`
+3. Build your project's login form: email and password, validated with Zod
+4. Submit with an invalid email and confirm the error appears under the input
+5. For comparison, run `npx shadcn@latest add form` and notice it creates nothing — this is exactly the trap an old tutorial will lead you into
+
+### Exercise 5: Wire Up the Backend Address
 1. Create `.env.local` with `NEXT_PUBLIC_API_URL`
 2. Create `.env.example` and add `!.env.example` to `.gitignore`
 3. Render the value on a page to prove it is read
@@ -541,7 +709,8 @@ Each page just needs a heading for now. Confirm every URL loads.
 4. Components are **Server Components by default**; add `"use client"` for state, effects or event handlers
 5. `npx shadcn@latest init` sets up shadcn; `-b` selects the base library (`radix`), not a colour
 6. `npx shadcn@latest add <component>` copies real, editable files into `src/components/ui/`
-7. Browser-visible environment variables **must** start with `NEXT_PUBLIC_`, and never contain secrets
-8. Add `!.env.example` to `.gitignore`, or your teammate never gets the template
-9. Restart the dev server after changing `.env.local`
-10. Come back to this lesson whenever you set up a new project — these commands do not change
+7. **Forms use `field`, not `form`** — `add form` silently creates nothing. Use `Controller` + `Field` + `FieldError`
+8. Browser-visible environment variables **must** start with `NEXT_PUBLIC_`, and never contain secrets
+9. Add `!.env.example` to `.gitignore`, or your teammate never gets the template
+10. Restart the dev server after changing `.env.local`
+11. Come back to this lesson whenever you set up a new project — these commands do not change
