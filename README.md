@@ -82,8 +82,10 @@ react-node-course/
 ├── REACT-NODE-Course.MD       # Detailed instructor teaching guide
 ├── SUMMARY.md                 # Step-by-step curriculum checklist
 ├── CLAUDE.md                  # Project configuration
+├── PROJECT_TITLE_IDEAS.md     # Final year project title ideas + viva prep
 ├── assets/                    # Screenshots used in this README
 ├── lessons/                   # Individual lesson files (01-30)
+├── project-lessons/           # Final year project lessons (Next.js track)
 ├── todo-mern/                 # Reference build: Todo app
 │   ├── todo-frontend/         # Vite + React + TypeScript
 │   └── todo-backend/          # Express + Mongoose
@@ -299,6 +301,17 @@ npm run dev
 ```
 
 Open **http://localhost:3000**.
+
+---
+
+## Final Year Projects
+
+After the course, students build a final year project in groups of two. These use **Next.js** for the frontend (not Vite) with the same Node.js + Express + MongoDB backend they already know, so the `bookmyroom_app/` reference build stays useful throughout.
+
+| File | Purpose |
+|------|---------|
+| [PROJECT_TITLE_IDEAS.md](PROJECT_TITLE_IDEAS.md) | 24 booking-style project titles with feature ideas, viva questions, and a group allocation tracker |
+| [project-lessons/01-nextjs-and-shadcn-setup.md](project-lessons/01-nextjs-and-shadcn-setup.md) | Setting up Next.js + shadcn/ui — the reference lesson for starting a project |
 
 ---
 
