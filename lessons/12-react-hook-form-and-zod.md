@@ -122,8 +122,10 @@ type TodoFormData = z.infer<typeof todoSchema>;
 z.string()                              // must be a string
 z.string().min(3, "Too short")          // minimum length
 z.string().max(100, "Too long")         // maximum length
-z.string().email("Invalid email")       // must be email format
 z.string().min(1, "Required")           // cannot be empty
+
+// Email  (Zod 4: a top-level schema, not a .string() method)
+z.email("Invalid email")                // must be email format
 
 // Numbers
 z.number()                              // must be a number

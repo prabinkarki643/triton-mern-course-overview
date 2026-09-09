@@ -890,7 +890,7 @@ Replace all custom UI in the Todo app with shadcn/ui components:
 
 - Why form libraries exist (validation, performance, UX)
 - Zod schema definition: `z.string()`, `z.number()`, `z.enum()`
-- Zod refinements: `.min()`, `.max()`, `.email()`, `.optional()`
+- Zod refinements: `.min()`, `.max()`, `.optional()`, and the top-level `z.email()`
 - `z.infer<typeof schema>` for automatic TypeScript types
 - `useForm` hook: `register`, `handleSubmit`, `formState`
 - `zodResolver` connecting Zod schemas to React Hook Form

@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { useForgotPassword, useResetPassword } from "@/hooks/useAuth";
 
 const emailSchema = z.object({
-  email: z.string().email("Please enter a valid email"),
+  email: z.email("Please enter a valid email"),
 });
 type EmailForm = z.infer<typeof emailSchema>;
 
