@@ -311,7 +311,9 @@ After the course, students build a final year project in groups of two. These us
 | File | Purpose |
 |------|---------|
 | [PROJECT_TITLE_IDEAS.md](PROJECT_TITLE_IDEAS.md) | 24 booking-style project titles with feature ideas, viva questions, and a group allocation tracker |
-| [project-lessons/01-nextjs-and-shadcn-setup.md](project-lessons/01-nextjs-and-shadcn-setup.md) | Setting up Next.js + shadcn/ui — the reference lesson for starting a project |
+| [project-lessons/01-nextjs-and-shadcn-setup.md](project-lessons/01-nextjs-and-shadcn-setup.md) | Frontend setup — Next.js + shadcn/ui |
+| [project-lessons/02-backend-skeleton.md](project-lessons/02-backend-skeleton.md) | Backend setup — Express + TypeScript + Mongoose skeleton |
+| [project-lessons/03-github-setup-and-teamwork.md](project-lessons/03-github-setup-and-teamwork.md) | GitHub: private repo, collaborators, daily git commands, Pull Request workflow |
 
 ---
 
