@@ -2,7 +2,7 @@
 
 ## What You Will Learn
 - Why we are using **Next.js** for your final year project instead of Vite
-- Creating a Next.js app with `npx create-next-app@latest my-app --yes`
+- Creating a Next.js app with `npx create-next-app@latest my-app --yes --src-dir`
 - What the `--yes` flag decides for you, and what each generated file does
 - Running the dev server and understanding the App Router (a folder = a page)
 - The difference between **Server Components** and **Client Components**, and when you need `"use client"`
@@ -54,7 +54,7 @@ You need **Node.js 20.19 or newer** (22 LTS recommended). If your version is old
 Open your terminal, `cd` into the folder where you keep your projects, and run:
 
 ```bash
-npx create-next-app@latest my-app --yes
+npx create-next-app@latest my-app --yes --src-dir
 ```
 
 Replace `my-app` with your own project name — for example `futsal-booking-frontend`.
@@ -67,6 +67,9 @@ Replace `my-app` with your own project name — for example `futsal-booking-fron
 | `create-next-app@latest` | The official Next.js project generator, latest version |
 | `my-app` | The folder name to create |
 | `--yes` | Skip all the questions and use the recommended defaults |
+| `--src-dir` | Put your code inside a `src/` folder |
+
+> **Why `--src-dir` explicitly?** `--yes` means *"use saved preferences or defaults"*. If you have run `create-next-app` before, it reuses **your previous answers** — so the same command can produce `src/app/` on one machine and `app/` on another. Passing `--src-dir` removes the guesswork, and means every person in your group gets the identical structure. Without it, half the class ends up with `app/` and the paths in this lesson will not match what they see.
 
 ### What `--yes` chooses for you
 
@@ -134,7 +137,7 @@ my-app/
 └── CLAUDE.md                 # notes for AI coding tools
 ```
 
-> **`src/` or not?** Depending on your answers (or saved preferences), your pages may be at `src/app/` **or** at `app/` in the project root. Both are correct and everything below works the same — just check which one you have and use that path. Open `tsconfig.json` and look at `"paths"` to confirm what `@/` points at.
+> **No `src/` folder?** You left out `--src-dir`, so your pages are at `app/` in the project root instead of `src/app/`. That still works — every path in this lesson just loses the `src/` prefix. If you would rather match the lesson exactly, delete the folder and create it again with the full command from section 1.3. To confirm which layout you have, open `tsconfig.json` and look at `"paths"` — it will show either `./src/*` or `./*`.
 
 ### The two files you will touch most
 
@@ -657,6 +660,7 @@ And in your backend's `.env`, set `CLIENT_URL=http://localhost:3000` so CORS all
 | CORS error in the browser console | Backend does not allow your frontend origin | Set `CLIENT_URL=http://localhost:3000` in the backend `.env` |
 | `process.env.NEXT_PUBLIC_API_URL` is `undefined` | Missing prefix, or server not restarted | Prefix must be `NEXT_PUBLIC_`; **restart `npm run dev`** after editing `.env.local` |
 | Styles not applying | Editing the wrong CSS file | Theme lives in `src/app/globals.css` |
+| No `src/` folder — pages are at `app/` | Created without `--src-dir` | Drop the `src/` prefix from every path, or recreate with the section 1.3 command |
 | shadcn command does nothing | Not in the project folder | `cd` into your project first — `components.json` must be present |
 
 ---
@@ -704,7 +708,7 @@ Each page just needs a heading for now. Confirm every URL loads.
 
 ## Key Takeaways
 1. **Next.js replaces Vite for the frontend only** — your Express + MongoDB backend is unchanged
-2. `npx create-next-app@latest my-app --yes` gives you TypeScript, Tailwind, ESLint, App Router and the `@/*` alias in one command
+2. `npx create-next-app@latest my-app --yes --src-dir` gives you TypeScript, Tailwind, ESLint, App Router and the `@/*` alias in one command. Include `--src-dir` — `--yes` alone reuses saved preferences and may skip the `src/` folder
 3. **A folder with `page.tsx` is a route** — no route configuration file
 4. Components are **Server Components by default**; add `"use client"` for state, effects or event handlers
 5. `npx shadcn@latest init` sets up shadcn; `-b` selects the base library (`radix`), not a colour
