@@ -192,6 +192,8 @@ Everything *could* go in one file. For a project this size it would become 2,000
 
 ## 2.5 Environment Variables
 
+> **Need your `MONGODB_URI`?** [Lesson 01.2](01.2-mongodb-atlas-setup.md) walks through Atlas — creating the cluster, the database user, opening Network Access, and assembling the string. Do that first; this backend will not start without it.
+
 Create **`.env`** in the project root — this holds your real secrets:
 
 ```bash
