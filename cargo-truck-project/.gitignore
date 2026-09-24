@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+
+# builds
+dist/
+.next/
+build/
+
+# environment files -- secrets!
+.env
+.env.local
+.env.production
+
+# but DO share the templates
+!.env.example
+
+# uploads
+uploads/
+
+# system files
+.DS_Store
+Thumbs.db
+
+# logs
+*.log
+npm-debug.log*
