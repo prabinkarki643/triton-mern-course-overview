@@ -315,6 +315,7 @@ After the course, students build a final year project in groups of two. These us
 | [project-lessons/01.2-mongodb-atlas-setup.md](project-lessons/01.2-mongodb-atlas-setup.md) | MongoDB Atlas — cluster, database user, network access, connection string |
 | [project-lessons/02-backend-skeleton.md](project-lessons/02-backend-skeleton.md) | Backend setup — Express + TypeScript + Mongoose skeleton |
 | [project-lessons/03-github-setup-and-teamwork.md](project-lessons/03-github-setup-and-teamwork.md) | GitHub: private repo, collaborators, daily git commands, Pull Request workflow |
+| [project-lessons/04-auth-with-cookies.md](project-lessons/04-auth-with-cookies.md) | Auth module in Next.js — JWT stored in a cookie with js-cookie, protected routes |
 
 ---
 
