@@ -11,6 +11,7 @@ export interface IUser extends Document {
   password: string;
   phone: string;
   role: UserRole;
+  emailVerified: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -47,6 +48,12 @@ const userSchema = new Schema<IUser>(
       type: String,
       enum: ["transporter", "shipper"],
       default: "shipper",
+    },
+    // Set by the OTP email-verification flow. Existing users default to
+    // false, which is what we want -- nobody is verified retroactively.
+    emailVerified: {
+      type: Boolean,
+      default: false,
     },
   },
   { timestamps: true }

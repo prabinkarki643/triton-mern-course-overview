@@ -36,12 +36,23 @@ export function Navbar() {
         <div className="flex items-center gap-3">
           {!mounted || isLoading ? null : user ? (
             <>
-              <span className="hidden text-sm sm:inline">
+              <Link
+                href="/profile"
+                className="hidden text-sm hover:underline sm:inline"
+              >
                 {user.name}
                 <span className="ml-1 text-muted-foreground">
                   ({user.role})
                 </span>
-              </span>
+                {!user.emailVerified && (
+                  <span
+                    className="ml-1 text-destructive"
+                    title="Email not verified"
+                  >
+                    &bull;
+                  </span>
+                )}
+              </Link>
               <Button variant="outline" size="sm" onClick={logout}>
                 <LogOut className="size-4" />
                 Log out

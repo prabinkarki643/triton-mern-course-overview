@@ -19,6 +19,7 @@ Two roles:
 | [01.2](../project-lessons/01.2-mongodb-atlas-setup.md) | MongoDB Atlas connection |
 | [02](../project-lessons/02-backend-skeleton.md) | `backend/` — Express + TypeScript + Mongoose skeleton |
 | [04](../project-lessons/04-auth-with-cookies.md) | Auth: register, login, `/me`, JWT in a cookie, protected routes |
+| [04 §4.12+](../project-lessons/04-auth-with-cookies.md) | OTP flows: forgot password, change password, verify email |
 
 Next up: the truck and booking modules.
 
@@ -28,8 +29,15 @@ Next up: the truck and booking modules.
 cargo-truck-project/
 ├── backend/                      Express API (port 4001)
 │   └── src/
-│       ├── config/database.ts
-│       ├── models/User.ts
+│       ├── config/
+│       │   ├── database.ts
+│       │   └── mail.ts           lazy nodemailer transporter
+│       ├── models/
+│       │   ├── User.ts
+│       │   └── OtpToken.ts       hashed, single-use, TTL-purged
+│       ├── services/
+│       │   ├── otpService.ts     issueOtp / verifyOtp
+│       │   └── mailService.ts    sendMail + OTP email template
 │       ├── validators/auth.validator.ts
 │       ├── controllers/authController.ts
 │       ├── middleware/
@@ -44,8 +52,8 @@ cargo-truck-project/
         │   ├── layout.tsx        root: <Providers>
         │   ├── page.tsx          /            public landing
         │   ├── providers.tsx     React Query + Toaster
-        │   ├── (auth)/           login, register -- redirects if logged in
-        │   └── (protected)/      dashboard -- redirects if NOT logged in
+        │   ├── (auth)/           login, register, forgot-password
+        │   └── (protected)/      dashboard, profile
         ├── components/layout/navbar.tsx
         ├── hooks/useAuth.ts
         ├── lib/auth.ts           the only place the cookie is touched
@@ -75,6 +83,7 @@ Fill in `.env`:
 | `MONGODB_URI` | Your Atlas string, **with a database name and no trailing slash** before the `?` |
 | `CLIENT_URL` | `http://localhost:3000` — CORS is locked to this |
 | `JWT_SECRET` | `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` |
+| `SMTP_*` | A free [Mailtrap](https://mailtrap.io/inboxes) sandbox inbox — OTP emails land there, never in a real inbox |
 
 ```bash
 npm run dev          # http://localhost:4001
@@ -123,6 +132,12 @@ Things worth poking at:
   the actual security.
 - **View source on the dashboard** → your name is in the HTML, because it was
   fetched on the server.
+- **Forgot password** → `/forgot-password` emails a 6-digit code to your
+  Mailtrap inbox, then takes the code plus a new password.
+- **Profile** → `/profile` changes your password and verifies your email with a
+  code. The red dot next to your name in the navbar disappears once verified.
+- **Reuse an OTP** → each code works exactly once; the second attempt is
+  refused. Five wrong guesses burns it.
 
 ### API
 
@@ -148,7 +163,40 @@ Content-Type: application/json
 ### Current user
 GET http://localhost:4001/api/auth/me
 Authorization: Bearer PASTE_TOKEN_HERE
+
+### Forgot password -- emails a code (check Mailtrap)
+POST http://localhost:4001/api/auth/forgot-password
+Content-Type: application/json
+
+{ "email": "ram@example.com" }
+
+### Reset with that code
+POST http://localhost:4001/api/auth/reset-password
+Content-Type: application/json
+
+{ "email": "ram@example.com", "otp": "123456", "newPassword": "newpass456" }
+
+### Change password (logged in)
+POST http://localhost:4001/api/auth/change-password
+Content-Type: application/json
+Authorization: Bearer PASTE_TOKEN_HERE
+
+{ "currentPassword": "newpass456", "newPassword": "secret123" }
+
+### Request an email verification code
+POST http://localhost:4001/api/auth/send-email-verify-otp
+Authorization: Bearer PASTE_TOKEN_HERE
+
+### Verify email
+POST http://localhost:4001/api/auth/verify-email
+Content-Type: application/json
+Authorization: Bearer PASTE_TOKEN_HERE
+
+{ "otp": "123456" }
 ```
+
+The five OTP endpoints return `{ "message": "..." }` at the top level — no
+`data` envelope.
 
 Successful responses are wrapped: `{ "data": { "user": {...}, "token": "..." } }`.
 Errors are `{ "message": "..." }`, and validation failures add

@@ -10,6 +10,7 @@ export interface User {
   email: string;
   phone: string;
   role: UserRole;
+  emailVerified: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -30,4 +31,30 @@ export interface RegisterData {
   password: string;
   phone: string;
   role: UserRole;
+}
+
+// --- Project lesson 04.1: OTP flows --------------------------------------
+
+// These endpoints return { message } at the top level, not { data }.
+export interface MessageResponse {
+  message: string;
+}
+
+export interface ForgotPasswordData {
+  email: string;
+}
+
+export interface ResetPasswordData {
+  email: string;
+  otp: string;
+  newPassword: string;
+}
+
+export interface ChangePasswordData {
+  currentPassword: string;
+  newPassword: string;
+}
+
+export interface VerifyEmailData {
+  otp: string;
 }

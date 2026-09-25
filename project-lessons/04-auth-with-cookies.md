@@ -10,6 +10,7 @@
 - **Our page convention**: a server `page.tsx` plus a `<name>-client.tsx` — use it for every page
 - Protecting routes with **route groups** — `(auth)` and `(protected)` layouts
 - The honest security position on this approach — and the viva answer
+- **Extending auth** with OTP email flows: forgot password, change password, verify email
 
 ---
 
@@ -651,6 +652,8 @@ export type LoginFormData = z.infer<typeof loginSchema>;
 
 **The register page is the same shape** — `page.tsx` plus `register-client.tsx`, with more fields including role. Copy the structure from Lesson 21 §21.10.
 
+Add a link to `/forgot-password` here too — §4.12 builds that page.
+
 
 ## 4.9 Protecting Routes
 
@@ -926,7 +929,312 @@ Be straight about this, because an examiner may well ask.
 
 ---
 
-## 4.12 When Things Go Wrong
+## 4.12 Extending Auth: Forgot Password, Change Password, Verify Email
+
+Everything so far covers getting in. This part covers the three flows every real application needs, all built on **one-time passwords (OTPs)** sent by email:
+
+| Flow | Who | Steps |
+|------|-----|-------|
+| **Forgot password** | Public | Request a code by email → submit code + new password |
+| **Change password** | Logged in | Current password + new password (no OTP needed — being logged in is the proof) |
+| **Verify email** | Logged in | Request a code → submit code |
+
+### Your reference material
+
+| What you need | Where |
+|---------------|-------|
+| Full explanation of every piece below | [Lesson 21.1 — Auth Extend](../lessons/21.1-auth-extend.md) |
+| Working backend code | `bookmyroom_app/booking-backend/src/` — `config/mail.ts`, `models/OtpToken.ts`, `services/otpService.ts`, `services/mailService.ts` |
+| Working frontend code | `bookmyroom_app/booking-frontend/src/pages/ForgotPasswordPage.tsx`, `ProfilePage.tsx` |
+
+**Lesson 21.1 explains *why* each design decision was made** — why OTPs are hashed at rest, why they live in their own collection, why the error messages are deliberately vague. Read it. What follows is the checklist plus the Next.js differences.
+
+---
+
+## 4.13 The Backend (same as Lesson 21.1)
+
+### Install and configure
+
+```bash
+cd backend
+npm install nodemailer
+npm install -D @types/nodemailer
+```
+
+Add to `.env` — we use **Mailtrap Sandbox**, a captured inbox. Mail never reaches a real person, which is exactly what you want while testing:
+
+```bash
+SMTP_HOST=sandbox.smtp.mailtrap.io
+SMTP_PORT=587
+MAIL_SECURE=false
+SMTP_USERNAME=<your mailtrap sandbox username>
+SMTP_PASSWORD=<your mailtrap sandbox password>
+SMTP_DEFAULT_FROM=no-reply@yourproject.example
+```
+
+Get your own credentials free from <https://mailtrap.io/inboxes> → your inbox → **SMTP Settings**. Add the same keys to `.env.example` with placeholder values.
+
+> **Why a sandbox rather than your Gmail?** Three reasons. You cannot accidentally email a real person while testing. Gmail needs app passwords and will rate-limit or block you. And a captured inbox lets you *read the code* during development, which you need constantly.
+
+### The files to create
+
+| File | What it does | Lesson 21.1 |
+|------|-------------|-------------|
+| `src/config/mail.ts` | Lazy nodemailer transporter, so bad SMTP config does not crash boot | §21.1.4 |
+| `src/services/mailService.ts` | `sendMail()` plus the OTP email template | §21.1.5 |
+| `src/models/OtpToken.ts` | OTP collection with a **TTL index** | §21.1.6 |
+| `src/services/otpService.ts` | `issueOtp()`, `verifyOtp()`, `otpTtlMinutes()` | §21.1.7 |
+
+Then add `emailVerified: { type: Boolean, default: false }` to your `User` model, five controller functions, four validators, and the routes:
+
+```ts
+// Public
+router.post("/forgot-password", forgotPasswordValidator, validateResult, forgotPassword);
+router.post("/reset-password", resetPasswordValidator, validateResult, resetPassword);
+
+// Authenticated
+router.post("/change-password", requireAuth, changePasswordValidator, validateResult, changePassword);
+router.post("/send-email-verify-otp", requireAuth, sendEmailVerifyOtp);
+router.post("/verify-email", requireAuth, verifyEmailValidator, validateResult, verifyEmail);
+```
+
+### The four design decisions worth understanding
+
+These are what an examiner will ask about, so do not just copy them.
+
+**1. The OTP is hashed, never stored in plain text.**
+
+```ts
+function hashCode(code: string): string {
+  return crypto.createHash("sha256").update(code).digest("hex");
+}
+```
+
+A database dump then contains no usable codes. It also means **you cannot look the code up** — you read it from the email, like a user would.
+
+**2. It is single-use.** Verifying sets `consumedAt`, and `verifyOtp` only ever looks for tokens where `consumedAt` does not exist. A code that worked once cannot be replayed.
+
+**3. Wrong guesses are counted, and 5 burns the token.**
+
+```ts
+if (token.attempts >= MAX_ATTEMPTS) token.consumedAt = now;
+```
+
+Six digits is a million possibilities, which a script could exhaust in minutes. Five attempts makes guessing hopeless.
+
+**4. `forgot-password` responds identically whether the email exists or not.**
+
+```ts
+res.status(200).json({
+  message: "If an account exists for that email, a code has been sent.",
+});
+```
+
+Return "no such user" and the endpoint becomes a tool for discovering who has an account. `reset-password` does the same: an unknown email gets the same "Invalid or expired code" as a wrong code.
+
+> **Use `crypto.randomInt`, not `Math.random`.** `Math.random` is not cryptographically secure and its output can be predicted from earlier values. For anything that guards an account, use `crypto`.
+
+### Testing it
+
+You cannot read the OTP from your database — it is hashed. Read it from your **Mailtrap inbox**, which is the point of using a sandbox.
+
+```http
+### 1. Request a code (then open Mailtrap)
+POST http://localhost:4001/api/auth/forgot-password
+Content-Type: application/json
+
+{ "email": "ram@example.com" }
+
+### 2. Reset with the code from the email
+POST http://localhost:4001/api/auth/reset-password
+Content-Type: application/json
+
+{ "email": "ram@example.com", "otp": "123456", "newPassword": "newpass456" }
+
+### 3. Try the SAME code again -- must fail, it is single-use
+POST http://localhost:4001/api/auth/reset-password
+Content-Type: application/json
+
+{ "email": "ram@example.com", "otp": "123456", "newPassword": "another789" }
+
+### 4. Change password (logged in)
+POST http://localhost:4001/api/auth/change-password
+Content-Type: application/json
+Authorization: Bearer PASTE_TOKEN_HERE
+
+{ "currentPassword": "newpass456", "newPassword": "secret123" }
+
+### 5. Request an email verification code
+POST http://localhost:4001/api/auth/send-email-verify-otp
+Authorization: Bearer PASTE_TOKEN_HERE
+
+### 6. Verify with the code from the email
+POST http://localhost:4001/api/auth/verify-email
+Content-Type: application/json
+Authorization: Bearer PASTE_TOKEN_HERE
+
+{ "otp": "123456" }
+```
+
+Work through all six **before** touching the frontend.
+
+---
+
+## 4.14 The Frontend
+
+### Types, service and hooks
+
+These five endpoints return `{ message }` at the **top level** — no `{ data }` envelope like login and register. So there is nothing to unwrap:
+
+```ts
+// src/types/user.ts
+export interface MessageResponse {
+  message: string;
+}
+```
+
+```ts
+// src/services/authApi.ts -- note: NO .data.data here
+async forgotPassword(payload: ForgotPasswordData): Promise<MessageResponse> {
+  const { data } = await api.post<MessageResponse>("/auth/forgot-password", payload);
+  return data;
+},
+```
+
+Add five hooks alongside the ones from §4.7, each surfacing the server's own message so the wording lives in one place:
+
+```ts
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: (payload: ForgotPasswordData) => authApi.forgotPassword(payload),
+    onSuccess: (data) => toast.success(data.message),
+    onError: (error: Error) =>
+      toast.error(error.message || "Failed to send reset code"),
+  });
+}
+```
+
+`useVerifyEmail` needs one extra step — `emailVerified` has just changed, so the cached user is stale:
+
+```ts
+export function useVerifyEmail() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: VerifyEmailData) => authApi.verifyEmail(payload),
+    onSuccess: (data) => {
+      toast.success(data.message);
+      // Refetch so every "unverified" badge updates at once.
+      queryClient.invalidateQueries({ queryKey: authKeys.user() });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+```
+
+### The pages
+
+Both follow the §4.8 convention — a server `page.tsx` plus a client file:
+
+```
+src/app/
+├── (auth)/
+│   └── forgot-password/
+│       ├── page.tsx
+│       └── forgot-password-client.tsx
+└── (protected)/
+    └── profile/
+        ├── page.tsx
+        └── profile-client.tsx
+```
+
+`forgot-password` goes in `(auth)` — it is for people who cannot log in, and a logged-in user should be bounced away. `profile` goes in `(protected)` — you must be logged in to change your own password.
+
+### The wizard: two steps, one URL
+
+The forgot-password page has two stages. Hold the stage in state rather than creating a second route, because step 2 needs the email from step 1:
+
+```tsx
+const [step, setStep] = useState<"email" | "reset">("email");
+const [email, setEmail] = useState<string>("");
+
+function onRequestCode(values: ForgotPasswordFormData) {
+  forgotPassword.mutate(values, {
+    onSuccess: () => {
+      setEmail(values.email);   // step 2 sends this back with the code
+      setStep("reset");
+    },
+  });
+}
+```
+
+Use **two separate `useForm` instances** — one per step — and give each `<form>` a `key`:
+
+```tsx
+{step === "email" ? (
+  <form key="email-step" onSubmit={emailForm.handleSubmit(onRequestCode)}>
+) : (
+  <form key="reset-step" onSubmit={resetForm.handleSubmit(onReset)}>
+)}
+```
+
+> **The `key` matters.** Without it React reuses the same DOM form across both steps, and the first step's values and validation state leak into the second. A distinct `key` forces a fresh form.
+
+On success, send them to `/login` to sign in with the new password:
+
+```tsx
+resetPassword.mutate({ email, ...values }, {
+  onSuccess: () => router.push("/login"),
+});
+```
+
+### The profile page
+
+Two cards, and the email card has three states:
+
+| State | Shows |
+|-------|-------|
+| `emailVerified === true` | "Email verified" — nothing to do |
+| Not verified, no code requested | A "Send verification code" button |
+| Code requested | The 6-digit input, Verify, and Resend |
+
+Track the third with a small piece of state:
+
+```tsx
+const [showCodeInput, setShowCodeInput] = useState(false);
+
+<Button onClick={() => sendOtp.mutate(undefined, {
+  onSuccess: () => setShowCodeInput(true),
+})}>
+  Send verification code
+</Button>
+```
+
+Note `sendOtp.mutate(undefined, {...})` — this mutation takes no payload, so the first argument is `undefined` and the options go second.
+
+Add `autoComplete="one-time-code"` and `inputMode="numeric"` to OTP inputs. On a phone that brings up the number pad and lets the OS offer the code from the SMS or email.
+
+---
+
+## 4.15 Security Points for Your Defence
+
+Sections 4.11 and 4.9 covered token storage and route guards. The OTP flows add four more, and they are good marks if you can explain them:
+
+1. **OTPs are hashed at rest** — a leaked database yields no usable codes
+2. **Single-use** — `consumedAt` stops replay
+3. **Time-limited** — 10 minutes, enforced by `expiresAt` *and* auto-purged by MongoDB's TTL index
+4. **Attempt-limited** — five wrong guesses burns the token, so a million-guess script gets nowhere
+5. **No user enumeration** — `forgot-password` cannot be used to find out who has an account
+
+> **A question you may get: "why not just email a reset link?"**
+> *"A link carries a token in the URL, which ends up in browser history, server logs and referrer headers, and links break when email clients rewrite them. A 6-digit code never leaves the email body, and the same mechanism works for email verification too. The trade-off is that the user has to copy it across."*
+
+**One honest note about the code.** The `too_many_attempts` message is effectively unreachable. The fifth wrong guess sets `consumedAt`, so the next request finds no live token and returns the generic "Invalid or expired code" instead. The **protection works** — the token is genuinely burned — but users never see that specific wording. That is arguably correct (vaguer messages leak less); just do not claim in your report that users see a distinct lockout message, because they do not.
+
+---
+
+
+## 4.16 When Things Go Wrong
 
 | Error | Cause | Fix |
 |-------|-------|-----|
@@ -940,6 +1248,11 @@ Be straight about this, because an examiner may well ask.
 | `Hydration failed because the server rendered HTML didn't match the client` | Navbar reads the cookie with `js-cookie`, which is blind on the server | Use the `mounted` pattern (§4.10) |
 | `data.token` is `undefined`, login "works" but stores nothing | Response envelope not unwrapped | `return data.data` — see §4.5 |
 | `Property 'asChild' does not exist` on `<Button>` | Your shadcn preset is base-ui, not radix | Style a `<Link>` with `buttonVariants({ variant, size })` instead |
+| `Mail config missing. Set SMTP_HOST...` | SMTP variables absent from `.env` | Add all five plus `SMTP_DEFAULT_FROM` (§4.13) |
+| No email arrives | Wrong Mailtrap credentials, or looking in a real inbox | Sandbox mail only appears in your **Mailtrap** inbox, never a real one |
+| Step 2 of the wizard shows step 1's values | Both `<form>`s share one DOM node | Give each form a distinct `key` (§4.14) |
+| "Verified" badge does not update after verifying | Cached user is stale | `invalidateQueries({ queryKey: authKeys.user() })` in `useVerifyEmail` |
+| OTP always "Invalid or expired code" | Code already used, expired, or 5 failed attempts burned it | Request a fresh one — each is single-use |
 | Type error about `Promise<ReadonlyRequestCookies>` | Missing `await` | `const cookieStore = await cookies()` |
 | A protected page loads without logging in | The page is outside the `(protected)` folder | Move it inside — only that folder is guarded (§4.9) |
 | `You cannot have two parallel pages that resolve to the same path` | Two groups both define the same route, e.g. `page.tsx` and `(main)/page.tsx` | Keep one file per URL; brackets do not make the paths different |
@@ -984,7 +1297,15 @@ Be straight about this, because an examiner may well ask.
 2. View source in the browser — your name is in the HTML, not fetched afterwards
 3. Now try the same with `localStorage` and explain in one sentence why it cannot work
 
-### Exercise 6: Try to Break It
+### Exercise 6: The OTP Flows
+1. Add the mail config, `OtpToken`, `otpService` and `mailService`, and set up a free Mailtrap sandbox
+2. Build the five endpoints and work through all six requests in §4.13 with the REST Client
+3. Build the forgot-password wizard and reset your own password end to end
+4. Build the profile page, verify your email, and watch the badge change
+5. **Request a code, then use it twice.** The second attempt must fail — explain why in one sentence
+6. **Request a code, then guess wrong five times.** Check the token in Atlas: `attempts` is 5 and `consumedAt` is set
+
+### Exercise 7: Try to Break It
 1. In DevTools, edit your `token` cookie to `rubbish` and reload `/dashboard`
 2. The page loads (the cookie exists!) but the API returns 401
 3. **Write down why**, and who is actually enforcing security. That is your viva answer
@@ -1006,3 +1327,7 @@ Be straight about this, because an examiner may well ask.
 12. **Route groups** are the guard: `(auth)` and `(protected)` shape the folders without changing the URLs. You do not need `proxy.ts`
 13. Frontend route guards are UX only. **`requireAuth` on the backend is the real security**
 14. The cookie is not `httpOnly`, so XSS exposure matches `localStorage` — know this, and say so honestly in your defence
+15. OTPs are **hashed at rest, single-use, time-limited and attempt-limited** — you cannot look one up in your own database, which is the point
+16. `forgot-password` must answer identically for a known and an unknown email, or it leaks who has an account
+17. The five OTP endpoints return `{ message }` with **no `{ data }` envelope** — do not unwrap twice
+18. Give each step of a multi-step form its own `useForm` and its own `key`

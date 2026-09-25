@@ -1,11 +1,24 @@
 // src/routes/authRoutes.ts
 import { Router } from "express";
-import { register, login, getMe } from "../controllers/authController";
+import {
+  register,
+  login,
+  getMe,
+  forgotPassword,
+  resetPassword,
+  changePassword,
+  sendEmailVerifyOtp,
+  verifyEmail,
+} from "../controllers/authController";
 import { requireAuth } from "../middleware/auth";
 import { validateResult } from "../middleware/validate";
 import {
   registerValidator,
   loginValidator,
+  forgotPasswordValidator,
+  resetPasswordValidator,
+  changePasswordValidator,
+  verifyEmailValidator,
 } from "../validators/auth.validator";
 
 const router: Router = Router();
@@ -13,8 +26,35 @@ const router: Router = Router();
 // Public
 router.post("/register", registerValidator, validateResult, register);
 router.post("/login", loginValidator, validateResult, login);
+router.post(
+  "/forgot-password",
+  forgotPasswordValidator,
+  validateResult,
+  forgotPassword
+);
+router.post(
+  "/reset-password",
+  resetPasswordValidator,
+  validateResult,
+  resetPassword
+);
 
 // Authenticated
 router.get("/me", requireAuth, getMe);
+router.post(
+  "/change-password",
+  requireAuth,
+  changePasswordValidator,
+  validateResult,
+  changePassword
+);
+router.post("/send-email-verify-otp", requireAuth, sendEmailVerifyOtp);
+router.post(
+  "/verify-email",
+  requireAuth,
+  verifyEmailValidator,
+  validateResult,
+  verifyEmail
+);
 
 export default router;

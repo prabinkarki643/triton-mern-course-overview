@@ -33,3 +33,31 @@ export const registerSchema = z.object({
 
 export type LoginFormData = z.infer<typeof loginSchema>;
 export type RegisterFormData = z.infer<typeof registerSchema>;
+
+// --- Project lesson 04.1 -------------------------------------------------
+
+export const forgotPasswordSchema = z.object({
+  email: z
+    .string()
+    .min(1, "Email is required")
+    .pipe(z.email("Please enter a valid email address")),
+});
+
+export const resetPasswordSchema = z.object({
+  otp: z.string().regex(/^\d{6}$/, "Enter the 6-digit code"),
+  newPassword: z.string().min(6, "Password must be at least 6 characters"),
+});
+
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Current password is required"),
+  newPassword: z.string().min(6, "Password must be at least 6 characters"),
+});
+
+export const verifyEmailSchema = z.object({
+  otp: z.string().regex(/^\d{6}$/, "Enter the 6-digit code"),
+});
+
+export type ForgotPasswordFormData = z.infer<typeof forgotPasswordSchema>;
+export type ResetPasswordFormData = z.infer<typeof resetPasswordSchema>;
+export type ChangePasswordFormData = z.infer<typeof changePasswordSchema>;
+export type VerifyEmailFormData = z.infer<typeof verifyEmailSchema>;

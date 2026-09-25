@@ -6,7 +6,15 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { authApi } from "@/services/authApi";
 import { getToken, removeToken, setToken } from "@/lib/auth";
-import type { LoginData, RegisterData, User } from "@/types/user";
+import type {
+  ChangePasswordData,
+  ForgotPasswordData,
+  LoginData,
+  RegisterData,
+  ResetPasswordData,
+  User,
+  VerifyEmailData,
+} from "@/types/user";
 
 // Centralised query keys for everything auth-related
 export const authKeys = {
@@ -79,4 +87,61 @@ export function useLogout() {
     router.push("/login");
     router.refresh();
   };
+}
+
+// --- Project lesson 04.1: OTP flows --------------------------------------
+// Each of these shows the server's own message, so the wording lives in one
+// place (the controller) rather than being duplicated on the client.
+
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: (payload: ForgotPasswordData) =>
+      authApi.forgotPassword(payload),
+    onSuccess: (data) => toast.success(data.message),
+    onError: (error: Error) =>
+      toast.error(error.message || "Failed to send reset code"),
+  });
+}
+
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: (payload: ResetPasswordData) => authApi.resetPassword(payload),
+    onSuccess: (data) => toast.success(data.message),
+    onError: (error: Error) =>
+      toast.error(error.message || "Failed to reset password"),
+  });
+}
+
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: (payload: ChangePasswordData) =>
+      authApi.changePassword(payload),
+    onSuccess: (data) => toast.success(data.message),
+    onError: (error: Error) =>
+      toast.error(error.message || "Failed to change password"),
+  });
+}
+
+export function useSendEmailVerifyOtp() {
+  return useMutation({
+    mutationFn: () => authApi.sendEmailVerifyOtp(),
+    onSuccess: (data) => toast.success(data.message),
+    onError: (error: Error) =>
+      toast.error(error.message || "Failed to send verification code"),
+  });
+}
+
+export function useVerifyEmail() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: VerifyEmailData) => authApi.verifyEmail(payload),
+    onSuccess: (data) => {
+      toast.success(data.message);
+      // emailVerified just changed -- refetch so every badge updates.
+      queryClient.invalidateQueries({ queryKey: authKeys.user() });
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || "Failed to verify email"),
+  });
 }
