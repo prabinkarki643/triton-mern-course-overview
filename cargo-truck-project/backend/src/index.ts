@@ -9,6 +9,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import connectDB from "./config/database";
 import dns from "dns";
+import authRoutes from "./routes/authRoutes";
 //import listingRoutes from "./routes/listingRoutes";
 
 // Load environment variables BEFORE anything else reads them
@@ -31,6 +32,7 @@ app.use(
 app.use(express.json());
 
 // Routes
+app.use("/api/auth", authRoutes);
 // app.use("/api/listings", listingRoutes);
 
 // Health check -- useful for checking the server is alive

@@ -280,20 +280,32 @@ import api from "./api";
 import type { AuthResponse, LoginData, RegisterData, User } from "@/types/user";
 
 export const authApi = {
-  login: async (payload: LoginData): Promise<AuthResponse> => {
-    const { data } = await api.post<AuthResponse>("/auth/login", payload);
-    return data;
+  async login(payload: LoginData): Promise<AuthResponse> {
+    const { data } = await api.post<{ data: AuthResponse }>(
+      "/auth/login",
+      payload
+    );
+    return data.data;
   },
-  register: async (payload: RegisterData): Promise<AuthResponse> => {
-    const { data } = await api.post<AuthResponse>("/auth/register", payload);
-    return data;
+
+  async register(payload: RegisterData): Promise<AuthResponse> {
+    const { data } = await api.post<{ data: AuthResponse }>(
+      "/auth/register",
+      payload
+    );
+    return data.data;
   },
-  getMe: async (): Promise<User> => {
-    const { data } = await api.get<{ user: User }>("/auth/me");
-    return data.user;
+
+  async getMe(): Promise<User> {
+    const { data } = await api.get<{ data: User }>("/auth/me");
+    return data.data;
   },
 };
 ```
+
+> **Why `data.data`?** Two different "data" are stacked here. Axios puts the response body on `response.data`, and the Lesson 20 controllers wrap successful responses in their own envelope — `{ data: { user, token } }`. So `data` is the body, and `data.data` is what is inside the envelope.
+>
+> Check your own controller before copying this. If your `register` responds with `res.status(201).json({ data: { user, token } })` — as Lesson 20's does — you need both. If you chose to return `{ user, token }` flat, drop one level. **Getting this wrong gives you `undefined` where the token should be, and a login that "succeeds" but stores nothing.**
 
 ---
 
@@ -784,25 +796,34 @@ This is what the cookie buys you. No loading spinner — the HTML arrives with t
 ```tsx
 // src/app/(protected)/dashboard/page.tsx
 import { cookies } from "next/headers";
+import type { User } from "@/types/user";
 
-interface MeResponse {
-  user: { name: string; email: string; role: string };
-}
-
-export default async function DashboardPage() {
-  const cookieStore = await cookies();
-  const token = cookieStore.get("token")?.value;
+async function getCurrentUser(): Promise<User | null> {
+  const token = (await cookies()).get("token")?.value;
+  if (!token) return null;
 
   const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me`, {
     headers: { Authorization: `Bearer ${token}` },
+    // Never cache a per-user request.
     cache: "no-store",
   });
 
-  if (!res.ok) {
-    return <p className="p-6">Could not load your profile.</p>;
-  }
+  if (!res.ok) return null;
 
-  const { user }: MeResponse = await res.json();
+  // Same envelope as authApi -- the controller wraps it in { data: ... }
+  const { data }: { data: User } = await res.json();
+  return data;
+}
+
+export default async function DashboardPage() {
+  const user = await getCurrentUser();
+
+  // The layout already redirected anyone without a cookie. Reaching here
+  // with no user means the cookie exists but the token is invalid or
+  // expired -- exactly what a forged cookie produces.
+  if (!user) {
+    return <p className="p-6">We could not verify your session.</p>;
+  }
 
   return (
     <main className="p-6">
@@ -813,7 +834,61 @@ export default async function DashboardPage() {
 }
 ```
 
-Note `cache: "no-store"` — without it Next.js may cache one user's response and serve it to another. **Never cache a personalised request.**
+Two things to keep:
+
+**`cache: "no-store"`** — without it Next.js may cache one user's response and serve it to another. **Never cache a personalised request.**
+
+**The `if (!user)` branch.** The layout guard only proved a cookie *exists*. If someone edits that cookie by hand, the layout lets them through and this fetch returns 401 — so the page needs something to show. Try it: change your `token` cookie in DevTools to `rubbish` and reload. You will land on this branch, which is the whole §4.9 security point made visible.
+
+### The navbar problem: hydration mismatch
+
+You will hit this the moment you build a navbar that shows the user's name. The error is:
+
+```
+Hydration failed because the server rendered HTML didn't match the client.
+```
+
+**Why it happens.** Your navbar is a Client Component calling `useCurrentUser()`, which is `enabled: !!getToken()`. But `getToken()` uses `js-cookie`, which reads `document.cookie` — and **there is no `document` on the server**. So:
+
+| | `getToken()` returns | Navbar renders |
+|---|---------------------|----------------|
+| On the server | `undefined` | the logged-**out** links |
+| First client render | the real token | the **loading** state |
+
+Two different trees for the same markup, which is exactly what React complains about.
+
+**The fix** — render nothing in the auth area until after mount, so the server and the first client render agree:
+
+```tsx
+"use client";
+
+import { useEffect, useState } from "react";
+
+export function Navbar() {
+  const { data: user, isLoading } = useCurrentUser();
+  const logout = useLogout();
+
+  // Server and first client render both produce null here; the real state
+  // appears immediately after mount.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  return (
+    <header>
+      {/* ...logo... */}
+      {!mounted || isLoading ? null : user ? (
+        <LoggedInLinks user={user} onLogout={logout} />
+      ) : (
+        <LoggedOutLinks />
+      )}
+    </header>
+  );
+}
+```
+
+Give the nav a fixed height (`h-14`) so nothing jumps when the real state arrives.
+
+> **This is the cost of a client-readable cookie.** `js-cookie` cannot see the cookie on the server; only `await cookies()` can. If you want the navbar correct on the very first paint, read the user in a Server Component (as §4.10 does) and pass it down as a prop. The `mounted` approach is simpler and fine for a project — just know why it is there.
 
 ### When to use which
 
@@ -862,6 +937,9 @@ Be straight about this, because an examiner may well ask.
 | Login succeeds, then bounces back to `/login` | `secure: true` on `localhost` (HTTP), so the cookie is discarded | Tie `secure` to `NODE_ENV` (§4.4) |
 | Logout leaves you logged in | `remove()` called without the same `path` | `Cookies.remove(TOKEN_KEY, { path: "/" })` |
 | Navbar still says "Log in" after logging in | Server Components holding the old cookie | Call `router.refresh()` after login |
+| `Hydration failed because the server rendered HTML didn't match the client` | Navbar reads the cookie with `js-cookie`, which is blind on the server | Use the `mounted` pattern (§4.10) |
+| `data.token` is `undefined`, login "works" but stores nothing | Response envelope not unwrapped | `return data.data` — see §4.5 |
+| `Property 'asChild' does not exist` on `<Button>` | Your shadcn preset is base-ui, not radix | Style a `<Link>` with `buttonVariants({ variant, size })` instead |
 | Type error about `Promise<ReadonlyRequestCookies>` | Missing `await` | `const cookieStore = await cookies()` |
 | A protected page loads without logging in | The page is outside the `(protected)` folder | Move it inside — only that folder is guarded (§4.9) |
 | `You cannot have two parallel pages that resolve to the same path` | Two groups both define the same route, e.g. `page.tsx` and `(main)/page.tsx` | Keep one file per URL; brackets do not make the paths different |
