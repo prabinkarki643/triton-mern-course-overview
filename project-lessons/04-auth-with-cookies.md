@@ -7,6 +7,7 @@
 - Why a cookie lets your **Server Components** read the token, and what that unlocks
 - Attaching the token to every request with an Axios interceptor
 - React Query hooks: `useLogin`, `useRegister`, `useCurrentUser`, `useLogout`
+- **Our page convention**: a server `page.tsx` plus a `<name>-client.tsx` — use it for every page
 - Protecting routes with **route groups** — `(auth)` and `(protected)` layouts
 - The honest security position on this approach — and the viva answer
 
@@ -438,14 +439,76 @@ export function useLogout() {
 
 ---
 
-## 4.8 The Login Page
+## 4.8 How We Structure Every Page
 
-Exactly the Lesson 21 form, using the `Field` pattern from project Lesson 01 §1.9.1:
+**Follow this convention for every page in your project.** Two files per page:
+
+```
+(auth)/login/
+├── page.tsx           Server Component -- no "use client"
+└── login-client.tsx   Client Component -- has "use client"
+```
+
+| File | Runs | Contains |
+|------|------|----------|
+| `page.tsx` | On the **server** | Cookie reads, redirects, server-side data fetching, then renders the client component |
+| `<name>-client.tsx` | In the **browser** | The form, `useState`, hooks, `onClick` — anything interactive |
+
+### Why split it?
+
+You met the rule in project Lesson 01 §1.7: a component with `useState` or `onSubmit` must be a Client Component. The moment you put `"use client"` at the top of `page.tsx`, that page can no longer do **any** server work — no `await cookies()`, no server-side fetching, no `redirect()` before render.
+
+Splitting keeps both doors open:
+
+- `page.tsx` stays a Server Component, so you can always add server work later
+- the interactive part lives next to it, in its own file
+- you never have to restructure a page because you suddenly need a cookie in it
+
+**Name the client file after the page** — `login-client.tsx`, `register-client.tsx`, `dashboard-client.tsx`. When you have thirty files open, `page.tsx` alone tells you nothing.
+
+> A page that is **purely display** — it fetches on the server and renders text — does not need a client file. §4.10's dashboard is one. But the moment there is a button, a form, or state, add one.
+
+### The login page
+
+**`page.tsx`** — the server half:
 
 ```tsx
-// src/app/login/page.tsx
+// src/app/(auth)/login/page.tsx
+import { Suspense } from "react";
+import LoginClient from "./login-client";
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginClient />
+    </Suspense>
+  );
+}
+```
+
+That is all it does today. Later, if you want this page to check something on the server first, it goes here — and the client file does not change:
+
+```tsx
+export default async function LoginPage() {
+  const token = (await cookies()).get("token")?.value;
+  if (token) redirect("/dashboard");
+
+  return (
+    <Suspense>
+      <LoginClient />
+    </Suspense>
+  );
+}
+```
+
+**`login-client.tsx`** — the interactive half:
+
+```tsx
+// src/app/(auth)/login/login-client.tsx
 "use client";
 
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
@@ -467,7 +530,9 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 
-export default function LoginPage() {
+export default function LoginClient() {
+  const searchParams = useSearchParams();
+  const redirectTo = searchParams.get("redirect") ?? "/";
   const login = useLogin();
 
   const form = useForm<LoginFormData>({
@@ -480,66 +545,82 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center p-6">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Log in</CardTitle>
-          <CardDescription>Welcome back.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={form.handleSubmit(onSubmit)}>
-            <FieldGroup>
-              <Controller
-                name="email"
-                control={form.control}
-                render={({ field, fieldState }) => (
-                  <Field data-invalid={fieldState.invalid}>
-                    <FieldLabel htmlFor={field.name}>Email</FieldLabel>
-                    <Input
-                      {...field}
-                      id={field.name}
-                      type="email"
-                      aria-invalid={fieldState.invalid}
-                    />
-                    {fieldState.invalid && (
-                      <FieldError errors={[fieldState.error]} />
-                    )}
-                  </Field>
-                )}
-              />
+    <Card className="w-full max-w-sm">
+      <CardHeader>
+        <CardTitle>Log in</CardTitle>
+        <CardDescription>Welcome back.</CardDescription>
+      </CardHeader>
 
-              <Controller
-                name="password"
-                control={form.control}
-                render={({ field, fieldState }) => (
-                  <Field data-invalid={fieldState.invalid}>
-                    <FieldLabel htmlFor={field.name}>Password</FieldLabel>
-                    <Input
-                      {...field}
-                      id={field.name}
-                      type="password"
-                      aria-invalid={fieldState.invalid}
-                    />
-                    {fieldState.invalid && (
-                      <FieldError errors={[fieldState.error]} />
-                    )}
-                  </Field>
-                )}
-              />
+      <CardContent>
+        <form onSubmit={form.handleSubmit(onSubmit)}>
+          <FieldGroup>
+            <Controller
+              name="email"
+              control={form.control}
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>Email</FieldLabel>
+                  <Input
+                    {...field}
+                    id={field.name}
+                    type="email"
+                    aria-invalid={fieldState.invalid}
+                  />
+                  {fieldState.invalid && (
+                    <FieldError errors={[fieldState.error]} />
+                  )}
+                </Field>
+              )}
+            />
 
-              <Button type="submit" disabled={login.isPending}>
-                {login.isPending ? "Logging in..." : "Log in"}
-              </Button>
-            </FieldGroup>
-          </form>
-        </CardContent>
-      </Card>
-    </main>
+            <Controller
+              name="password"
+              control={form.control}
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>Password</FieldLabel>
+                  <Input
+                    {...field}
+                    id={field.name}
+                    type="password"
+                    aria-invalid={fieldState.invalid}
+                  />
+                  {fieldState.invalid && (
+                    <FieldError errors={[fieldState.error]} />
+                  )}
+                </Field>
+              )}
+            />
+
+            <Button type="submit" disabled={login.isPending}>
+              {login.isPending ? "Logging in..." : "Log in"}
+            </Button>
+
+            <p className="text-center text-sm text-muted-foreground">
+              No account? <Link href="/register" className="underline">Register</Link>
+            </p>
+          </FieldGroup>
+        </form>
+      </CardContent>
+    </Card>
   );
 }
 ```
 
-With the schema from Lesson 21:
+Note the card has no centring wrapper around it — `(auth)/layout.tsx` provides that (§4.9), so every auth page looks the same without repeating the markup.
+
+### Why the `<Suspense>` is not optional
+
+`useSearchParams()` reads the URL, which is only known per request. Without a Suspense boundary **your build fails**:
+
+```
+⨯ useSearchParams() should be wrapped in a suspense boundary at page "/login".
+Error occurred prerendering page "/login"
+```
+
+Wrapping the client component in `<Suspense>` fixes it. Make it a habit in every `page.tsx` — it costs nothing when it is not needed, and saves a confusing build failure when it is.
+
+### The schema
 
 ```ts
 // src/schemas/authSchema.ts
@@ -556,9 +637,8 @@ export const loginSchema = z.object({
 export type LoginFormData = z.infer<typeof loginSchema>;
 ```
 
-**The register page is the same shape** with more fields — name, email, password, phone, role. Copy the structure from Lesson 21 §21.10.
+**The register page is the same shape** — `page.tsx` plus `register-client.tsx`, with more fields including role. Copy the structure from Lesson 21 §21.10.
 
----
 
 ## 4.9 Protecting Routes
 
@@ -576,19 +656,28 @@ A folder in **round brackets** groups pages under a shared layout **without appe
 
 ```
 src/app/
-├── layout.tsx                  root -- html, body, <Providers>
-├── page.tsx                    /                    public landing page
+├── layout.tsx                          root -- html, body, <Providers>
+├── page.tsx                            /            public landing page
 │
 ├── (auth)/
-│   ├── layout.tsx              already logged in?  -> redirect("/")
-│   ├── login/page.tsx          /login
-│   └── register/page.tsx       /register
+│   ├── layout.tsx                      already logged in?  -> redirect("/")
+│   ├── login/
+│   │   ├── page.tsx                    /login
+│   │   └── login-client.tsx
+│   └── register/
+│       ├── page.tsx                    /register
+│       └── register-client.tsx
 │
 └── (protected)/
-    ├── layout.tsx              no token?  -> redirect("/login")     <- the guard
-    ├── dashboard/page.tsx      /dashboard
-    └── my-bookings/page.tsx    /my-bookings
+    ├── layout.tsx                      no token?  -> redirect("/login")   <- the guard
+    ├── dashboard/
+    │   └── page.tsx                    /dashboard
+    └── my-bookings/
+        ├── page.tsx                    /my-bookings
+        └── my-bookings-client.tsx
 ```
+
+Every page follows the §4.8 convention — a server `page.tsx`, plus a `-client.tsx` when the page needs interactivity. The dashboard here has no client file because it only displays server-fetched data (§4.10).
 
 `(auth)` and `(protected)` are **not** in the URLs. `(protected)/dashboard/page.tsx` is still `/dashboard`.
 
@@ -768,6 +857,8 @@ Be straight about this, because an examiner may well ask.
 |-------|-------|-----|
 | `No QueryClient set, use QueryClientProvider to set one` | `<Providers>` not wired into the root layout | §4.6 — wrap `{children}` in `layout.tsx` |
 | `ReferenceError: window is not defined` | Touching `window` in code that runs on the server | Guard with `typeof window !== "undefined"` |
+| `useSearchParams() should be wrapped in a suspense boundary` — build fails | Client component reads the URL, no `<Suspense>` | Wrap it in `page.tsx` (§4.8) |
+| `You're importing a component that needs useState...` | Hooks in `page.tsx` | Move the interactive part into `<name>-client.tsx` (§4.8) |
 | Login succeeds, then bounces back to `/login` | `secure: true` on `localhost` (HTTP), so the cookie is discarded | Tie `secure` to `NODE_ENV` (§4.4) |
 | Logout leaves you logged in | `remove()` called without the same `path` | `Cookies.remove(TOKEN_KEY, { path: "/" })` |
 | Navbar still says "Log in" after logging in | Server Components holding the old cookie | Call `router.refresh()` after login |
@@ -793,8 +884,9 @@ Be straight about this, because an examiner may well ask.
 1. Install the frontend packages and add the shadcn components
 2. Create `lib/auth.ts`, `services/api.ts`, `services/authApi.ts`
 3. Create `providers.tsx` and **wire it into `layout.tsx`**
-4. Build the login page and log in
+4. Build the login page as **two files** — `page.tsx` and `login-client.tsx` — and log in
 5. Open DevTools → Application → Cookies and see your `token` sitting there
+6. Now move the `"use client"` into `page.tsx` and delete the split. Read the error, then put it back — that error is the reason for the convention
 
 ### Exercise 3: Register and Log Out
 1. Build the register page with all your fields including role
@@ -824,13 +916,15 @@ Be straight about this, because an examiner may well ask.
 ## Key Takeaways
 1. The backend auth module is **identical to Lesson 20** — only token *storage* changes
 2. `localStorage` is invisible to the server; a **cookie is sent with every request**, so Server Components can read it
-3. All cookie access goes through `lib/auth.ts` — one place to change
-4. `secure: process.env.NODE_ENV === "production"` or login silently fails on localhost
-5. Pass the same `path` to `remove()` as you did to `set()`, or logout does nothing
-6. Guard `window` with `typeof window !== "undefined"` — this code runs on the server too
-7. `<Providers>` must be wired into the root layout, or React Query throws at build time
-8. Call `router.refresh()` after login/logout so Server Components see the new cookie
-9. `cookies()` is **async** — `await` it
-10. **Route groups** are the guard: `(auth)` and `(protected)` shape the folders without changing the URLs. You do not need `proxy.ts`
-11. Frontend route guards are UX only. **`requireAuth` on the backend is the real security**
-12. The cookie is not `httpOnly`, so XSS exposure matches `localStorage` — know this, and say so honestly in your defence
+3. **Every page is two files**: a server `page.tsx` and a `<name>-client.tsx`. Never put `"use client"` in `page.tsx` — it closes the door on all server work
+4. Wrap the client component in `<Suspense>`. Without it, any `useSearchParams()` **fails the build**
+5. All cookie access goes through `lib/auth.ts` — one place to change
+6. `secure: process.env.NODE_ENV === "production"` or login silently fails on localhost
+7. Pass the same `path` to `remove()` as you did to `set()`, or logout does nothing
+8. Guard `window` with `typeof window !== "undefined"` — this code runs on the server too
+9. `<Providers>` must be wired into the root layout, or React Query throws at build time
+10. Call `router.refresh()` after login/logout so Server Components see the new cookie
+11. `cookies()` is **async** — `await` it
+12. **Route groups** are the guard: `(auth)` and `(protected)` shape the folders without changing the URLs. You do not need `proxy.ts`
+13. Frontend route guards are UX only. **`requireAuth` on the backend is the real security**
+14. The cookie is not `httpOnly`, so XSS exposure matches `localStorage` — know this, and say so honestly in your defence
