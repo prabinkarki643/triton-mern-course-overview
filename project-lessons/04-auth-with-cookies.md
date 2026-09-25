@@ -7,7 +7,7 @@
 - Why a cookie lets your **Server Components** read the token, and what that unlocks
 - Attaching the token to every request with an Axios interceptor
 - React Query hooks: `useLogin`, `useRegister`, `useCurrentUser`, `useLogout`
-- Protecting routes two ways: `proxy.ts` and a route-group layout
+- Protecting routes with **route groups** — `(auth)` and `(protected)` layouts
 - The honest security position on this approach — and the viva answer
 
 ---
@@ -23,7 +23,7 @@ You have already built this auth module once, for BookMyRoom. **The backend is i
 | React Query hooks | ✅ | ✅ identical |
 | Axios interceptor attaching the token | ✅ | ✅ identical |
 | **Where the token is stored** | `localStorage` | **cookie, via `js-cookie`** |
-| Route protection | `<ProtectedRoute>` wrapper | `proxy.ts` + route-group layout |
+| Route protection | `<ProtectedRoute>` + two layouts | `(protected)` and `(auth)` route-group layouts |
 | Navigation after login | `useNavigate()` | `useRouter()` from `next/navigation` |
 
 ### Why move to a cookie?
@@ -562,64 +562,39 @@ export type LoginFormData = z.infer<typeof loginSchema>;
 
 ## 4.9 Protecting Routes
 
-In BookMyRoom you wrapped pages in `<ProtectedRoute>`. Next.js gives you two better places to do it, and you should use **both**.
+In BookMyRoom you had two layouts and a wrapper component. Next.js gives you the same three things as **folders**:
 
-### Layer 1 — `proxy.ts` (redirect before the page loads)
+| BookMyRoom (Lesson 21 §21.12) | Your project |
+|-------------------------------|--------------|
+| `AuthLayout.tsx` — centred, no navbar | `app/(auth)/layout.tsx` |
+| `<ProtectedRoute>` wrapper | `app/(protected)/layout.tsx` |
+| `MainLayout.tsx` — navbar | the layout of whichever group needs it |
 
-Create `src/proxy.ts` (next to `app/`, not inside it):
+### Route groups
 
-```ts
-// src/proxy.ts
-import { NextResponse, type NextRequest } from "next/server";
-
-const PROTECTED = ["/dashboard", "/my-bookings", "/owner"];
-const AUTH_PAGES = ["/login", "/register"];
-
-export function proxy(request: NextRequest) {
-  const token = request.cookies.get("token")?.value;
-  const { pathname } = request.nextUrl;
-
-  const isProtected = PROTECTED.some((p) => pathname.startsWith(p));
-  const isAuthPage = AUTH_PAGES.some((p) => pathname.startsWith(p));
-
-  // Not logged in, asking for a protected page -> send to login
-  if (isProtected && !token) {
-    const loginUrl = new URL("/login", request.url);
-    loginUrl.searchParams.set("redirect", pathname);
-    return NextResponse.redirect(loginUrl);
-  }
-
-  // Already logged in, asking for login/register -> send home
-  if (isAuthPage && token) {
-    return NextResponse.redirect(new URL("/", request.url));
-  }
-
-  return NextResponse.next();
-}
-
-export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
-};
-```
-
-**This only works because the token is in a cookie.** `request.cookies` reads it before your page renders. With `localStorage` this file could not see the token at all — that is the change in one sentence.
-
-> **`proxy.ts`, not `middleware.ts`.** Next.js 16 renamed this file. Older tutorials — and the BookMyRoom-era docs — say `middleware.ts` with `export function middleware()`. That still runs, but prints a deprecation warning on every build. If you inherited a `middleware.ts`, rename the file to `proxy.ts` and the function to `proxy`, or run `npx @next/codemod@canary middleware-to-proxy .`
-
-### Layer 2 — a route-group layout (the real check)
-
-Group your protected pages in a folder with brackets. `(protected)` does **not** appear in the URL — it exists only to share a layout:
+A folder in **round brackets** groups pages under a shared layout **without appearing in the URL**:
 
 ```
 src/app/
-├── (protected)/
-│   ├── layout.tsx          ← the guard
-│   └── dashboard/
-│       └── page.tsx        →  /dashboard
-├── login/
-│   └── page.tsx            →  /login
-└── page.tsx                →  /
+├── layout.tsx                  root -- html, body, <Providers>
+├── page.tsx                    /                    public landing page
+│
+├── (auth)/
+│   ├── layout.tsx              already logged in?  -> redirect("/")
+│   ├── login/page.tsx          /login
+│   └── register/page.tsx       /register
+│
+└── (protected)/
+    ├── layout.tsx              no token?  -> redirect("/login")     <- the guard
+    ├── dashboard/page.tsx      /dashboard
+    └── my-bookings/page.tsx    /my-bookings
 ```
+
+`(auth)` and `(protected)` are **not** in the URLs. `(protected)/dashboard/page.tsx` is still `/dashboard`.
+
+**That is the whole point:** the folder tells you the rule. Anything inside `(protected)` needs a login. You can see it in the file tree without reading a line of code.
+
+### The guard
 
 ```tsx
 // src/app/(protected)/layout.tsx
@@ -631,26 +606,87 @@ export default async function ProtectedLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const cookieStore = await cookies();
-  const token = cookieStore.get("token")?.value;
+  const token = (await cookies()).get("token")?.value;
 
   if (!token) {
     redirect("/login");
   }
 
-  return <>{children}</>;
+  return <div className="min-h-screen">{children}</div>;
 }
 ```
 
+**This only works because the token is in a cookie.** A cookie is sent with the request, so the server can read it *before* rendering the page. With `localStorage` this file could not see the token at all — the page would have to render, reach the browser, and only then discover you are not logged in. That is the change in one sentence.
+
 > **`await cookies()`** — it is asynchronous. Forget the `await` and you get a confusing type error about `Promise<ReadonlyRequestCookies>`. Older tutorials show it without, because it changed in Next.js 15.
 
-### Why both?
+### The mirror image, for auth pages
 
-`proxy.ts` runs at the network edge and is the fast redirect, but it is a convenience — Next's own docs recommend not depending on it alone. The layout check runs on the server as part of rendering, so it still applies if the proxy is ever bypassed.
+A logged-in user should not see the login form. Same idea, condition flipped:
 
-**Neither replaces backend authorisation.** Both check only that *a* cookie exists — not that the token is valid, unexpired, or has the right role. A forged cookie gets past both. Your API must verify the token with `requireAuth` on every protected endpoint. **This is a favourite viva question: "what stops me editing that cookie?" The answer is `requireAuth` on the backend — the frontend checks are purely for user experience.**
+```tsx
+// src/app/(auth)/layout.tsx
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
----
+export default async function AuthLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const token = (await cookies()).get("token")?.value;
+
+  if (token) {
+    redirect("/");
+  }
+
+  return (
+    <main className="flex min-h-screen items-center justify-center p-6">
+      {children}
+    </main>
+  );
+}
+```
+
+This layout does the job of BookMyRoom's `AuthLayout` too — the centred wrapper your login and register cards sit in. One file, two purposes.
+
+### Where the navbar goes
+
+Keep `<Navbar />` out of the root layout, so your login and register pages stay clean — exactly the reason BookMyRoom has a separate `AuthLayout`:
+
+- **`(protected)/layout.tsx`** — render `<Navbar />` above `{children}`
+- **`app/page.tsx`** — your landing page renders its own `<Navbar />`
+
+If you would rather have the navbar on every page including auth, move it to the root layout instead. Either is fine — decide once, with your partner.
+
+### Check the routes are what you expect
+
+```bash
+npm run build
+```
+
+```
+Route (app)
+┌ ○ /
+├ ƒ /dashboard
+├ ƒ /login
+└ ƒ /register
+```
+
+Two things to notice. The bracketed folders are gone from the URLs — that is route groups working. And `/` is `○` **static** while the others are `ƒ` **dynamic**: reading a cookie forces a page to be rendered per request. Your public landing page stays fast and cacheable; only the guarded pages do work per visitor. That is the behaviour you want, and it is a good thing to be able to explain.
+
+### What these guards do NOT do
+
+Both layouts check only that **a cookie exists**. They do not check that the token is valid, unexpired, or has the right role. Anyone can open DevTools and type a fake `token` cookie — and they will get past both.
+
+**The real security is `requireAuth` on your backend.** It verifies the signature on every protected endpoint, so a forged cookie gets an empty page and a 401 from every API call.
+
+> **Expect this in your viva: "what stops me just editing that cookie?"**
+> *"Nothing — the layout guard is for user experience, so people are not shown pages that cannot load. Every protected endpoint runs `requireAuth`, which verifies the JWT signature with our secret. A forged cookie gets a 401 from the API."*
+
+**One thing to watch:** a page only gets guarded if it is **inside** the `(protected)` folder. Create `app/dashboard/page.tsx` by mistake instead of `app/(protected)/dashboard/page.tsx` and it is public. When you add a page, check which group it is in.
+
+> **Seen `middleware.ts` in a tutorial?** Next.js also has a file that runs before every request — called `middleware.ts`, renamed to `proxy.ts` in Next.js 16. You **do not need it** for this project, and Next's own documentation recommends avoiding it unless nothing else will do. Two guards doing the same job just makes it harder to work out which one redirected you. Stick to the layouts.
 
 ## 4.10 Reading the User in a Server Component
 
@@ -708,7 +744,7 @@ Be straight about this, because an examiner may well ask.
 
 **A cookie set by `js-cookie` is readable by JavaScript.** It is not `httpOnly`. So against an XSS attack it is **no safer than `localStorage`** — an injected script can read either one.
 
-**What we gained** is server access, not security: Server Components and `proxy.ts` can see the token.
+**What we gained** is server access, not security: Server Components and your `(protected)` layout can see the token.
 
 **What would be more secure** is an `httpOnly` cookie set by the backend with `res.cookie(...)`. JavaScript cannot read it at all, so XSS cannot steal it. We are not doing that here because it needs the backend to set cookies, CORS configured with credentials, and CSRF protection — a fair amount of extra machinery for a student project.
 
@@ -736,7 +772,8 @@ Be straight about this, because an examiner may well ask.
 | Logout leaves you logged in | `remove()` called without the same `path` | `Cookies.remove(TOKEN_KEY, { path: "/" })` |
 | Navbar still says "Log in" after logging in | Server Components holding the old cookie | Call `router.refresh()` after login |
 | Type error about `Promise<ReadonlyRequestCookies>` | Missing `await` | `const cookieStore = await cookies()` |
-| Build warns about `middleware-to-proxy` | File is named `middleware.ts` | Rename to `proxy.ts`, function to `proxy` (§4.9) |
+| A protected page loads without logging in | The page is outside the `(protected)` folder | Move it inside — only that folder is guarded (§4.9) |
+| `You cannot have two parallel pages that resolve to the same path` | Two groups both define the same route, e.g. `page.tsx` and `(main)/page.tsx` | Keep one file per URL; brackets do not make the paths different |
 | Every request 401s after a week | Cookie outlived the JWT | Match `expires` to your token expiry |
 | `401` on `/auth/me` but login worked | Token not being attached | Check the request interceptor; look at the Authorization header in the Network tab |
 | CORS error on login | Backend not allowing your origin | `CLIENT_URL=http://localhost:3000` in `backend/.env` |
@@ -766,10 +803,11 @@ Be straight about this, because an examiner may well ask.
 4. Confirm the navbar updates immediately — if not, you are missing `router.refresh()`
 
 ### Exercise 4: Protect Your Routes
-1. Add `proxy.ts` with your project's protected paths
-2. Create the `(protected)` route group with its layout guard
-3. Log out, then visit `/dashboard` directly — you should land on `/login`
-4. Log in and confirm you can reach it
+1. Restructure `src/app/` into the three parts from §4.9 — landing page, `(auth)`, `(protected)`
+2. Write both layout guards
+3. Run `npm run build` and confirm the bracketed folders do **not** appear in the route list
+4. Log out, then visit `/dashboard` directly — you should land on `/login`
+5. Log in and confirm you can reach it, and that `/login` now bounces you home
 
 ### Exercise 5: Prove the Point of Cookies
 1. Build the dashboard as a **Server Component** reading `await cookies()`
@@ -793,6 +831,6 @@ Be straight about this, because an examiner may well ask.
 7. `<Providers>` must be wired into the root layout, or React Query throws at build time
 8. Call `router.refresh()` after login/logout so Server Components see the new cookie
 9. `cookies()` is **async** — `await` it
-10. The file is **`proxy.ts`** in Next 16, not `middleware.ts`
+10. **Route groups** are the guard: `(auth)` and `(protected)` shape the folders without changing the URLs. You do not need `proxy.ts`
 11. Frontend route guards are UX only. **`requireAuth` on the backend is the real security**
 12. The cookie is not `httpOnly`, so XSS exposure matches `localStorage` — know this, and say so honestly in your defence
